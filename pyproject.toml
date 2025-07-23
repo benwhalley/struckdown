@@ -1,0 +1,37 @@
+[project]
+name = "llemma"
+version = "0.1.0"
+description = "Using LLMs for psychological research, education and practice"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "instructor>=1.10.0",
+    "jinja2>=3.1.6",
+    "lark>=1.2.2",
+    "matplotlib>=3.10.3",
+    "networkx>=3.5",
+    "pandas>=2.3.1",
+    "pdfplumber>=0.11.7",
+    "prefect>=3.4.9",
+    "pydantic>=2.11.7",
+    "python-box>=7.3.2",
+    "python-decouple>=3.8",
+    "python-docx>=1.2.0",
+    "python-magic>=0.4.27",
+    "scikit-learn>=1.7.1",
+    "seaborn>=0.13.2",
+    "tiktoken>=0.9.0",
+    "typer>=0.16.0",
+    "umap-learn>=0.5.9.post2",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chatter*", "soak*"]
+
+[project.scripts]
+chatter = "chatter.cli:app"
+soak = "soak.cli:app"
+
+[tool.uv]
+package = true

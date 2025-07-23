@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Qualitative Analysis Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .theme { background-color: #f0f0f0; padding: 20px; margin: 20px 0; border-radius: 8px; }
+        .theme h2 { color: #333; margin-top: 0; }
+        .code { background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #007bff; }
+        .code h3 { color: #555; margin-top: 0; }
+        .quote { font-style: italic; color: #666; margin: 5px 0; padding-left: 20px; }
+        .summary { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 30px; }
+
+        .docs { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 30px; }
+    </style>
+</head>
+<body>
+    <h1>Qualitative Analysis Report</h1>
+
+    <div class="summary">
+        <h2>Summary</h2>
+        <p><strong>Total Documents:</strong> {{ analysis.details.documents|length }}</p>
+        <p><strong>Total Themes:</strong> {{ analysis.themes|length }}</p>
+        <p><strong>Total Codes:</strong> {{ analysis.codes|length  }}</p>
+    </div>
+
+    {% if analysis.themes %}
+    <h2>Themes</h2>
+    {% for theme in analysis.themes %}
+    <div class="theme">
+        <h2>{{ theme.name }}</h2>
+        <p>{{ theme.description }}</p>
+
+        {% if theme.codes %}
+        <h3>Associated Codes:</h3>
+        {% for code in theme.codes %}
+        <div class="code">
+            <h3>{{ code.name }}</h3>
+            <p><strong>Description:</strong> {{ code.description }}</p>
+            {% if code.quotes %}
+            <p><strong>Example Quotes:</strong></p>
+            {% for quote in code.quotes %}
+            <p class="quote">"{{ quote }}"</p>
+            {% endfor %}
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+
+    <h2>Reflexivity</h2>
+    {{analysis.details.reflexive_thoughts}}
+
+
+
+    {% if analysis.codes and not analysis.themes %}
+    <h2>Codes</h2>
+    {% for code in analysis.codes %}
+    <div class="code">
+        <h3>{{ code.name }}</h3>
+        <p><strong>Description:</strong> {{ code.description }}</p>
+        {% if code.quotes %}
+        <p><strong>Example Quotes:</strong></p>
+        {% for quote in code.quotes %}
+        <p class="quote">"{{ quote }}"</p>
+        {% endfor %}
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+
+
+
+    <div class="docs intermediate">
+        <h3>Intermediate Findings</h3>
+        <pre style="white-space: pre-wrap;">
+{{analysis.details }}
+        </pre>
+    </div>
+
+
+    <div class="docs">
+        <h3>Documents</h3>
+        {% for doc in analysis.documents %}
+        <p>
+            <code>{{doc.id}}</code>:
+            {{ doc.content[:100] }}</p>
+
+        {% endfor %}
+    </div>
+
+</body>
+</html>
