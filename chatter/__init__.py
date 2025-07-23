@@ -14,10 +14,9 @@ from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
 from prefect import flow, task
+from prefect.cache_policies import INPUTS, TASK_SOURCE
 from prefect.task_runners import ConcurrentTaskRunner
 from pydantic import BaseModel, ConfigDict, Field
-
-from prefect.cache_policies import TASK_SOURCE, INPUTS
 
 CACHE_POLICY = INPUTS + TASK_SOURCE
 
@@ -300,7 +299,7 @@ def get_embedding(texts, model_name="text-embedding-3-large", dimensions=3072) -
     """
     get_embedding(["hello", ])
     """
-    client = openai.OpenAI(api_key=config("LLM_API_KEY"), base_url=config("LLM_ENDPOINT"))
+    client = openai.OpenAI(api_key=config("LLM_API_KEY"), base_url=config("LLM_BASE_URL"))
     response = client.embeddings.create(
         input=texts,
         model=model_name,

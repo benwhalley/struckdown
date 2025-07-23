@@ -1,6 +1,7 @@
 """Command-line interface for running qualitative analysis pipelines."""
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -10,8 +11,6 @@ from decouple import config as env_config
 
 from .dag import pipeline_from_yaml
 from .document_utils import extract_text, unpack_zip_to_temp_paths_if_needed
-
-import logging
 
 
 def get_unique_path(path: Path) -> Path:

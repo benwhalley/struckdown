@@ -1,14 +1,17 @@
 import logging
-import typer
 from pathlib import Path
-from . import chatter, LLM, LLMCredentials, ACTION_LOOKUP
 from typing import List
 
-logging.getLogger('prefect').setLevel(logging.WARNING)
-logging.getLogger('chatter').setLevel(logging.WARNING)
+import typer
+
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter
+
+logging.getLogger("prefect").setLevel(logging.WARNING)
+logging.getLogger("chatter").setLevel(logging.WARNING)
 
 
 app = typer.Typer()
+
 
 @app.command()
 def run(
@@ -30,6 +33,7 @@ def run(
     if show_context:
         typer.echo("\nFinal context:")
         typer.echo(result.outputs)
+
 
 if __name__ == "__main__":
     app()

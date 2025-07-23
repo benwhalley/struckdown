@@ -8,12 +8,11 @@ from io import BytesIO
 from typing import Any, Dict, List
 
 import matplotlib
-from django.core.files.images import ImageFile
 from chatter import get_embedding
+from django.core.files.images import ImageFile
 from prefect import flow, task
 from prefect.cache_policies import INPUTS
 from prefect.task_runners import ConcurrentTaskRunner
-
 from soak.dag import resolve
 from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
 
