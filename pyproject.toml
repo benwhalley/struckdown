@@ -28,7 +28,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["chatter*", "soak*"]
+include = ["chatter*", "soak*", "llemma*"]
 
 [project.scripts]
 chatter = "chatter.cli:app"
