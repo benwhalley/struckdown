@@ -5,7 +5,10 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .dag import QualitativeAnalysisPipeline
 
 from jinja2 import Environment, FileSystemLoader, Template
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,9 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class Code(BaseModel):
     # slug: str = Field(..., min_length=8, description="Unique identifier for the code")
-    name: str = Field(..., min_length=1)
-    description: str = Field(..., min_length=5)
-    quotes: List[str] = Field(..., min_length=0)
+    name: str = Field(..., min_length=1, description="A short name for the code.")
+    description: str = Field(..., min_length=5, description="A description of the code.")
+    quotes: List[str] = Field(
+        ...,
+        min_length=0,
+        description="Example quotes from the text which illustrate the code. Choose the best examples.",
+    )
 
     def __str__(self):
         return f"{self.name}: {self.description}. Example quotes:{';'.join(self.quotes)}."
@@ -97,31 +104,12 @@ class Document:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class PipelineConfig(BaseModel):
-    """Configuration for pipeline execution."""
-
-    seed: int = 2025
-    model_name: str = "gpt-4o-mini"
-    pipeline_name: str = "rta"
-    temperature: float = 1.0
-    chunk_size: int = 20000
-    output_dir: str = "output"
-    base_url: str = "https://api.openai.com"
-    api_key: str = None
-    extra_context: Dict[str, Any] = Field(default_factory=dict)
-    model_config = ConfigDict(frozen=True)
-
-    def safe_dict(self):
-        d = self.model_dump()
-        d["api_key"] = d["api_key"][:5]
-        return d
-
-
 class QualitativeAnalysis(BaseModel):
     themes: Optional[List[Theme]] = None
     codes: Optional[List[Code]] = None
     details: Dict[str, Any] = Field(default_factory=dict)
     config: Optional[dict] = None
+    pipeline: Optional[str] = None
 
     def name(self):
         return self.sha256()[:8]

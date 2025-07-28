@@ -19,7 +19,7 @@ from prefect.task_runners import ConcurrentTaskRunner
 from pydantic import BaseModel, ConfigDict, Field
 
 CACHE_POLICY = INPUTS + TASK_SOURCE
-
+CACHE_ON = False
 
 from .parsing import parser
 from .return_type_models import ACTION_LOOKUP
@@ -62,11 +62,20 @@ class LLM(BaseModel):
         )
 
 
-@task(name="structured-chat", cache_policy=CACHE_POLICY)
+@task(
+    name="structured-chat",
+    cache_policy=CACHE_POLICY,
+    persist_result=CACHE_ON,
+    cache_result_in_memory=CACHE_ON,
+)
 def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
+
+    logger.info(
+        f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}"
+    )
 
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
@@ -83,21 +92,46 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
 
+    logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+    logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+    logger.info(f"{LC.PURPLE}Response type: {type(res)}{LC.RESET}\n\n")
+
     return res, com
 
 
-class ChatterResult(OrderedDict):
+class SegmentResult(BaseModel):
+    prompt: str
+    output: Any
+    completion: Optional[Any] = None
+
+
+class ChatterResult(BaseModel):
+    results: Dict[str, SegmentResult] = Field(default_factory=OrderedDict)
+
+    def __getitem__(self, key):
+        return self.results[key].output
+
+    def __setitem__(self, key, value):
+        # Assume caller is giving raw output — use None for completion by default
+        if isinstance(value, SegmentResult):
+            self.results[key] = value
+        else:
+            self.results[key] = SegmentResult(output=value)
+
+    def update(self, d: Dict[str, Any]):
+        for k, v in d.items():
+            self[k] = v
+
     @property
     def response(self):
-        # return the last item in the dict
-        return next(reversed(self.items()))[1]
+        return next(reversed(self.results.values())).output if self.results else None
 
     @property
     def outputs(self):
-        return Box(self)
+        return Box({k: v.output for k, v in self.results.items()})
 
 
-@task(cache_policy=CACHE_POLICY)
+@task(cache_policy=CACHE_POLICY, persist_result=CACHE_ON, cache_result_in_memory=CACHE_ON)
 def process_single_segment(segment, model, credentials, context={}, cache=True):
     """
     Process a single segment sequentially, building context as we go.
@@ -127,7 +161,6 @@ def process_single_segment(segment, model, credentials, context={}, cache=True):
 
         # Debug the context to see what's available to template tags
         logger.info(f"Template context keys: {list(accumulated_context.keys())}")
-        logger.info(f"{LC.BLUE}Prompt: {rendered_prompt}{LC.RESET}")
 
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
@@ -144,11 +177,9 @@ def process_single_segment(segment, model, credentials, context={}, cache=True):
         if hasattr(res, "response") and res.response is not None:
             res = res.response
 
-        logger.info(f"{LC.GREEN}Response: {res}{LC.RESET}")
-        logger.info(f"{LC.PURPLE}Response type: {type(res)}{LC.RESET}")
-
         # Store the completion in both our final results and accumulated context.
-        results[key] = res
+        results[key] = SegmentResult(output=res, completion=completion_obj, prompt=rendered_prompt)
+
         accumulated_context[key] = res
 
         # For this segment, include the result in the prompt parts.
@@ -218,7 +249,7 @@ class SegmentDependencyGraph:
         return execution_plan
 
 
-@task(name="merge_contexts", persist_result=False, cache_result_in_memory=True)
+@task(name="merge_contexts", persist_result=CACHE_ON, cache_result_in_memory=CACHE_ON)
 def merge_contexts(*contexts):
     """Must be a task to preserve ordering/graph in chatter"""
     merged = {}
@@ -268,7 +299,8 @@ def chatter(
     for i, segment in enumerate(segments):
         sid = f"segment_{i}"
         result = segment_futures[sid].result()
-        final.update(dict(result))
+        final.update(result.results)
+
     return final
 
 

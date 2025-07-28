@@ -1,5 +1,6 @@
 import inspect
 import itertools
+from pathlib import Path
 import logging
 import math
 import os
@@ -7,16 +8,17 @@ import re
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union, Annotated
 
 import pandas as pd
 import prefect
 import tiktoken
 import yaml
+from chatter.parsing import parse_syntax
 from box import Box
 from chatter import LLM, LLMCredentials, chatter
 from chatter.return_type_models import ACTION_LOOKUP
-from jinja2 import Environment, StrictUndefined, Template, meta
+from jinja2 import Environment, StrictUndefined, Template, meta, TemplateSyntaxError
 from prefect import flow, task
 from prefect.cache_policies import INPUTS, TASK_SOURCE
 from prefect.futures import PrefectFuture
@@ -75,34 +77,48 @@ class Edge:
     to_node: str
 
 
-class DAG(BaseModel):
-    model_config = {
-        "ignored_types": (prefect.flows.Flow,),
-    }
-
-    name: str
-    nodes: Dict[str, "DAGNode"] = Field(default_factory=dict)
-    extra_context: Dict[str, Any] = {}
+class DAGConfig(BaseModel):
     document_paths: Optional[List[str]] = []
     documents: List[str] = []
-
     model_name: str = "gpt-4o-mini"
     temperature: float = 1.0
     chunk_size: int = 20000  # characters, so ~5k tokens or ~4k English words
+    extra_context: Dict[str, Any] = {}
 
     def get_model(self):
         return LLM(model_name=self.model_name, temperature=self.temperature)
 
+    def load_documents(self) -> List[str]:
+        if hasattr(self, "documents") and self.documents:
+            logger.info("Using cached documents")
+            return self.documents
+
+        with unpack_zip_to_temp_paths_if_needed(self.document_paths) as dp_:
+            self.documents = [extract_text(i) for i in dp_]
+        return self.documents
+
+
+DAGNodeUnion = Annotated[
+    Union["Map", "Reduce", "Transform", "Batch", "Split"], Field(discriminator="type")
+]
+
+
+class DAG(BaseModel):
+    model_config = {
+        "ignored_types": (prefect.flows.Flow,),
+    }
+    name: str
+    default_context: Dict[str, Any] = {}
+    nodes: List["DAGNodeUnion"] = Field(default_factory=list)
+    config: DAGConfig = DAGConfig()
+
     @property
     def edges(self) -> List["Edge"]:
         all_edges = []
-        for node in self.nodes.values():
+        for node in self.nodes:
             for input_ref in node.inputs:
-                if input_ref.startswith("context."):
-                    continue
-                from_node = input_ref.split(".")[0]
-                if from_node in self.nodes:
-                    all_edges.append(Edge(from_node=from_node, to_node=node.name))
+                if input_ref in [i.name for i in self.nodes]:
+                    all_edges.append(Edge(from_node=input_ref, to_node=node.name))
 
         return all_edges
 
@@ -118,11 +134,10 @@ class DAG(BaseModel):
             "Batch": ("[[", "]]"),  # subroutine shape
         }
 
-        for node_name, node in self.nodes.items():
-            node_type = type(node).__name__
-            l, r = shape_map.get(node_type, ("[", "]"))  # fallback to rectangle
-            label = f"{node_type}: {node_name}"
-            lines.append(f"    {node_name}{l}{label}{r}")
+        for node in self.nodes:
+            l, r = shape_map.get(node.type, ("[", "]"))  # fallback to rectangle
+            label = f"{node.type}: {node.name}"
+            lines.append(f"    {node.name}{l}{label}{r}")
 
         for edge in self.edges:
             lines.append(f"    {edge.from_node} --> {edge.to_node}")
@@ -131,7 +146,7 @@ class DAG(BaseModel):
 
     def get_execution_order(self) -> List[List[str]]:
         """Get the execution order as batches of nodes that can run in parallel."""
-        remaining = set(self.nodes.keys())
+        remaining = set([i.name for i in self.nodes])
         execution_order = []
 
         while remaining:
@@ -151,20 +166,15 @@ class DAG(BaseModel):
 
         return execution_order
 
-    def load_documents(self) -> List[str]:
-        if hasattr(self, "_documents") and self._documents:
-            logger.info("Using cached documents")
-            return self._documents
-
-        with unpack_zip_to_temp_paths_if_needed(self.document_paths) as dp_:
-            self._documents = [extract_text(i) for i in dp_]
-        return self._documents
+    @property
+    def nodes_dict(self):
+        return {i.name: i for i in self.nodes}
 
     @flow(log_prints=True)
     def run(self):
-        self.load_documents()
+        self.config.load_documents()
         for batch in self.get_execution_order():
-            futures = [run_node.submit(self.nodes[name]) for name in batch]
+            futures = [run_node.submit(self.nodes_dict[name]) for name in batch]
             # Wait for all in batch to finish
             for f in futures:
                 f.result()
@@ -183,18 +193,16 @@ class DAG(BaseModel):
         return dependencies
 
     def add_node(self, node: "DAGNode"):
-        # if self.nodes.get(node.name):
+        # if self.nodes_dict.get(node.name):
         #     raise ValueError(f"Node '{node.name}' already exists in DAG")
         node.dag = self
-        self.nodes[node.name] = node
+        self.nodes.append(node)
 
     def get_required_context_variables(self):
-        node_names = self.nodes.keys()
+        node_names = [i.name for i in self.nodes]
         all_vars = []
         tmplts = list(
-            itertools.chain(
-                *[get_template_variables(i.template) for i in self.nodes.values() if i.template]
-            )
+            itertools.chain(*[get_template_variables(i.template) for i in self.nodes if i.template])
         )
         return set(tmplts).difference(node_names)
 
@@ -207,91 +215,78 @@ class DAG(BaseModel):
     @property
     def context(self) -> Dict[str, Any]:
         """Backward compatibility: return node outputs as dict"""
-        return {k: v.output for k, v in self.nodes.items() if v.output is not None}
+        results = {v.name: v.output for v in self.nodes if v and v.output is not None}
+        conf = self.config.extra_context.copy()
+        conf.update(results)
+        return conf
 
 
 class DAGNode(BaseModel):
-    dag: Optional["DAG"] = None
+    type: str = Field(default_factory=lambda self: type(self).__name__, exclude=False)
+
+    model_config = {"discriminator": "type"}
+
+    dag: Optional["DAG"] = Field(default=None, exclude=True)
     name: str
     inputs: Optional[List[str]] = []
-    model_name: Optional[str] = None
+    template_text: Optional[str] = None
     output: Any = None
 
-    template_name: Optional[str] = None
-    template_text: Optional[str] = None
-
-    document_paths: Optional[List[str]] = []
-
     def get_model(self):
-        if self.model_name is None:
-            return self.dag.get_model()
-        return LLM(model_name=self.model_name)
+        return self.dag.config.get_model()
 
-    @abstractmethod
-    def run(self, items: List[Any]) -> List[Any]:
-        raise NotImplementedError
+    def validate_template(self):
+        try:
+            Environment().parse(self.template_text)
+            return True
+        except TemplateSyntaxError as e:
+            raise e
+            logger.error(f"Template syntax error: {e}")
+            return False
+
+    def run(self, items: List[Any] = None) -> List[Any]:
+        logger.info(f"\n\nRunning `{self.name}` ({self.__class__.__name__})\n\n")
 
     @property
     def context(self) -> Dict[str, Any]:
-        ctx = self.dag.extra_context.copy()
+        ctx = self.dag.default_context.copy()
 
+        # merge in extra_context from config (includes persona, research_question, etc.)
+        ctx.update(self.dag.config.extra_context)
+
+        # if there are no inputs, assume we'll be using input documents
         if not self.inputs:
             self.inputs = ["documents"]
 
-        for input_name in self.inputs:
-            if input_name == "documents":
-                ctx["documents"] = self.dag.load_documents()
-            elif "." in input_name:
-                # handle dotted access like "batch.codes"
-                node_name, key = input_name.split(".", 1)
-                if node_name in self.dag.nodes:
-                    node = self.dag.nodes[node_name]
-                    if hasattr(node, f"{key}_flat"):
-                        ctx[input_name] = getattr(node, f"{key}_flat")
-                    elif hasattr(node.output, key):
-                        ctx[input_name] = getattr(node.output, key)
-                    elif isinstance(node.output, dict) and key in node.output:
-                        ctx[input_name] = node.output[key]
-            else:
-                if input_name in self.dag.nodes:
-                    node_output = self.dag.nodes[input_name].output
-                    if node_output is not None:
-                        ctx[input_name] = node_output
+        if "documents" in self.inputs:
+            ctx["documents"] = self.dag.config.load_documents()
+
+        prev_nodes = {k: self.dag.nodes_dict.get(k) for k in self.inputs}
+        prev_output = {k: v.output for k, v in prev_nodes.items() if v and v.output is not None}
+        ctx.update(prev_output)
 
         return ctx
 
-    def get_template_name(self) -> str:
-        if not self.template_name:
-            return f"{self.name}.md"
-        else:
-            return self.template_name
-
     @property
     def template(self) -> str:
-        if self.template_text is not None:
-            return self.template_text
-        try:
-            try:
-                current_directory = os.path.dirname(inspect.getfile(self.__class__))
-            except OSError:
-                current_directory = os.getcwd() + "/soak/pipelines/yaml/"
-
-            with open(os.path.join(current_directory, self.get_template_name())) as f:
-                return f.read()
-        except FileNotFoundError:
-            return None
+        return self.template_text
 
 
 class Split(DAGNode):
-    model_config = {"arbitrary_types_allowed": True}
+    type: Literal["Split"] = "Split"
+
     name: str = "chunks"
     template_text: str = "{{input}}"
+
     near: List[str] = ["\n\n", "\n", ".", " "]
     chunk_size: int = 20000
     min_split: int = 500
     split_unit: Literal["chars", "tokens"] = "chars"
     encoding_name: str = "cl100k_base"
-    token_encoder: Optional[tiktoken.Encoding] = None
+
+    @property
+    def token_encoder(self):
+        return tiktoken.get_encoding(self.encoding_name)
 
     @property
     def template(self):
@@ -305,19 +300,12 @@ class Split(DAGNode):
 
         assert self.chunk_size > self.min_split, "chunk_size must be greater than min_split"
 
-        if self.split_unit == "tokens":
-            self.token_encoder = kwargs.get("token_encoder") or tiktoken.get_encoding(
-                self.encoding_name
-            )
-
     def run(self) -> List[str]:
-        logger.info(f"Running {self.name} ({self.__class__.__name__})")
+        super().run()
         input_docs = self.context[self.inputs[0]]
-        chunk_size = self.chunk_size or self.dag.chunk_size
-        result = list(itertools.chain.from_iterable(map(self.split_document, input_docs)))
-        logger.info(f"CREATED {len(result)} chunks")
-        self.output = result
-        return result
+        self.output = list(itertools.chain.from_iterable(map(self.split_document, input_docs)))
+        logger.info(f"CREATED {len(self.output)} chunks")
+        return self.output
 
     def split_document(self, doc: str) -> List[str]:
         if self.split_unit == "chars":
@@ -371,10 +359,11 @@ def resolve(obj):
 
 
 class ItemsNode(DAGNode):
+    """Any note which applies to multiple items at once"""
 
     def get_items(self) -> List[Dict[str, Any]]:
-
-        # resolve futures at this point, so it's lazy
+        """Resolve all inputs, then zip together, combining multiple inputs"""
+        # resolve futures now (it's lazy to this point)
         input_data = resolve({k: self.context[k] for k in self.inputs})
         lengths = {k: len(v) if isinstance(v, list) else 1 for k, v in input_data.items()}
         max_len = max(lengths.values())
@@ -405,16 +394,29 @@ class ItemsNode(DAGNode):
 def default_map_task(template, context, model, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
     rt = render_strict_template(template, context)
-    return chatter_dag(multipart_prompt=rt, context=context, model=model, **kwargs).response
+    return chatter_dag(multipart_prompt=rt, context=context, model=model, **kwargs)
 
 
 class Map(ItemsNode):
+    type: Literal["Map"] = "Map"
     # fn must accepts **kwargs, return iterable
     task: Callable = staticmethod(default_map_task)
     default_template: str = "{{input}} <prompt>: [[output]]"
 
+    @property
+    def template(self) -> str:
+        return self.template_text or self.default_template
+
+    def validate_template(self):
+        try:
+            parse_syntax(self.template_text)
+            return True
+        except Exception as e:
+            logger.error(f"Template syntax error: {e}")
+            return False
+
     def run(self) -> List[Any]:
-        logger.info(f"Running {self.name} ({self.__class__.__name__})")
+        super().run()
 
         # check if input is BatchList
         input_data = self.context[self.inputs[0]] if self.inputs else None
@@ -439,6 +441,8 @@ class Map(ItemsNode):
                 )
                 for item in all_items
             ]
+
+            # note results are a list of ChatterResult
             results = [f.result() for f in futures]
 
             # reconstruct BatchList structure
@@ -469,29 +473,35 @@ class Map(ItemsNode):
 
 
 class Transform(ItemsNode):
-    fn: Callable[..., Iterable[Any]] = None
+    type: Literal["Transform"] = "Transform"
+    # TODO: allow for arbitrary python functions instead of chatter?
+    # fn: Field(Callable[..., Iterable[Any]],  exclude=True) = None
     default_template: str = "{{input}} <prompt>: [[output]]"
 
+    @property
+    def template(self) -> str:
+        return self.template_text or self.default_template
+
     def run(self):
-        logger.info(f"Running {self.name} ({self.__class__.__name__})")
+        super().run()
+
         items = self.get_items()
 
         if not isinstance(items, str):
             assert len(items) == 1, "Transform nodes must have exactly one input item"
 
-        if self.fn:
-            res = self.fn(items)
-        else:
-            rt = render_strict_template(self.template, {**self.context, **items[0]})
-            res = chatter_dag(multipart_prompt=rt, model=self.get_model()).response
-            print(f"RESPONSE TYPE: {type(res)}")
-        self.output = res
-        return res
+        rt = render_strict_template(self.template, {**self.context, **items[0]})
+        self.output = chatter_dag(multipart_prompt=rt, model=self.get_model()).response
+        return self.output
 
 
 class Reduce(ItemsNode):
-    fn: Optional[Callable] = None
+    type: Literal["Reduce"] = "Reduce"
     default_template: str = "{{input}}"
+
+    @property
+    def template(self) -> str:
+        return self.template_text or self.default_template
 
     def get_items(self):
         if len(self.inputs) > 1:
@@ -508,33 +518,28 @@ class Reduce(ItemsNode):
         return items
 
     def run(self, items=None) -> Any:
-        logger.info(f"Running {self.name} ({self.__class__.__name__})")
+
+        super().run()
+
         items = items or self.get_items()
 
         # if items is a BatchList, run on each batch
         if isinstance(items, BatchList):
-            res = [self.run(items=i) for i in items.batches]
-            self.output = res
-            return res
-        else:
-            if self.fn:
-                res = [self.fn(i) for i in items]
-            elif self.template:
-                # handle both dictionaries and strings
-                rendered = []
-                for item in items:
-                    if isinstance(item, dict):
-                        context = {**item}
-                    else:
-                        # item is a string, wrap it for template processing
-                        context = {"input": item}
-                    rendered.append(render_strict_template(self.template, context))
-                res = "\n".join(rendered)
-            else:
-                res = items
+            self.output = [self.run(items=i) for i in items.batches]
+            return self.output
 
-            self.output = res
-            return res
+        else:
+            # handle both dictionaries and strings
+            rendered = []
+            for item in items:
+                if isinstance(item, dict):
+                    context = {**item}
+                else:
+                    # item is a string, wrap it for template processing
+                    context = {"input": item}
+                rendered.append(render_strict_template(self.template, context))
+            self.output = "\n".join(rendered)
+            return self.output
 
 
 @dataclass
@@ -546,16 +551,17 @@ class BatchList(object):
 
 
 class Batch(ItemsNode):
-    batch_fn: Optional[Callable] = None
+    type: Literal["Batch"] = "Batch"
+    # batch_fn: Optional[Callable] = None
     batch_size: int = 10
     default_template: Optional[str] = None
 
     def run(self) -> List[List[Any]]:
-        logger.info(f"Running {self.name} ({self.__class__.__name__})")
+        super().run()
+
         batches_ = self.default_batch(self.get_items(), self.batch_size)
-        batches = BatchList(batches=batches_)
-        self.output = batches
-        return batches
+        self.output = BatchList(batches=batches_)
+        return self.output
 
     def default_batch(self, items: List[Any], batch_size: int) -> List[List[Any]]:
         """Batch items into lists of size batch_size."""
@@ -565,53 +571,63 @@ class Batch(ItemsNode):
 class QualitativeAnalysisPipeline(DAG):
 
     def result(self):
-        thms_node = self.nodes.get("themes")
+        thms_node = self.nodes_dict.get("themes")
         thms = getattr(thms_node.output, "themes", []) if thms_node and thms_node.output else []
 
-        cds_node = self.nodes.get("codes")
+        cds_node = self.nodes_dict.get("codes")
         cds = getattr(cds_node.output, "codes", []) if cds_node and cds_node.output else []
 
-        return QualitativeAnalysis(
-            themes=thms,
-            codes=cds,
-            details={k: v.output for k, v in self.nodes.items() if v.output is not None},
-            config={
-                "extra_context": self.extra_context,
-            },
-        )
+        try:
+
+            return QualitativeAnalysis(
+                themes=thms,
+                codes=cds,
+                details={n.name: n.output for n in self.nodes if n and n.output is not None},
+                pipeline=self.export(),
+            )
+        except Exception as e:
+            logger.error(f"Error creating QualitativeAnalysis from pipeline: {e}")
+            return self.nodes_dict
+
+    def export(self, file_path=None) -> str:
+        """
+        Export pipeline to template bundle format string.
+
+        Args:
+            file_path: Optional path to save the template bundle to a file
+
+        Returns:
+            str: Template bundle content
+        """
+        from .specs import pipeline_to_template_bundle
+
+        bundle = pipeline_to_template_bundle(self)
+
+        if file_path is not None:
+            Path(file_path).write_text(bundle)
+
+        return bundle
+
+    @classmethod
+    def import_(cls, template_bundle) -> "QualitativeAnalysisPipeline":
+        """Import pipeline from template bundle format string or Path object."""
+        from .specs import load_template_bundle
+
+        return load_template_bundle(template_bundle)
 
 
-def pipeline_from_yaml(yaml_str: str) -> QualitativeAnalysisPipeline:
-    config = yaml.safe_load(yaml_str)
-    return pipeline_from_spec(config)
+# Resolve forward references after QualitativeAnalysisPipeline is defined
+from .models import QualitativeAnalysis
+
+ItemsNode.model_rebuild(force=True)
+DAGNode.model_rebuild(force=True)
+DAG.model_rebuild(force=True)
+QualitativeAnalysis.model_rebuild()
 
 
-def pipeline_from_spec(config: OrderedDict) -> QualitativeAnalysisPipeline:
+# from typing import Annotated, Union
+# from pydantic import Field
 
-    name = config.get("name", "pipeline")
-    extra_context = config.get("extra_context", {})
-    document_paths = config.get("document_paths", [])
-    documents = config.get("documents", [])
+# from soak.dag import Map, Reduce, Transform, Batch, Split
 
-    dag = QualitativeAnalysisPipeline(name=name, extra_context=extra_context)
-    dag.document_paths = document_paths
-    dag.documents = documents
-
-    node_constructors = {
-        "split": Split,
-        "map": Map,
-        "reduce": Reduce,
-        "transform": Transform,
-        "batch": Batch,
-    }
-
-    for k, v in config.get("settings", {}).items():
-        logger.debug(f"Setting {k} to {v}")
-        setattr(dag, k, v)
-
-    for node_def in config.get("steps", None) or config.get("nodes", None):
-        for kind, spec in node_def.items():
-            node = node_constructors[kind](**spec)
-            dag.add_node(node)
-
-    return dag
+# TypeAdapter(DAGNodeUnion).validate_python({'type': 'Map', 'name': 'test'})

@@ -9,15 +9,26 @@ from pathlib import Path
 import typer
 from decouple import config as env_config
 
-from .dag import pipeline_from_yaml
+from .specs import load_template_bundle
 from .document_utils import extract_text, unpack_zip_to_temp_paths_if_needed
+
+
+logging.basicConfig(
+    level=logging.INFO,  # or DEBUG
+    format="%(asctime)s | %(levelname)s | %(name)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logging.getLogger("chatter").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+logging.getLogger().setLevel(logging.INFO)
 
 
 def get_unique_path(path: Path) -> Path:
     if not path.exists():
         return path
     for i in range(1, 1_000):
-        new_path = path.with_stem(f"{path.stem}_{i}")
+        new_path = path.with_stem(f"{path.stem}{i}")
         if not new_path.exists():
             return new_path
     raise FileExistsError("Too many files with the same name.")
@@ -58,14 +69,16 @@ def run(
         pipyml = Path(pipeline)
         if not pipyml.is_file():
             raise FileNotFoundError(f"Pipeline file not found: {pipyml}")
-    pipeline = pipeline_from_yaml(pipyml.read_text())
-    pipeline.document_paths = None
-    pipeline._documents = None
+
+    print(f"Loading pipeline from {pipyml}")
+    pipeline = load_template_bundle(pipyml)
+    pipeline.config.document_paths = None
+    pipeline.config.documents = None
 
     print(pipeline)
 
     with unpack_zip_to_temp_paths_if_needed(input_files) as docfiles:
-        pipeline.document_paths = docfiles
+        pipeline.config.document_paths = docfiles
 
     try:
         # all pipelines are now DAG pipelines
@@ -88,7 +101,7 @@ def list_pipelines():
         print("Available DAG pipelines:")
         for path in yaml_files:
             try:
-                _ = pipeline_from_yaml(path.read_text())
+                _ = load_template_bundle(path)
                 status = "✓"
                 issues = []
             except Exception as e:

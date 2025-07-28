@@ -1,42 +1,61 @@
 name: demo
-
 extra_context:
   persona: Winston
-
 steps:
 - split:
     name: chunks
-    template_text: "{{input}}"
-    inputs:
-    - documents
-
+    template_text: chunks
 - batch:
     name: batches
-    batch_size: 3
     inputs:
     - chunks
-
+    batch_size: 3
 - reduce:
     name: reduced_batches
-    template_text: "{{input}}"
     inputs:
     - batches
-
+    template_text: reduced_batches
 - map:
     name: threewordsummaries
-    template_text: "{{input}} summarise in 3 words: [[output]]"
     inputs:
     - reduced_batches
     model_name: gpt-4o
-
+    template_text: threewordsummaries
 - reduce:
     name: joinedsummaries
-    template_text: "{{input}}\n\n---\n\n"
     inputs:
     - threewordsummaries
-
+    template_text: joinedsummaries
 - transform:
     name: narrative_report
-    template_text: "{{input}}\n\n make this into a haikiu\n [[poem:poem]]"
     inputs:
     - joinedsummaries
+    template_text: narrative_report
+
+--- {# chunks }
+
+{{input}}
+
+
+--- {# reduced_batches }
+
+{{input}}
+
+
+--- {# threewordsummaries }
+
+{{input}} summarise in 3 words: [[output]]
+
+
+--- {# joinedsummaries }
+
+{{input}}\n\n---\n\n
+
+
+--- {# narrative_report }
+
+{{input}}
+
+ make this into a haikiu
+ [[poem:poem]]
+
