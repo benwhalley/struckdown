@@ -2,6 +2,7 @@
 
 import glob
 import os
+import re
 import tempfile
 import zipfile
 from contextlib import contextmanager
@@ -10,9 +11,40 @@ from pathlib import Path
 import docx
 import magic
 import pdfplumber
+import scrubadub
+import scrubadub_spacy
 from pdfplumber.utils.exceptions import PdfminerException
+from scrubadub.detectors import EmailDetector
+from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
+from scrubadub_spacy.detectors import SpacyEntityDetector
 
-from .models import Document
+
+class StrictEmailDetector(EmailDetector):
+    """Only match proper RFC-style emails, not things like 'vague @ times'."""
+
+    name = "strict_email"
+    regex = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", re.UNICODE)
+
+
+def get_scrubber(salt, model="en_core_web_md"):
+    """
+    Return a configured scrubber with:
+    - hashed + wrapped replacements
+    - spaCy NER detector (e.g. PERSON, ORG)
+    - stricter email detector (avoids '@' in normal text)
+    """
+    scrubber = scrubadub.Scrubber(
+        post_processor_list=[
+            FilthReplacer(include_hash=True, hash_salt=salt, hash_length=4),
+            PrefixSuffixReplacer(prefix="[", suffix="]"),
+        ],
+        detector_list=[],  # start empty to avoid default detectors
+    )
+    spacy_detector = SpacyEntityDetector(model=model)
+    scrubber.add_detector(spacy_detector)
+    scrubber.add_detector(StrictEmailDetector())
+
+    return scrubber
 
 
 def safer_extract(zip_ref, dest_dir, max_files: int = 1000):
@@ -184,45 +216,3 @@ def detect_file_type(path: Path) -> str:
         return "Plain Text"
     else:
         return "Unknown"
-
-
-def load_documents(file_patterns: list[str]) -> list[Document]:
-    """Load documents from file patterns with globbing support."""
-    documents = []
-    total_chars = 0
-
-    # Expand glob patterns
-    file_paths = []
-    for pattern in file_patterns:
-        matched_files = glob.glob(pattern)
-        if not matched_files:
-            # If no glob matches, check if it's a direct file path
-            if Path(pattern).exists():
-                file_paths.append(pattern)
-            else:
-                print(f"Warning: No files found matching pattern '{pattern}'")
-        else:
-            file_paths.extend(matched_files)
-
-    if not file_paths:
-        print("Error: No files found")
-        raise typer.Exit(1)
-
-    # Load each file using document_utils
-    for file_path in file_paths:
-        path = Path(file_path)
-        if not path.exists():
-            print(f"Error: File {file_path} not found")
-            continue
-
-        try:
-            content = extract_text(str(path))
-            documents.append(Document(id=path.stem, content=content))
-            total_chars += len(content)
-            print(f"Loaded {len(content)} characters from {file_path}")
-        except Exception as e:
-            print(f"Error loading {file_path}: {e}")
-            continue
-
-    print(f"Total: {len(documents)} documents, {total_chars} characters")
-    return documents

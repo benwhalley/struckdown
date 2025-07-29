@@ -1,6 +1,7 @@
 # utils/naming.py
 
 import re
+
 from django.db.models import Model
 from django.db.models.query import QuerySet
 

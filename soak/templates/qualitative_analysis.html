@@ -19,9 +19,9 @@
 
     <div class="summary">
         <h2>Summary</h2>
-        <p><strong>Total Documents:</strong> {{ analysis.details.documents|length }}</p>
-        <p><strong>Total Themes:</strong> {{ analysis.themes|length }}</p>
-        <p><strong>Total Codes:</strong> {{ analysis.codes|length  }}</p>
+        <p><strong>Total Documents:</strong> {{ analysis.details.documents|length if analysis.details.documents else 0 }}</p>
+        <p><strong>Total Themes:</strong> {{ analysis.themes|length if analysis.themes else 0 }}</p>
+        <p><strong>Total Codes:</strong> {{ analysis.codes|length if analysis.codes else 0 }}</p>
     </div>
 
     {% if analysis.themes %}
@@ -52,7 +52,7 @@
 
 
     <h2>Reflexivity</h2>
-    {{analysis.details.reflexive_thoughts}}
+    {{ analysis.details.reflexive_thoughts if analysis.details.reflexive_thoughts else "No reflexive thoughts recorded." }}
 
 
 
@@ -85,12 +85,16 @@
 
     <div class="docs">
         <h3>Documents</h3>
-        {% for doc in analysis.documents %}
+        {% if analysis.details.documents %}
+        {% for doc in analysis.details.documents %}
         <p>
-            <code>{{doc.id}}</code>:
-            {{ doc.content[:100] }}</p>
-
+            <code>{{ doc.id if doc.id else loop.index }}</code>:
+            {{ doc.content[:100] if doc.content else doc[:100] }}...
+        </p>
         {% endfor %}
+        {% else %}
+        <p>No documents available for display.</p>
+        {% endif %}
     </div>
 
 </body>

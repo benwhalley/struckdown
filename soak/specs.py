@@ -1,16 +1,16 @@
+import logging
 import re
-import yaml
 from pathlib import Path
 from typing import Union
-from jinja2 import Environment, TemplateSyntaxError
-from chatter.parsing import parse_syntax
-from soak.dag import QualitativeAnalysisPipeline, Split, Map, Reduce, Transform, Batch
 
-import logging
+import yaml
+from chatter.parsing import parse_syntax
+from jinja2 import Environment, TemplateSyntaxError
+from soak.dag import Batch, Map, QualitativeAnalysisPipeline, Reduce, Split, Transform
 
 logger = logging.getLogger(__name__)
 
-from soak.dag import DAG, DAGNode, Split, Map, Reduce, Transform, Batch, ItemsNode
+from soak.dag import DAG, Batch, DAGNode, ItemsNode, Map, Reduce, Split, Transform
 
 DAGNode.model_rebuild(force=True)
 

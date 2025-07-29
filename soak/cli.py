@@ -7,11 +7,12 @@ import sys
 from pathlib import Path
 
 import typer
+import yaml
+from chatter import LLMCredentials
 from decouple import config as env_config
 
+from .document_utils import unpack_zip_to_temp_paths_if_needed
 from .specs import load_template_bundle
-from .document_utils import extract_text, unpack_zip_to_temp_paths_if_needed
-
 
 logging.basicConfig(
     level=logging.INFO,  # or DEBUG
@@ -22,16 +23,6 @@ logging.getLogger("chatter").setLevel(logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logging.getLogger().setLevel(logging.INFO)
-
-
-def get_unique_path(path: Path) -> Path:
-    if not path.exists():
-        return path
-    for i in range(1, 1_000):
-        new_path = path.with_stem(f"{path.stem}{i}")
-        if not new_path.exists():
-            return new_path
-    raise FileExistsError("Too many files with the same name.")
 
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -57,9 +48,19 @@ def run(
     input_files: list[str] = typer.Argument(
         ..., help="File patterns or zip files (supports globs like '*.txt')"
     ),
-    output: str = typer.Option("output.json", "--output", "-o"),
+    output: str = typer.Option(
+        None, "--output", "-o", help="Output file path (stdout if not specified)"
+    ),
+    format: str = typer.Option("json", "--format", "-f", help="Output format: json, yaml, or html"),
+    include_documents: bool = typer.Option(
+        False, "--include-documents", help="Include original documents in output"
+    ),
 ):
     """Run a pipeline on input files."""
+
+    # validate format parameter
+    if format not in ["json", "yaml", "html"]:
+        raise typer.BadParameter("Format must be 'json', 'yaml', or 'html'")
 
     try:
         pipyml = PIPELINE_DIR / pipeline / "soak.yaml"
@@ -70,12 +71,13 @@ def run(
         if not pipyml.is_file():
             raise FileNotFoundError(f"Pipeline file not found: {pipyml}")
 
-    print(f"Loading pipeline from {pipyml}")
+    print(f"Loading pipeline from {pipyml}", file=sys.stderr)
     pipeline = load_template_bundle(pipyml)
+
     pipeline.config.document_paths = None
     pipeline.config.documents = None
 
-    print(pipeline)
+    pipeline.config.llm_credentials = LLMCredentials()
 
     with unpack_zip_to_temp_paths_if_needed(input_files) as docfiles:
         pipeline.config.document_paths = docfiles
@@ -86,10 +88,33 @@ def run(
     except Exception as e:
         raise typer.Exit(1)
 
-    np = get_unique_path(Path(output))
-    print(f"Writing output to {np}")
-    with open(Path(np), "w") as f:
-        f.write(json.dumps(result.result().model_dump()))
+    analysis = result.result()
+
+    # import pdb; pdb.set_trace()
+
+    analysis.config.llm_credentials.llm_api_key = (
+        analysis.config.llm_credentials.llm_api_key[:5] + "***"
+    )
+
+    # remove documents from output if not requested
+    if not include_documents:
+        analysis.config.documents = []
+
+    # generate output content based on format
+    if format == "json":
+        content = json.dumps(analysis, indent=2)
+    elif format == "yaml":
+        content = yaml.dump(analysis, default_flow_style=False, indent=2)
+    elif format == "html":
+        content = analysis.to_html()
+
+    # output to stdout or file
+    if output is None:
+        print(content)
+    else:
+        print(f"Writing output to {output}")
+        with open(output, "w") as f:
+            f.write(content)
 
 
 @app.command(name="list")

@@ -1,6 +1,5 @@
 import inspect
 import itertools
-from pathlib import Path
 import logging
 import math
 import os
@@ -8,23 +7,25 @@ import re
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union, Annotated
+from pathlib import Path
+from typing import Annotated, Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Union
 
 import pandas as pd
 import prefect
 import tiktoken
 import yaml
-from chatter.parsing import parse_syntax
 from box import Box
 from chatter import LLM, LLMCredentials, chatter
+from chatter.parsing import parse_syntax
 from chatter.return_type_models import ACTION_LOOKUP
-from jinja2 import Environment, StrictUndefined, Template, meta, TemplateSyntaxError
+from jinja2 import Environment, StrictUndefined, Template, TemplateSyntaxError, meta
 from prefect import flow, task
 from prefect.cache_policies import INPUTS, TASK_SOURCE
 from prefect.futures import PrefectFuture
 from pydantic import BaseModel, ConfigDict, Field
-from .document_utils import extract_text, unpack_zip_to_temp_paths_if_needed
-from .models import Code, CodeList, QualitativeAnalysis, Theme, Themes
+
+from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
+from .models import Code, CodeList, QualitativeAnalysis, Theme, Themes, DAGConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def run_node(node):
 def chatter_dag(**kwargs):
     """
     # example usage to return Codes
-    chatter_dag(multipart_prompt="Software as a service (SaaS /sæs/[1]) is a cloud computing service model where the provider offers use of application software to a client and manages all needed physical and software resources.[2] SaaS is usually accessed via a web application. Unlike other software delivery models, it separates 'the possession and ownership of software from its use'.[3] SaaS use began around 2000, and by 2023 was the main form of software application deployment.\n\n What is the theme of this text [[codes:code]]")
+    chatter_dag(multipart_prompt="Software as a service (SaaS /sæs/[1]) is a cloud computing service model where the provider offers use of application software to a client and manages all needed physical and software resources.[2] SaaS is usually accessed via a web application. Unlike other software delivery models, it separates 'the possession and ownership of software from its use'.[3] SaaS use began around 2000, and by 2023 was the main form of software application deployment.\n\n What is the theme of this text [[Codes:code]]")
     """
 
     action_lookup = ACTION_LOOKUP.copy()
@@ -53,6 +54,7 @@ def chatter_dag(**kwargs):
             "codes": CodeList,
         }
     )
+    action_lookup = dict(action_lookup)
     return chatter(**kwargs, action_lookup=action_lookup)
 
 
@@ -77,27 +79,6 @@ class Edge:
     to_node: str
 
 
-class DAGConfig(BaseModel):
-    document_paths: Optional[List[str]] = []
-    documents: List[str] = []
-    model_name: str = "gpt-4o-mini"
-    temperature: float = 1.0
-    chunk_size: int = 20000  # characters, so ~5k tokens or ~4k English words
-    extra_context: Dict[str, Any] = {}
-
-    def get_model(self):
-        return LLM(model_name=self.model_name, temperature=self.temperature)
-
-    def load_documents(self) -> List[str]:
-        if hasattr(self, "documents") and self.documents:
-            logger.info("Using cached documents")
-            return self.documents
-
-        with unpack_zip_to_temp_paths_if_needed(self.document_paths) as dp_:
-            self.documents = [extract_text(i) for i in dp_]
-        return self.documents
-
-
 DAGNodeUnion = Annotated[
     Union["Map", "Reduce", "Transform", "Batch", "Split"], Field(discriminator="type")
 ]
@@ -112,6 +93,10 @@ class DAG(BaseModel):
     nodes: List["DAGNodeUnion"] = Field(default_factory=list)
     config: DAGConfig = DAGConfig()
 
+    def progress(self):
+        last_complete = self.nodes[0]
+        return f"Last completed: {last_complete.name}"
+
     @property
     def edges(self) -> List["Edge"]:
         all_edges = []
@@ -124,13 +109,13 @@ class DAG(BaseModel):
 
     def to_mermaid(self) -> str:
         """Generate a Mermaid diagram of the DAG structure with shapes by node type."""
-        lines = ["graph TD"]
+        lines = ["flowchart TD"]
 
         shape_map = {
             "Split": ("(", ")"),  # round edges
-            "Map": ("[", "]"),  # standard rectangle
+            "Map": ("[[", "]]"),  # standard rectangle
             "Reduce": ("{{", "}}"),  # hexagon
-            "Transform": ("([", "])"),  # circle
+            "Transform": (">", "]"),  # circle
             "Batch": ("[[", "]]"),  # subroutine shape
         }
 
@@ -173,6 +158,8 @@ class DAG(BaseModel):
     @flow(log_prints=True)
     def run(self):
         self.config.load_documents()
+        if not self.config.llm_credentials:
+            raise Exception("LLMCredentials must be set for DAG")
         for batch in self.get_execution_order():
             futures = [run_node.submit(self.nodes_dict[name]) for name in batch]
             # Wait for all in batch to finish
@@ -391,10 +378,12 @@ class ItemsNode(DAGNode):
 
 
 @task(cache_policy=None)
-def default_map_task(template, context, model, **kwargs):
+def default_map_task(template, context, model, credentials, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
     rt = render_strict_template(template, context)
-    return chatter_dag(multipart_prompt=rt, context=context, model=model, **kwargs)
+    return chatter_dag(
+        multipart_prompt=rt, context=context, model=model, credentials=credentials, **kwargs
+    )
 
 
 class Map(ItemsNode):
@@ -438,6 +427,7 @@ class Map(ItemsNode):
                     template=self.template,
                     context={**filtered_context, **item},
                     model=self.get_model(),
+                    credentials=self.dag.config.llm_credentials,
                 )
                 for item in all_items
             ]
@@ -464,6 +454,7 @@ class Map(ItemsNode):
                     template=self.template,
                     context={**self.context, **item},
                     model=self.get_model(),
+                    credentials=self.dag.config.llm_credentials,
                 )
                 for item in items
             ]
@@ -491,7 +482,10 @@ class Transform(ItemsNode):
             assert len(items) == 1, "Transform nodes must have exactly one input item"
 
         rt = render_strict_template(self.template, {**self.context, **items[0]})
-        self.output = chatter_dag(multipart_prompt=rt, model=self.get_model()).response
+        # note output is not a ChatterResult
+        self.output = chatter_dag(
+            multipart_prompt=rt, model=self.get_model(), credentials=self.dag.config.llm_credentials
+        )
         return self.output
 
 
@@ -514,7 +508,7 @@ class Reduce(ItemsNode):
             return input_data
 
         # otherwise, wrap individual items in the expected format
-        items = [{"input": v} for v in input_data]
+        items = [{"input": v, self.inputs[0]: v} for v in input_data]
         return items
 
     def run(self, items=None) -> Any:
@@ -572,17 +566,37 @@ class QualitativeAnalysisPipeline(DAG):
 
     def result(self):
         thms_node = self.nodes_dict.get("themes")
-        thms = getattr(thms_node.output, "themes", []) if thms_node and thms_node.output else []
+        thms = (
+            getattr(thms_node.output.response, "themes", [])
+            if thms_node and thms_node.output
+            else []
+        )
 
         cds_node = self.nodes_dict.get("codes")
-        cds = getattr(cds_node.output, "codes", []) if cds_node and cds_node.output else []
+        cds = getattr(cds_node.output.response, "codes", []) if cds_node and cds_node.output else []
 
         try:
+            narrative = self.nodes_dict.get("narrative").output.response
+        except Exception as e:
+
+            logger.warning(f"Error getting narrative: {e}")
+            narrative = None
+
+        try:
+            # create document objects for the HTML template
+            documents = []
+            for i, doc_content in enumerate(self.config.documents):
+                documents.append({"id": f"doc_{i+1}", "content": doc_content})
+
+            details = {n.name: n.output for n in self.nodes if n and n.output is not None}
+            details["documents"] = documents
 
             return QualitativeAnalysis(
-                themes=thms,
                 codes=cds,
-                details={n.name: n.output for n in self.nodes if n and n.output is not None},
+                themes=thms,
+                narrative=narrative,
+                details=details,
+                config=self.config,
                 pipeline=self.export(),
             )
         except Exception as e:

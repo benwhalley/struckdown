@@ -5,13 +5,17 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from chatter import LLM, LLMCredentials, chatter
 
 if TYPE_CHECKING:
     from .dag import QualitativeAnalysisPipeline
-
+from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
 from jinja2 import Environment, FileSystemLoader, Template
 from pydantic import BaseModel, ConfigDict, Field
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Code(BaseModel):
@@ -24,40 +28,12 @@ class Code(BaseModel):
         description="Example quotes from the text which illustrate the code. Choose the best examples.",
     )
 
-    def __str__(self):
-        return f"{self.name}: {self.description}. Example quotes:{';'.join(self.quotes)}."
-
-    @classmethod
-    def mock_(self):
-        return Code(
-            slug=str(uuid.uuid4()),
-            name=str(uuid.uuid4()),
-            description=str(uuid.uuid4()),
-            quotes=["blah"],
-        )
-
 
 class CodeList(BaseModel):
     codes: List[Code] = Field(..., min_length=0)
 
-    def __str__(self):
-        return "\n\n".join(map(str, self.codes))
-
     def to_markdown(self):
         return "\n\n".join([f"- {i.name}: {i.description}\n{i.quotes}" for i in self.codes])
-
-    @classmethod
-    def mock_(self):
-        return CodeList(
-            codes=[
-                Code(
-                    slug=str(uuid.uuid4()),
-                    name=str(uuid.uuid4()),
-                    description=str(uuid.uuid4()),
-                    quotes=["blah"],
-                )
-            ]
-        )
 
 
 class Theme(BaseModel):
@@ -78,22 +54,6 @@ class Themes(BaseModel):
     def to_markdown(self):
         return "\n- ".join([i.name for i in self.themes])
 
-    @classmethod
-    def mock_(self):
-        return Themes(
-            themes=[
-                Theme(
-                    name=str(uuid.uuid4()),
-                    description=str(uuid.uuid4()),
-                    codes=[Code.mock_()],
-                )
-            ]
-        )
-
-
-class ResearchFinding(BaseModel):
-    description: str = Field(..., min_length=50, description="An inference made from some data.")
-
 
 @dataclass
 class Document:
@@ -105,10 +65,12 @@ class Document:
 
 
 class QualitativeAnalysis(BaseModel):
-    themes: Optional[List[Theme]] = None
     codes: Optional[List[Code]] = None
+    themes: Optional[List[Theme]] = None
+    narrative: Optional[str] = None
+
     details: Dict[str, Any] = Field(default_factory=dict)
-    config: Optional[dict] = None
+    config: Optional["DAGConfig"] = None
     pipeline: Optional[str] = None
 
     def name(self):
@@ -174,3 +136,37 @@ class QualitativeAnalysisComparison(BaseModel):
                 out[k]["plots"][plot_type] = self.comparison_plots[plot_type][k]
 
         return out
+
+
+class DAGConfig(BaseModel):
+    document_paths: Optional[List[str]] = []
+    documents: List[str] = []
+    model_name: str = "gpt-4o-mini"
+    temperature: float = 1.0
+    chunk_size: int = 20000  # characters, so ~5k tokens or ~4k English words
+    extra_context: Dict[str, Any] = {}
+    llm_credentials: Optional[LLMCredentials] = None
+    scrub_pii: bool = False
+    scrubber_model: str = "en_core_web_md"
+    scrubber_salt: Optional[str] = Field(default="42", exclude=True)
+
+    def get_model(self):
+        return LLM(model_name=self.model_name, temperature=self.temperature)
+
+    def load_documents(self) -> List[str]:
+        if hasattr(self, "documents") and self.documents:
+            logger.info("Using cached documents")
+            return self.documents
+
+        with unpack_zip_to_temp_paths_if_needed(self.document_paths) as dp_:
+            self.documents = [extract_text(i) for i in dp_]
+
+        if self.scrub_pii:
+            logger.info("Scrubbing PII")
+            if self.scrubber_salt == 42:
+                logger.warning("Scrubber salt is default, consider setting to a random value")
+
+            scrubber = get_scrubber(model=self.scrubber_model, salt=self.scrubber_salt)
+            self.documents = [scrubber.clean(i) for i in self.documents]
+
+        return self.documents

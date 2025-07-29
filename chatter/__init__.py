@@ -42,11 +42,14 @@ LC = Box(
 
 
 class LLMCredentials(BaseModel):
-    llm_api_key: str = env_config("LLM_API_KEY")
-    llm_base_url: str = env_config("LLM_BASE_URL", None)
+    llm_api_key: str = Field(default_factory=lambda: env_config("LLM_API_KEY"), exclude=True)
+    llm_base_url: str = Field(default_factory=lambda: env_config("LLM_BASE_URL", default=None))
 
     def __str__(self):
-        return f"LLMCredentials: {self.llm_api_key[:5]}"
+        return f"LLMCredentials(api_key='***REDACTED***', base_url='{self.llm_base_url}')"
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class LLM(BaseModel):
@@ -88,6 +91,7 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
         msg, lt, meta = res, None, com.dict()
 
     except Exception as e:
+        print("USING:", credentials)
         full_traceback = traceback.format_exc()
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
@@ -106,7 +110,10 @@ class SegmentResult(BaseModel):
 
 
 class ChatterResult(BaseModel):
-    results: Dict[str, SegmentResult] = Field(default_factory=OrderedDict)
+    results: OrderedDict[str, SegmentResult] = Field(default_factory=OrderedDict)
+
+    def __str__(self):
+        return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
 
     def __getitem__(self, key):
         return self.results[key].output
@@ -124,7 +131,11 @@ class ChatterResult(BaseModel):
 
     @property
     def response(self):
-        return next(reversed(self.results.values())).output if self.results else None
+        last = next(reversed(self.results.values())) if self.results else None
+        return last and last.output or None
+
+    def __str__(self):
+        return f"{self.response}"
 
     @property
     def outputs(self):
@@ -262,8 +273,8 @@ def merge_contexts(*contexts):
 @flow(name="chatter")
 def chatter(
     multipart_prompt: str,
-    model=LLM(model_name="gpt-4o-mini"),
-    credentials=LLMCredentials(),
+    model=None,
+    credentials=None,
     context={},
     action_lookup=ACTION_LOOKUP,
 ):
@@ -271,6 +282,7 @@ def chatter(
     example:
     chatter("tell a joke [[joke]]")
     """
+
     segments = parser(action_lookup=action_lookup).parse(multipart_prompt.strip())
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
