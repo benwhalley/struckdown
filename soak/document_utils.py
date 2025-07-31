@@ -34,13 +34,6 @@ def strip_null_bytes(obj):
         return obj
 
 
-class StrictEmailDetector(EmailDetector):
-    """Only match proper RFC-style emails, not things like 'vague @ times'."""
-
-    name = "strict_email"
-    regex = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", re.UNICODE)
-
-
 def get_scrubber(salt, model="en_core_web_md"):
     """
     Return a configured scrubber with:
@@ -52,6 +45,12 @@ def get_scrubber(salt, model="en_core_web_md"):
     from scrubadub.detectors import EmailDetector
     from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
     from scrubadub_spacy.detectors import SpacyEntityDetector
+
+    class StrictEmailDetector(EmailDetector):
+        """Only match proper RFC-style emails, not things like 'vague @ times'."""
+
+        name = "strict_email"
+        regex = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", re.UNICODE)
 
     scrubber = scrubadub.Scrubber(
         post_processor_list=[
