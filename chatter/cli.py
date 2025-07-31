@@ -27,8 +27,8 @@ def run(
     model = LLM(model_name=model_name)
     result = chatter(prompt_str, model=model, credentials=credentials, action_lookup=ACTION_LOOKUP)
 
-    for k, v in result.items():
-        typer.echo(f"{k}: {v}")
+    for k, v in result.results.items():
+        typer.echo(f"{k}: {v.output}")
 
     if show_context:
         typer.echo("\nFinal context:")

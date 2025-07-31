@@ -5,8 +5,8 @@ import re
 import traceback
 from collections import OrderedDict, defaultdict
 from types import FunctionType
-from typing import Any, Dict, List, Optional
-from typing import Callable
+from typing import Any, Callable, Dict, List, Optional
+
 import openai
 from box import Box
 from decouple import config
@@ -107,11 +107,12 @@ class SegmentResult(BaseModel):
 
     prompt: str
     output: Any
-    completion: Optional[Any] = Field(default=None, exclude=True)
+    completion: Optional[Any] = Field(default=None, exclude=False)
 
 
 class ChatterResult(BaseModel):
 
+    type: str = Field(default="chatter", description="Discriminator field for union serialization")
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
 
     def __str__(self):

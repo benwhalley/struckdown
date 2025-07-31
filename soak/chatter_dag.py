@@ -7,7 +7,7 @@ def chatter_dag(**kwargs):
     # example usage to return Codes
     chatter_dag(multipart_prompt="Software as a service (SaaS /sæs/[1]) is a cloud computing service model where the provider offers use of application software to a client and manages all needed physical and software resources.[2] SaaS is usually accessed via a web application. Unlike other software delivery models, it separates 'the possession and ownership of software from its use'.[3] SaaS use began around 2000, and by 2023 was the main form of software application deployment.\n\n What is the theme of this text [[Codes:code]]")
     """
-    from soak.models import Code, Theme, Themes, CodeList  # canonical import
+    from soak.models import Code, CodeList, Theme, Themes  # canonical import
 
     action_lookup = ACTION_LOOKUP.copy()
     action_lookup.update(

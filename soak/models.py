@@ -1,12 +1,5 @@
 """Data models for qualitative analysis pipelines."""
 
-from pydantic import BaseModel, RootModel, Tag
-from typing_extensions import Annotated
-from typing import List, Union
-from typing_extensions import Annotated
-from pydantic import Tag
-
-
 import hashlib
 import inspect
 import itertools
@@ -42,7 +35,6 @@ import yaml
 from box import Box
 from chatter import LLM, ChatterResult, LLMCredentials, chatter
 from chatter.parsing import parse_syntax
-
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -54,9 +46,9 @@ from jinja2 import (
 from prefect import flow, task
 from prefect.cache_policies import INPUTS, TASK_SOURCE
 from prefect.futures import PrefectFuture
-from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic import BaseModel, ConfigDict, Field, RootModel, Tag
 from soak.chatter_dag import chatter_dag
+from typing_extensions import Annotated
 
 from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
 
@@ -120,13 +112,9 @@ class QualitativeAnalysis(BaseModel):
     codes: Optional[List[Code]] = None
     themes: Optional[List[Theme]] = None
     narrative: Optional[str] = None
-
     details: Dict[str, Any] = Field(default_factory=dict)
     config: Optional["DAGConfig"] = None
     pipeline: Optional[str] = None
-
-    def codes(self):
-        return self.codes or []
 
     def name(self):
         return self.sha256()[:8]
@@ -382,39 +370,13 @@ class DAG(BaseModel):
         return conf
 
 
-# setup a union of possible output types
-# allow for singles, lists, batches
-class StringOutput(RootModel[Annotated[str, Tag("string")]]):
-    pass
-
-
-class StringListOutput(RootModel[Annotated[List[str], Tag("string_list")]]):
-    pass
-
-
-class StringBatchOutput(RootModel[Annotated[List[List[str]], Tag("string_batch")]]):
-    pass
-
-
-class ChatterOutput(RootModel[Annotated[ChatterResult, Tag("chatter")]]):
-    pass
-
-
-class ChatterListOutput(RootModel[Annotated[List[ChatterResult], Tag("chatter_list")]]):
-    pass
-
-
-class ChatterBatchOutput(RootModel[Annotated[List[List[ChatterResult]], Tag("chatter_batch")]]):
-    pass
-
-
 OutputUnion = Union[
-    StringOutput,
-    StringListOutput,
-    StringBatchOutput,
-    ChatterOutput,
-    ChatterListOutput,
-    ChatterBatchOutput,
+    str,
+    List[str],
+    List[List[str]],
+    ChatterResult,
+    List[ChatterResult],
+    List[List[ChatterResult]],
 ]
 
 
@@ -698,7 +660,7 @@ class Transform(ItemsNode):
             assert len(items) == 1, "Transform nodes must have exactly one input item"
 
         rt = render_strict_template(self.template, {**self.context, **items[0]})
-        # note output is not a ChatterResult
+        # note output is now a ChatterResult
         self.output = chatter_dag(
             multipart_prompt=rt, model=self.get_model(), credentials=self.dag.config.llm_credentials
         )
@@ -786,8 +748,8 @@ class QualitativeAnalysisPipeline(DAG):
         return Box(
             {
                 "pipeline": self,
-                "themes": self.nodes_dict.get("themes").output.response.themes,
-                "codes": self.nodes_dict.get("codes").output.response.codes,
+                "themes": Themes(**self.nodes_dict.get("themes").output.response).themes,
+                "codes": CodeList(**self.nodes_dict.get("codes").output.response).codes,
                 "narrative": self.nodes_dict.get("narrative").output.response,
                 "detail": self,
             }

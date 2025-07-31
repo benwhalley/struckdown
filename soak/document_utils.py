@@ -19,6 +19,24 @@ from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
 from scrubadub_spacy.detectors import SpacyEntityDetector
 
 
+def strip_null_bytes(obj):
+    """
+    Recursively strip null bytes (\\u0000) from strings in nested structures.
+    """
+    if isinstance(obj, str):
+        return obj.replace("\u0000", "")
+    elif isinstance(obj, dict):
+        return {strip_null_bytes(k): strip_null_bytes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [strip_null_bytes(i) for i in obj]
+    elif isinstance(obj, tuple):
+        return tuple(strip_null_bytes(i) for i in obj)
+    elif isinstance(obj, set):
+        return {strip_null_bytes(i) for i in obj}
+    else:
+        return obj
+
+
 class StrictEmailDetector(EmailDetector):
     """Only match proper RFC-style emails, not things like 'vague @ times'."""
 
@@ -124,7 +142,7 @@ def extract_text(path: str) -> str:
     path = Path(path)
     mtime = path.stat().st_mtime
     # print(f"Extracted {path}")
-    return _extract_text_cached(str(path), mtime)
+    return strip_null_bytes(_extract_text_cached(str(path), mtime))
 
 
 def _extract_docx_text(path: str) -> str:
