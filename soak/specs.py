@@ -6,11 +6,11 @@ from typing import Union
 import yaml
 from chatter.parsing import parse_syntax
 from jinja2 import Environment, TemplateSyntaxError
-from soak.dag import Batch, Map, QualitativeAnalysisPipeline, Reduce, Split, Transform
+from soak.models import Batch, Map, QualitativeAnalysisPipeline, Reduce, Split, Transform
 
 logger = logging.getLogger(__name__)
 
-from soak.dag import DAG, Batch, DAGNode, ItemsNode, Map, Reduce, Split, Transform
+from soak.models import DAG, Batch, DAGNode, ItemsNode, Map, Reduce, Split, Transform
 
 DAGNode.model_rebuild(force=True)
 

@@ -3,10 +3,10 @@
 import logging
 import re
 import traceback
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from types import FunctionType
 from typing import Any, Dict, List, Optional
-
+from typing import Callable
 import openai
 from box import Box
 from decouple import config
@@ -104,13 +104,15 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
 
 
 class SegmentResult(BaseModel):
+
     prompt: str
     output: Any
-    completion: Optional[Any] = None
+    completion: Optional[Any] = Field(default=None, exclude=True)
 
 
 class ChatterResult(BaseModel):
-    results: OrderedDict[str, SegmentResult] = Field(default_factory=OrderedDict)
+
+    results: Dict[str, SegmentResult] = Field(default_factory=dict)
 
     def __str__(self):
         return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
@@ -131,7 +133,8 @@ class ChatterResult(BaseModel):
 
     @property
     def response(self):
-        last = next(reversed(self.results.values())) if self.results else None
+        # dict is insertion ordered python > 3.7
+        last = self.results.get(next(reversed(self.results)), None)
         return last and last.output or None
 
     def __str__(self):
@@ -140,6 +143,10 @@ class ChatterResult(BaseModel):
     @property
     def outputs(self):
         return Box({k: v.output for k, v in self.results.items()})
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,  # treat unknown sub‑types as Any
+    )
 
 
 @task(cache_policy=CACHE_POLICY, persist_result=CACHE_ON, cache_result_in_memory=CACHE_ON)
