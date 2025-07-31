@@ -14,9 +14,6 @@ import pdfplumber
 import scrubadub
 import scrubadub_spacy
 from pdfplumber.utils.exceptions import PdfminerException
-from scrubadub.detectors import EmailDetector
-from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
-from scrubadub_spacy.detectors import SpacyEntityDetector
 
 
 def strip_null_bytes(obj):
@@ -51,6 +48,11 @@ def get_scrubber(salt, model="en_core_web_md"):
     - spaCy NER detector (e.g. PERSON, ORG)
     - stricter email detector (avoids '@' in normal text)
     """
+
+    from scrubadub.detectors import EmailDetector
+    from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
+    from scrubadub_spacy.detectors import SpacyEntityDetector
+
     scrubber = scrubadub.Scrubber(
         post_processor_list=[
             FilthReplacer(include_hash=True, hash_salt=salt, hash_length=4),
