@@ -133,7 +133,7 @@ def network_similarity_plot(
     theme_sets_ = [[j.name for j in i.result().themes] for i in pipeline_results]
     theme_sets = [i for i in theme_sets_ if i]
 
-    pipeline_names = [i.result_name() for i in pipeline_results]
+    pipeline_names = [i.name for i in pipeline_results]
 
     # Get embeddings for all sets
     embeddings = [get_embedding(set_str) for set_str in theme_sets]
@@ -323,11 +323,9 @@ def create_pairwise_heatmap(
 
     # TODO: set nicer titles
 
-    ax.set_title(
-        f"Theme Similarity Matrix\n{a.result_name()} vs {b.result_name()}. Threshold: {threshold}"
-    )
-    ax.set_xlabel(b.result_name())
-    ax.set_ylabel(a.result_name())
+    ax.set_title(f"Theme Similarity Matrix\n{a.name} vs {b.name}. Threshold: {threshold}")
+    ax.set_xlabel(b.name)
+    ax.set_ylabel(a.name)
 
     # Better tick label handling
     ax.tick_params(axis="x", rotation=45)
@@ -346,7 +344,7 @@ def create_pairwise_heatmap(
     plt.subplots_adjust(bottom=0.2)  # Add extra space at bottom for rotated labels
 
     suffix = threshold and f"_threshold={threshold}" or ""
-    plot_name = f"heatmap_{a.result_name()}_{b.result_name()}{suffix}.png"
+    plot_name = f"heatmap_{a.name}_{b.name}{suffix}.png"
     buffer = BytesIO()
     fig.savefig(buffer, dpi=300, bbox_inches="tight", format="png")
     plt.close(fig)
@@ -390,7 +388,7 @@ class SimilarityComparator:
         )
 
         result_combinations_dict = OrderedDict(
-            {i.result_name() + "_" + j.result_name(): (i, j) for i, j in result_combinations}
+            {i.name + "_" + j.name: (i, j) for i, j in result_combinations}
         )
 
         stats_dict = {
@@ -426,7 +424,7 @@ if False:
         for j in [i.result_json for i in Analysis.objects.filter(result_json__isnull=False)][-6:]
         if isinstance(j, dict)
     ]
-    pipeline_results[0].result_name()
+    pipeline_results[0].name
 
     x = list(reversed(pipeline_results))
     comp = SimilarityComparator().compare(pipeline_results)

@@ -62,7 +62,9 @@ logger = logging.getLogger(__name__)
 
 
 MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
-_map_semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
+# semaphore to be initialized lazily in the current event loop
+_map_semaphore = None
 
 
 # cache policy no longer needed with custom decorators
@@ -160,8 +162,8 @@ class QualitativeAnalysis(BaseModel):
 
 
 class QualitativeAnalysisComparison(BaseModel):
-    results: List[Any]
-    combinations: Dict[str, Tuple[Any, Any]]
+    results: List["QualitativeAnalysisPipeline"]
+    combinations: Dict[str, Tuple["QualitativeAnalysisPipeline", "QualitativeAnalysisPipeline"]]
     statistics: Dict[str, Dict]
     comparison_plots: Dict[str, Dict[str, Any]]  # eg. heatmaps.xxxyyy = List
     additional_plots: Dict[str, Any]
@@ -571,6 +573,12 @@ class ItemsNode(DAGNode):
 @task
 async def default_map_task(template, context, model, credentials, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
+    global _map_semaphore
+
+    # initialize semaphore lazily in the current event loop
+    if _map_semaphore is None:
+        _map_semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
     rt = render_strict_template(template, context)
     # call chatter async in the main event loop
     from chatter import chatter
@@ -807,10 +815,7 @@ class Batch(ItemsNode):
 
 class QualitativeAnalysisPipeline(DAG):
 
-    def result_name(self):
-        import hashlib
-
-        return hashlib.sha256(str(self.result()).encode("utf-8")).hexdigest()[:8]
+    name: Optional[str] = None
 
     def result(self):
 
@@ -835,21 +840,23 @@ class QualitativeAnalysisPipeline(DAG):
         Returns:
             str: Template bundle content
         """
-        from .specs import pipeline_to_template_bundle
+        raise Exception("Deprecated?")
 
-        bundle = pipeline_to_template_bundle(self)
+        # from .specs import pipeline_to_template_bundle
 
-        if file_path is not None:
-            Path(file_path).write_text(bundle)
+        # bundle = pipeline_to_template_bundle(self)
 
-        return bundle
+        # if file_path is not None:
+        #     Path(file_path).write_text(bundle)
 
-    @classmethod
-    def import_(cls, template_bundle) -> "QualitativeAnalysisPipeline":
-        """Import pipeline from template bundle format string or Path object."""
-        from .specs import load_template_bundle
+        # return bundle
 
-        return load_template_bundle(template_bundle)
+    # @classmethod
+    # def import_(cls, template_bundle) -> "QualitativeAnalysisPipeline":
+    #     """Import pipeline from template bundle format string or Path object."""
+    #     from .specs import load_template_bundle
+
+    #     return load_template_bundle(template_bundle)
 
 
 # Resolve forward references after QualitativeAnalysisPipeline is defined
