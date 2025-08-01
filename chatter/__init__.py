@@ -1,5 +1,6 @@
 """"""
 
+import asyncio
 import logging
 import re
 import traceback
@@ -13,12 +14,11 @@ from decouple import config
 from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
-from prefect import flow, task
-from prefect.cache_policies import INPUTS, TASK_SOURCE
-from prefect.task_runners import ConcurrentTaskRunner
+from soak.async_decorators import flow, task
 from pydantic import BaseModel, ConfigDict, Field
 
-CACHE_POLICY = INPUTS + TASK_SOURCE
+# cache policy no longer needed with custom decorators
+# CACHE_POLICY = INPUTS + TASK_SOURCE
 CACHE_ON = False
 
 from .parsing import parser
@@ -65,13 +65,8 @@ class LLM(BaseModel):
         )
 
 
-@task(
-    name="structured-chat",
-    cache_policy=CACHE_POLICY,
-    persist_result=CACHE_ON,
-    cache_result_in_memory=CACHE_ON,
-)
-def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
+@task
+async def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
@@ -150,8 +145,8 @@ class ChatterResult(BaseModel):
     )
 
 
-@task(cache_policy=CACHE_POLICY, persist_result=CACHE_ON, cache_result_in_memory=CACHE_ON)
-def process_single_segment(segment, model, credentials, context={}, cache=True):
+@task
+async def process_single_segment(segment, model, credentials, context={}, cache=True):
     """
     Process a single segment sequentially, building context as we go.
     This is used by both single-segment prompts and as a building block
@@ -188,8 +183,9 @@ def process_single_segment(segment, model, credentials, context={}, cache=True):
             rt = prompt_part.return_type
 
         # Call the LLM via structured_chat.
-        res_future = structured_chat.submit(rendered_prompt, model, credentials, return_type=rt)
-        res, completion_obj = res_future.result()
+        res, completion_obj = await structured_chat(
+            rendered_prompt, model, credentials, return_type=rt
+        )
 
         # Only extract .response field if it exists and is not None
         # otherwise just return the object
@@ -268,8 +264,8 @@ class SegmentDependencyGraph:
         return execution_plan
 
 
-@task(name="merge_contexts", persist_result=CACHE_ON, cache_result_in_memory=CACHE_ON)
-def merge_contexts(*contexts):
+@task
+async def merge_contexts(*contexts):
     """Must be a task to preserve ordering/graph in chatter"""
     merged = {}
     if contexts:
@@ -278,8 +274,8 @@ def merge_contexts(*contexts):
         return merged
 
 
-@flow(name="chatter")
-def chatter(
+@flow
+async def chatter(
     multipart_prompt: str,
     model=None,
     credentials=None,
@@ -304,13 +300,14 @@ def chatter(
             deps = dependency_graph.dependency_graph[segment_id]
 
             if deps:
-                dep_results = [segment_futures[d] for d in deps]
-                context_future = merge_contexts.submit(*dep_results)
+                dep_results = [await segment_futures[d] for d in deps]
+                resolved_context = await merge_contexts(*dep_results)
             else:
-                context_future = merge_contexts.submit(context)
+                resolved_context = await merge_contexts(context)
 
-            segment_future = process_single_segment.submit(
-                segment, model, credentials, context_future
+            # call process_single_segment directly
+            segment_future = await process_single_segment(
+                segment, model, credentials, resolved_context
             )
             segment_futures[segment_id] = segment_future
 
@@ -318,7 +315,7 @@ def chatter(
     final = ChatterResult()
     for i, segment in enumerate(segments):
         sid = f"segment_{i}"
-        result = segment_futures[sid].result()
+        result = segment_futures[sid]  # already awaited, no need to await again
         final.update(result.results)
 
     return final

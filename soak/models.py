@@ -1,5 +1,9 @@
 """Data models for qualitative analysis pipelines."""
 
+from decouple import config
+from collections.abc import Awaitable
+import asyncio
+import anyio
 import hashlib
 import inspect
 import itertools
@@ -29,7 +33,6 @@ from typing import (
 )
 
 import pandas as pd
-import prefect
 import tiktoken
 import yaml
 from box import Box
@@ -43,9 +46,7 @@ from jinja2 import (
     TemplateSyntaxError,
     meta,
 )
-from prefect import flow, task
-from prefect.cache_policies import INPUTS, TASK_SOURCE
-from prefect.futures import PrefectFuture
+from .async_decorators import flow, task
 from pydantic import BaseModel, ConfigDict, Field, RootModel, Tag
 from soak.chatter_dag import chatter_dag
 from typing_extensions import Annotated
@@ -59,7 +60,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DAG_CACHE_POLICY = INPUTS + TASK_SOURCE
+
+MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
+_map_semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
+
+# cache policy no longer needed with custom decorators
+# DAG_CACHE_POLICY = INPUTS + TASK_SOURCE
 
 
 class Code(BaseModel):
@@ -153,8 +160,8 @@ class QualitativeAnalysis(BaseModel):
 
 
 class QualitativeAnalysisComparison(BaseModel):
-    results: List[QualitativeAnalysis]
-    combinations: Dict[str, Tuple[QualitativeAnalysis, QualitativeAnalysis]]
+    results: List[Any]
+    combinations: Dict[str, Tuple[Any, Any]]
     statistics: Dict[str, Dict]
     comparison_plots: Dict[str, Dict[str, Any]]  # eg. heatmaps.xxxyyy = List
     additional_plots: Dict[str, Any]
@@ -212,9 +219,9 @@ class DAGConfig(BaseModel):
         return self.documents
 
 
-@task(cache_policy=None)
-def run_node(node):
-    r = node.run()
+@task
+async def run_node(node):
+    r = await node.run() if asyncio.iscoroutinefunction(node.run) else node.run()
     logger.info(f"COMPLETED: {node.name}")
     return r
 
@@ -246,9 +253,7 @@ DAGNodeUnion = Annotated[
 
 
 class DAG(BaseModel):
-    model_config = {
-        "ignored_types": (prefect.flows.Flow,),
-    }
+    model_config = {}
 
     name: str
     default_context: Dict[str, Any] = {}
@@ -317,16 +322,17 @@ class DAG(BaseModel):
     def nodes_dict(self):
         return {i.name: i for i in self.nodes}
 
-    @flow(log_prints=True)
-    def run(self):
+    @flow
+    async def run(self):
         self.config.load_documents()
         if not self.config.llm_credentials:
             raise Exception("LLMCredentials must be set for DAG")
         for batch in self.get_execution_order():
-            futures = [run_node.submit(self.nodes_dict[name]) for name in batch]
-            # Wait for all in batch to finish
-            for f in futures:
-                f.result()
+            # use anyio structured concurrency - start all tasks in batch concurrently
+            async with anyio.create_task_group() as tg:
+                for name in batch:
+                    tg.start_soon(run_node, self.nodes_dict[name])
+            # all tasks in batch complete when task group exits
         return self
 
     def get_dependencies_for_node(self, node_name: str) -> Set[str]:
@@ -509,12 +515,23 @@ class Split(DAGNode):
 
 
 def resolve(obj):
-    if isinstance(obj, PrefectFuture):
-        return obj.result()
+    """Synchronously resolve awaitables, recursively in lists/dicts."""
+
+    if isinstance(obj, Awaitable):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(obj)
+        else:
+            # You are already in a running event loop — can't block
+            raise RuntimeError("resolve() cannot be called inside an async context")
+
     elif isinstance(obj, list):
         return [resolve(x) for x in obj]
+
     elif isinstance(obj, dict):
         return {k: resolve(v) for k, v in obj.items()}
+
     else:
         return obj
 
@@ -551,13 +568,36 @@ class ItemsNode(DAGNode):
         return items
 
 
-@task(cache_policy=None)
-def default_map_task(template, context, model, credentials, **kwargs):
+@task
+async def default_map_task(template, context, model, credentials, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
     rt = render_strict_template(template, context)
-    return chatter_dag(
-        multipart_prompt=rt, context=context, model=model, credentials=credentials, **kwargs
+    # call chatter async in the main event loop
+    from chatter import chatter
+    from soak.chatter_dag import ACTION_LOOKUP
+    from soak.models import Code, CodeList, Theme, Themes
+
+    action_lookup = ACTION_LOOKUP.copy()
+    action_lookup.update(
+        {
+            "theme": Theme,
+            "code": Code,
+            "themes": Themes,
+            "codes": CodeList,
+        }
     )
+
+    # call chatter as async function within the main event loop
+    async with _map_semaphore:
+        result = await chatter(
+            multipart_prompt=rt,
+            context=context,
+            model=model,
+            credentials=credentials,
+            action_lookup=action_lookup,
+            **kwargs,
+        )
+    return result
 
 
 class Map(ItemsNode):
@@ -567,7 +607,7 @@ class Map(ItemsNode):
 
     type: Literal["Map"] = "Map"
     # fn must accepts **kwargs, return iterable
-    task: Callable = Field(default=staticmethod(default_map_task), exclude=True)
+    task: Callable = Field(default=default_map_task, exclude=True)
     default_template: str = "{{input}} <prompt>: [[output]]"
 
     @property
@@ -582,7 +622,7 @@ class Map(ItemsNode):
             logger.error(f"Template syntax error: {e}")
             return False
 
-    def run(self) -> List[Any]:
+    async def run(self) -> List[Any]:
         super().run()
 
         # check if input is BatchList
@@ -600,18 +640,21 @@ class Map(ItemsNode):
             filtered_context = {
                 k: v for k, v in self.context.items() if not isinstance(v, BatchList)
             }
-            futures = [
-                self.task.submit(
-                    template=self.template,
-                    context={**filtered_context, **item},
-                    model=self.get_model(),
-                    credentials=self.dag.config.llm_credentials,
+            # create async tasks and await them
+            tasks = [
+                asyncio.create_task(
+                    self.task(
+                        template=self.template,
+                        context={**filtered_context, **item},
+                        model=self.get_model(),
+                        credentials=self.dag.config.llm_credentials,
+                    )
                 )
                 for item in all_items
             ]
 
-            # note results are a list of ChatterResult
-            results = [f.result() for f in futures]
+            # await all tasks
+            results = await asyncio.gather(*tasks)
 
             # reconstruct BatchList structure
             reconstructed_batches = []
@@ -627,16 +670,20 @@ class Map(ItemsNode):
         else:
             # original behavior for non-BatchList inputs
             items = self.get_items()
-            futures = [
-                self.task.submit(
-                    template=self.template,
-                    context={**self.context, **item},
-                    model=self.get_model(),
-                    credentials=self.dag.config.llm_credentials,
+            # create async tasks and await them
+            tasks = [
+                asyncio.create_task(
+                    self.task(
+                        template=self.template,
+                        context={**self.context, **item},
+                        model=self.get_model(),
+                        credentials=self.dag.config.llm_credentials,
+                    )
                 )
                 for item in items
             ]
-            results = [f.result() for f in futures]
+            # await all tasks
+            results = await asyncio.gather(*tasks)
             self.output = results
             return results
 
@@ -651,7 +698,7 @@ class Transform(ItemsNode):
     def template(self) -> str:
         return self.template_text or self.default_template
 
-    def run(self):
+    async def run(self):
         super().run()
 
         items = self.get_items()
@@ -660,9 +707,27 @@ class Transform(ItemsNode):
             assert len(items) == 1, "Transform nodes must have exactly one input item"
 
         rt = render_strict_template(self.template, {**self.context, **items[0]})
-        # note output is now a ChatterResult
-        self.output = chatter_dag(
-            multipart_prompt=rt, model=self.get_model(), credentials=self.dag.config.llm_credentials
+        # call chatter async in the main event loop
+        from chatter import chatter
+        from soak.chatter_dag import ACTION_LOOKUP
+        from soak.models import Code, CodeList, Theme, Themes
+
+        action_lookup = ACTION_LOOKUP.copy()
+        action_lookup.update(
+            {
+                "theme": Theme,
+                "code": Code,
+                "themes": Themes,
+                "codes": CodeList,
+            }
+        )
+
+        # call chatter as async function within the main event loop
+        self.output = await chatter(
+            multipart_prompt=rt,
+            model=self.get_model(),
+            credentials=self.dag.config.llm_credentials,
+            action_lookup=action_lookup,
         )
         return self.output
 
@@ -742,6 +807,11 @@ class Batch(ItemsNode):
 
 class QualitativeAnalysisPipeline(DAG):
 
+    def result_name(self):
+        import hashlib
+
+        return hashlib.sha256(str(self.result()).encode("utf-8")).hexdigest()[:8]
+
     def result(self):
 
         # import pdb; pdb.set_trace()
@@ -754,44 +824,6 @@ class QualitativeAnalysisPipeline(DAG):
                 "detail": self,
             }
         )
-
-        # thms_node = self.nodes_dict.get("themes")
-        # thms = (
-        #     getattr(thms_node.output.response, "themes", [])
-        #     if thms_node and thms_node.output
-        #     else []
-        # )
-
-        # cds_node = self.nodes_dict.get("codes")
-        # cds = getattr(cds_node.output.response, "codes", []) if cds_node and cds_node.output else []
-
-        # try:
-        #     narrative = self.nodes_dict.get("narrative").output.response
-        # except Exception as e:
-
-        #     logger.warning(f"Error getting narrative: {e}")
-        #     narrative = None
-
-        # try:
-        #     # create document objects for the HTML template
-        #     documents = []
-        #     for i, doc_content in enumerate(self.config.documents):
-        #         documents.append({"id": f"doc_{i+1}", "content": doc_content})
-
-        #     details = {n.name: n.output for n in self.nodes if n and n.output is not None}
-        #     details["documents"] = documents
-
-        #     return QualitativeAnalysis(
-        #         codes=cds,
-        #         themes=thms,
-        #         narrative=narrative,
-        #         details=details,
-        #         config=self.config,
-        #         pipeline=self.export(),
-        #     )
-        # except Exception as e:
-        #     logger.error(f"Error creating QualitativeAnalysis from pipeline: {e}")
-        #     return self.nodes_dict
 
     def export(self, file_path=None) -> str:
         """

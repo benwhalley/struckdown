@@ -6,7 +6,6 @@ import typer
 
 from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter
 
-logging.getLogger("prefect").setLevel(logging.WARNING)
 logging.getLogger("chatter").setLevel(logging.WARNING)
 
 
@@ -25,7 +24,9 @@ def run(
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
-    result = chatter(prompt_str, model=model, credentials=credentials, action_lookup=ACTION_LOOKUP)
+    result = chatter.sync(
+        prompt_str, model=model, credentials=credentials, action_lookup=ACTION_LOOKUP
+    )
 
     for k, v in result.results.items():
         typer.echo(f"{k}: {v.output}")

@@ -83,12 +83,16 @@ def run(
         pipeline.config.document_paths = docfiles
 
     try:
-        # all pipelines are now DAG pipelines
-        result = pipeline.run()
-    except Exception as e:
-        raise typer.Exit(1)
+        # all pipelines are now DAG pipelines - run directly with asyncio
+        import asyncio
 
-    analysis = result.result()
+        analysis = asyncio.run(pipeline.run())
+    except Exception as e:
+        print(f"Error during pipeline execution: {e}", file=sys.stderr)
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
 
     # import pdb; pdb.set_trace()
 
@@ -102,7 +106,7 @@ def run(
 
     # generate output content based on format
     if format == "json":
-        content = json.dumps(analysis, indent=2)
+        content = json.dumps(analysis.model_dump(), indent=2)
     elif format == "yaml":
         content = yaml.dump(analysis, default_flow_style=False, indent=2)
     elif format == "html":
