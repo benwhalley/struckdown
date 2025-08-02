@@ -4,7 +4,7 @@ from typing import List
 
 import typer
 
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter_sync
 
 logging.getLogger("chatter").setLevel(logging.WARNING)
 
@@ -24,8 +24,11 @@ def run(
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
-    result = chatter.sync(
-        prompt_str, model=model, credentials=credentials, action_lookup=ACTION_LOOKUP
+    result = chatter_sync(
+        multipart_prompt=prompt_str,
+        model=model,
+        credentials=credentials,
+        action_lookup=ACTION_LOOKUP,
     )
 
     for k, v in result.results.items():

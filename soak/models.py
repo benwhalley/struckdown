@@ -36,8 +36,6 @@ import pandas as pd
 import tiktoken
 import yaml
 from box import Box
-from chatter import LLM, ChatterResult, LLMCredentials, chatter
-from chatter.parsing import parse_syntax
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -48,7 +46,10 @@ from jinja2 import (
 )
 from .async_decorators import flow, task
 from pydantic import BaseModel, ConfigDict, Field, RootModel, Tag
-from soak.chatter_dag import chatter_dag
+from chatter import LLM, ChatterResult, LLMCredentials, chatter
+from chatter.parsing import parse_syntax
+from chatter.return_type_models import ACTION_LOOKUP
+
 from typing_extensions import Annotated
 
 from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
@@ -61,11 +62,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def get_action_lookup():
+    SOAK_ACTION_LOOKUP = dict(ACTION_LOOKUP.copy())
+    SOAK_ACTION_LOOKUP.update(
+        {
+            "theme": Theme,
+            "code": Code,
+            "themes": Themes,
+            "codes": CodeList,
+        }
+    )
+    return SOAK_ACTION_LOOKUP
+
+
 MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
-
-
-# cache policy no longer needed with custom decorators
-# DAG_CACHE_POLICY = INPUTS + TASK_SOURCE
+semaphore = anyio.Semaphore(MAX_CONCURRENCY)
 
 
 class Code(BaseModel):
@@ -218,9 +229,8 @@ class DAGConfig(BaseModel):
         return self.documents
 
 
-@task
 async def run_node(node):
-    r = await node.run() if asyncio.iscoroutinefunction(node.run) else node.run()
+    r = await node.run()
     logger.info(f"COMPLETED: {node.name}")
     return r
 
@@ -252,7 +262,7 @@ DAGNodeUnion = Annotated[
 
 
 class DAG(BaseModel):
-    model_config = {}
+    model_config = {"arbitrary_types_allowed": True}
 
     name: str
     default_context: Dict[str, Any] = {}
@@ -321,7 +331,11 @@ class DAG(BaseModel):
     def nodes_dict(self):
         return {i.name: i for i in self.nodes}
 
-    @flow
+    def cancel(self):
+        if self.cancel_scope is not None:
+            self.cancel_scope.cancel()
+            logger.warning(f"DAG {self.name} cancelled")
+
     async def run(self):
         self.config.load_documents()
         if not self.config.llm_credentials:
@@ -410,7 +424,7 @@ class DAGNode(BaseModel):
             logger.error(f"Template syntax error: {e}")
             return False
 
-    def run(self, items: List[Any] = None) -> List[Any]:
+    async def run(self, items: List[Any] = None) -> List[Any]:
         logger.info(f"\n\nRunning `{self.name}` ({self.__class__.__name__})\n\n")
 
     @property
@@ -466,8 +480,8 @@ class Split(DAGNode):
 
         assert self.chunk_size > self.min_split, "chunk_size must be greater than min_split"
 
-    def run(self) -> List[str]:
-        super().run()
+    async def run(self) -> List[str]:
+        await super().run()
         input_docs = self.context[self.inputs[0]]
         self.output = list(itertools.chain.from_iterable(map(self.split_document, input_docs)))
         logger.info(f"CREATED {len(self.output)} chunks")
@@ -513,35 +527,13 @@ class Split(DAGNode):
         return [c for c in chunks if len_fn(c) >= self.min_split or len(chunks) == 1]
 
 
-def resolve(obj):
-    """Synchronously resolve awaitables, recursively in lists/dicts."""
-
-    if isinstance(obj, Awaitable):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(obj)
-        else:
-            # You are already in a running event loop — can't block
-            raise RuntimeError("resolve() cannot be called inside an async context")
-
-    elif isinstance(obj, list):
-        return [resolve(x) for x in obj]
-
-    elif isinstance(obj, dict):
-        return {k: resolve(v) for k, v in obj.items()}
-
-    else:
-        return obj
-
-
 class ItemsNode(DAGNode):
     """Any note which applies to multiple items at once"""
 
-    def get_items(self) -> List[Dict[str, Any]]:
+    async def get_items(self) -> List[Dict[str, Any]]:
         """Resolve all inputs, then zip together, combining multiple inputs"""
         # resolve futures now (it's lazy to this point)
-        input_data = resolve({k: self.context[k] for k in self.inputs})
+        input_data = {k: self.context[k] for k in self.inputs}
         lengths = {k: len(v) if isinstance(v, list) else 1 for k, v in input_data.items()}
         max_len = max(lengths.values())
 
@@ -567,25 +559,10 @@ class ItemsNode(DAGNode):
         return items
 
 
-@task
 async def default_map_task(template, context, model, credentials, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
 
     rt = render_strict_template(template, context)
-    # call chatter async in the main event loop
-    from chatter import chatter
-    from soak.chatter_dag import ACTION_LOOKUP
-    from soak.models import Code, CodeList, Theme, Themes
-
-    action_lookup = ACTION_LOOKUP.copy()
-    action_lookup.update(
-        {
-            "theme": Theme,
-            "code": Code,
-            "themes": Themes,
-            "codes": CodeList,
-        }
-    )
 
     # call chatter as async function within the main event loop
     result = await chatter(
@@ -593,7 +570,7 @@ async def default_map_task(template, context, model, credentials, **kwargs):
         context=context,
         model=model,
         credentials=credentials,
-        action_lookup=action_lookup,
+        action_lookup=get_action_lookup(),
         **kwargs,
     )
     return result
@@ -622,10 +599,7 @@ class Map(ItemsNode):
             return False
 
     async def run(self) -> List[Any]:
-        super().run()
-
-        # create semaphore to limit concurrency within this Map operation
-        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+        await super().run()
 
         # check if input is BatchList
         input_data = self.context[self.inputs[0]] if self.inputs else None
@@ -672,7 +646,7 @@ class Map(ItemsNode):
             return batch_list_result
         else:
             # original behavior for non-BatchList inputs
-            items = self.get_items()
+            items = await self.get_items()
 
             # create helper function to wrap task execution with semaphore
             async def run_task_with_semaphore(item):
@@ -703,35 +677,21 @@ class Transform(ItemsNode):
         return self.template_text or self.default_template
 
     async def run(self):
-        super().run()
+        await super().run()
 
-        items = self.get_items()
+        items = await self.get_items()
 
         if not isinstance(items, str):
             assert len(items) == 1, "Transform nodes must have exactly one input item"
 
         rt = render_strict_template(self.template, {**self.context, **items[0]})
-        # call chatter async in the main event loop
-        from chatter import chatter
-        from soak.chatter_dag import ACTION_LOOKUP
-        from soak.models import Code, CodeList, Theme, Themes
-
-        action_lookup = ACTION_LOOKUP.copy()
-        action_lookup.update(
-            {
-                "theme": Theme,
-                "code": Code,
-                "themes": Themes,
-                "codes": CodeList,
-            }
-        )
 
         # call chatter as async function within the main event loop
         self.output = await chatter(
             multipart_prompt=rt,
             model=self.get_model(),
             credentials=self.dag.config.llm_credentials,
-            action_lookup=action_lookup,
+            action_lookup=get_action_lookup(),
         )
         return self.output
 
@@ -758,15 +718,19 @@ class Reduce(ItemsNode):
         items = [{"input": v, self.inputs[0]: v} for v in input_data]
         return items
 
-    def run(self, items=None) -> Any:
+    async def run(self, items=None) -> Any:
 
-        super().run()
+        await super().run()
 
         items = items or self.get_items()
 
         # if items is a BatchList, run on each batch
         if isinstance(items, BatchList):
-            self.output = [self.run(items=i) for i in items.batches]
+            self.output = []
+            for batch in items.batches:
+                result = await self.run(items=batch)
+                self.output.append(result)
+
             return self.output
 
         else:
@@ -797,10 +761,10 @@ class Batch(ItemsNode):
     batch_size: int = 10
     default_template: Optional[str] = None
 
-    def run(self) -> List[List[Any]]:
-        super().run()
+    async def run(self) -> List[List[Any]]:
+        await super().run()
 
-        batches_ = self.default_batch(self.get_items(), self.batch_size)
+        batches_ = self.default_batch(await self.get_items(), self.batch_size)
         self.output = BatchList(batches=batches_)
         return self.output
 
@@ -825,34 +789,6 @@ class QualitativeAnalysisPipeline(DAG):
                 "detail": self,
             }
         )
-
-    def export(self, file_path=None) -> str:
-        """
-        Export pipeline to template bundle format string.
-
-        Args:
-            file_path: Optional path to save the template bundle to a file
-
-        Returns:
-            str: Template bundle content
-        """
-        raise Exception("Deprecated?")
-
-        # from .specs import pipeline_to_template_bundle
-
-        # bundle = pipeline_to_template_bundle(self)
-
-        # if file_path is not None:
-        #     Path(file_path).write_text(bundle)
-
-        # return bundle
-
-    # @classmethod
-    # def import_(cls, template_bundle) -> "QualitativeAnalysisPipeline":
-    #     """Import pipeline from template bundle format string or Path object."""
-    #     from .specs import load_template_bundle
-
-    #     return load_template_bundle(template_bundle)
 
 
 # Resolve forward references after QualitativeAnalysisPipeline is defined

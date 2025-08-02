@@ -1,6 +1,8 @@
 """"""
 
-import asyncio
+from tenacity import retry, wait_exponential, retry_unless_exception_type
+
+import anyio
 import logging
 import re
 import traceback
@@ -14,12 +16,21 @@ from decouple import config
 from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
-from soak.async_decorators import flow, task
 from pydantic import BaseModel, ConfigDict, Field
 
 # cache policy no longer needed with custom decorators
 # CACHE_POLICY = INPUTS + TASK_SOURCE
 CACHE_ON = False
+from instructor.exceptions import (
+    InstructorError,
+    IncompleteOutputException,
+    InstructorRetryException,
+    ValidationError,
+    ProviderError,
+    ConfigurationError,
+    ModeError,
+    ClientError,
+)
 
 from .parsing import parser
 from .return_type_models import ACTION_LOOKUP
@@ -65,8 +76,7 @@ class LLM(BaseModel):
         )
 
 
-@task
-async def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
+def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
@@ -74,6 +84,7 @@ async def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
     logger.info(
         f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}"
     )
+    logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
 
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
@@ -91,10 +102,9 @@ async def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
 
-    logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
     logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
     logger.info(f"{LC.PURPLE}Response type: {type(res)}{LC.RESET}\n\n")
-
+    logger.warning(res)
     return res, com
 
 
@@ -145,7 +155,6 @@ class ChatterResult(BaseModel):
     )
 
 
-@task
 async def process_single_segment(segment, model, credentials, context={}, cache=True):
     """
     Process a single segment sequentially, building context as we go.
@@ -183,8 +192,9 @@ async def process_single_segment(segment, model, credentials, context={}, cache=
             rt = prompt_part.return_type
 
         # Call the LLM via structured_chat.
-        res, completion_obj = await structured_chat(
-            rendered_prompt, model, credentials, return_type=rt
+        res, completion_obj = await anyio.to_thread.run_sync(
+            lambda: structured_chat(rendered_prompt, model, credentials, return_type=rt),
+            cancellable=True,
         )
 
         # Only extract .response field if it exists and is not None
@@ -264,7 +274,6 @@ class SegmentDependencyGraph:
         return execution_plan
 
 
-@task
 async def merge_contexts(*contexts):
     """Must be a task to preserve ordering/graph in chatter"""
     merged = {}
@@ -274,7 +283,6 @@ async def merge_contexts(*contexts):
         return merged
 
 
-@flow
 async def chatter(
     multipart_prompt: str,
     model=None,
@@ -290,58 +298,37 @@ async def chatter(
     segments = parser(action_lookup=action_lookup).parse(multipart_prompt.strip())
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
-
+    if max([len(i) for i in plan]) > 1:
+        logger.info(f"Execution plan includes concurrency: {plan}")
     segment_futures = {}
 
     for batch in plan:
-        for segment_id in batch:
-            i = int(segment_id.split("_")[1])
-            segment = segments[i]
-            deps = dependency_graph.dependency_graph[segment_id]
+        async with anyio.create_task_group() as tg:
+            for segment_id in batch:
+                i = int(segment_id.split("_")[1])
+                segment = segments[i]
+                deps = dependency_graph.dependency_graph[segment_id]
 
-            if deps:
-                dep_results = [await segment_futures[d] for d in deps]
-                resolved_context = await merge_contexts(*dep_results)
-            else:
-                resolved_context = await merge_contexts(context)
+                async def run_segment(sid=segment_id, seg=segment, deps=deps):
+                    if deps:
+                        dep_results = [await segment_futures[d] for d in deps]
+                        resolved_context = await merge_contexts(*dep_results)
+                    else:
+                        resolved_context = await merge_contexts(context)
 
-            # call process_single_segment directly
-            segment_future = await process_single_segment(
-                segment, model, credentials, resolved_context
-            )
-            segment_futures[segment_id] = segment_future
+                    result = await process_single_segment(seg, model, credentials, resolved_context)
+                    segment_futures[sid] = result
+
+                tg.start_soon(run_segment)
 
     # Gather results from all segments in original order
     final = ChatterResult()
     for i, segment in enumerate(segments):
         sid = f"segment_{i}"
-        result = segment_futures[sid]  # already awaited, no need to await again
+        result = segment_futures[sid]
         final.update(result.results)
 
     return final
-
-
-if False:
-    creds = LLMCredentials()
-    llm = LLM("gpt-4o-mini")
-
-    AL = ACTION_LOOKUP.copy()
-
-    print(
-        chatter(
-            """
-    pick a number 1 - 11. [[int:number]]""",
-            model=llm,
-            credentials=creds,
-            action_lookup=AL,
-        )
-    )
-
-
-# from langfuse.decorators import langfuse_context, observe
-# from langfuse.openai import OpenAI  # OpenAI integration with tracing
-
-# langfuse_context.configure(debug=False)
 
 
 def get_embedding(texts, model_name="text-embedding-3-large", dimensions=3072) -> list:
@@ -355,3 +342,9 @@ def get_embedding(texts, model_name="text-embedding-3-large", dimensions=3072) -
         dimensions=dimensions,
     )
     return [i.embedding for i in response.data]
+
+
+def chatter_sync(
+    multipart_prompt: str, model=None, credentials=None, context={}, action_lookup=ACTION_LOOKUP
+):
+    return anyio.run(chatter, multipart_prompt, model, credentials, context, action_lookup)

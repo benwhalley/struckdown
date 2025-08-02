@@ -11,7 +11,7 @@ import matplotlib
 from chatter import get_embedding
 from django.core.files.images import ImageFile
 from soak.async_decorators import flow, task
-from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison, resolve
+from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
 
 matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
 
@@ -391,14 +391,12 @@ class SimilarityComparator:
             {i.name + "_" + j.name: (i, j) for i, j in result_combinations}
         )
 
-        stats_dict = {
-            k: v for k, v in zip(result_combinations_dict.keys(), resolve(similarity_results))
-        }
+        stats_dict = {k: v for k, v in zip(result_combinations_dict.keys(), similarity_results)}
 
-        heatmap_dict = {k: v for k, v in zip(result_combinations_dict.keys(), resolve(heatmaps))}
+        heatmap_dict = {k: v for k, v in zip(result_combinations_dict.keys(), heatmaps)}
 
         thresh_heatmap_dict = {
-            k: v for k, v in zip(result_combinations_dict.keys(), resolve(thresholded_heatmaps))
+            k: v for k, v in zip(result_combinations_dict.keys(), thresholded_heatmaps)
         }
 
         return QualitativeAnalysisComparison(
