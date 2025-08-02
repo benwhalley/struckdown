@@ -1,9 +1,6 @@
 """Data models for qualitative analysis pipelines."""
 
-from decouple import config
-from collections.abc import Awaitable
 import asyncio
-import anyio
 import hashlib
 import inspect
 import itertools
@@ -15,6 +12,7 @@ import re
 import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -32,10 +30,15 @@ from typing import (
     Union,
 )
 
+import anyio
 import pandas as pd
 import tiktoken
 import yaml
 from box import Box
+from chatter import LLM, ChatterResult, LLMCredentials, chatter
+from chatter.parsing import parse_syntax
+from chatter.return_type_models import ACTION_LOOKUP
+from decouple import config
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -44,14 +47,10 @@ from jinja2 import (
     TemplateSyntaxError,
     meta,
 )
-from .async_decorators import flow, task
 from pydantic import BaseModel, ConfigDict, Field, RootModel, Tag
-from chatter import LLM, ChatterResult, LLMCredentials, chatter
-from chatter.parsing import parse_syntax
-from chatter.return_type_models import ACTION_LOOKUP
-
 from typing_extensions import Annotated
 
+from .async_decorators import flow, task
 from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
 
 if TYPE_CHECKING:

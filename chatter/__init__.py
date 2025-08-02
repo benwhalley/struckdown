@@ -1,8 +1,5 @@
 """"""
 
-from tenacity import retry, wait_exponential, retry_unless_exception_type
-
-import anyio
 import logging
 import re
 import traceback
@@ -10,6 +7,7 @@ from collections import OrderedDict, defaultdict
 from types import FunctionType
 from typing import Any, Callable, Dict, List, Optional
 
+import anyio
 import openai
 from box import Box
 from decouple import config
@@ -17,19 +15,20 @@ from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel, ConfigDict, Field
+from tenacity import retry, retry_unless_exception_type, wait_exponential
 
 # cache policy no longer needed with custom decorators
 # CACHE_POLICY = INPUTS + TASK_SOURCE
 CACHE_ON = False
 from instructor.exceptions import (
-    InstructorError,
-    IncompleteOutputException,
-    InstructorRetryException,
-    ValidationError,
-    ProviderError,
-    ConfigurationError,
-    ModeError,
     ClientError,
+    ConfigurationError,
+    IncompleteOutputException,
+    InstructorError,
+    InstructorRetryException,
+    ModeError,
+    ProviderError,
+    ValidationError,
 )
 
 from .parsing import parser
@@ -210,6 +209,9 @@ async def process_single_segment(segment, model, credentials, context={}, cache=
         # For this segment, include the result in the prompt parts.
         prompt_parts.append(res)
 
+    import pdb
+
+    pdb.set_trace()
     return results
 
 
@@ -294,6 +296,8 @@ async def chatter(
     example:
     chatter("tell a joke [[joke]]")
     """
+
+    logger.info(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
     segments = parser(action_lookup=action_lookup).parse(multipart_prompt.strip())
     dependency_graph = SegmentDependencyGraph(segments)

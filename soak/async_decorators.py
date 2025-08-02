@@ -1,8 +1,9 @@
-import anyio
 import contextvars
 import functools
 import logging
 from typing import Any, Callable, Optional
+
+import anyio
 
 logger = logging.getLogger(__name__)
 _current_task_group: contextvars.ContextVar[Optional[anyio.abc.TaskGroup]] = contextvars.ContextVar(
