@@ -63,9 +63,6 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
 
-# semaphore to be initialized lazily in the current event loop
-_map_semaphore = None
-
 
 # cache policy no longer needed with custom decorators
 # DAG_CACHE_POLICY = INPUTS + TASK_SOURCE
@@ -573,11 +570,6 @@ class ItemsNode(DAGNode):
 @task
 async def default_map_task(template, context, model, credentials, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
-    global _map_semaphore
-
-    # initialize semaphore lazily in the current event loop
-    if _map_semaphore is None:
-        _map_semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
     rt = render_strict_template(template, context)
     # call chatter async in the main event loop
@@ -596,15 +588,14 @@ async def default_map_task(template, context, model, credentials, **kwargs):
     )
 
     # call chatter as async function within the main event loop
-    async with _map_semaphore:
-        result = await chatter(
-            multipart_prompt=rt,
-            context=context,
-            model=model,
-            credentials=credentials,
-            action_lookup=action_lookup,
-            **kwargs,
-        )
+    result = await chatter(
+        multipart_prompt=rt,
+        context=context,
+        model=model,
+        credentials=credentials,
+        action_lookup=action_lookup,
+        **kwargs,
+    )
     return result
 
 
@@ -633,6 +624,9 @@ class Map(ItemsNode):
     async def run(self) -> List[Any]:
         super().run()
 
+        # create semaphore to limit concurrency within this Map operation
+        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
         # check if input is BatchList
         input_data = self.context[self.inputs[0]] if self.inputs else None
         if isinstance(input_data, BatchList):
@@ -648,18 +642,19 @@ class Map(ItemsNode):
             filtered_context = {
                 k: v for k, v in self.context.items() if not isinstance(v, BatchList)
             }
-            # create async tasks and await them
-            tasks = [
-                asyncio.create_task(
-                    self.task(
+
+            # create helper function to wrap task execution with semaphore
+            async def run_task_with_semaphore(item):
+                async with semaphore:
+                    return await self.task(
                         template=self.template,
                         context={**filtered_context, **item},
                         model=self.get_model(),
                         credentials=self.dag.config.llm_credentials,
                     )
-                )
-                for item in all_items
-            ]
+
+            # create async tasks and await them
+            tasks = [asyncio.create_task(run_task_with_semaphore(item)) for item in all_items]
 
             # await all tasks
             results = await asyncio.gather(*tasks)
@@ -678,18 +673,19 @@ class Map(ItemsNode):
         else:
             # original behavior for non-BatchList inputs
             items = self.get_items()
-            # create async tasks and await them
-            tasks = [
-                asyncio.create_task(
-                    self.task(
+
+            # create helper function to wrap task execution with semaphore
+            async def run_task_with_semaphore(item):
+                async with semaphore:
+                    return await self.task(
                         template=self.template,
                         context={**self.context, **item},
                         model=self.get_model(),
                         credentials=self.dag.config.llm_credentials,
                     )
-                )
-                for item in items
-            ]
+
+            # create async tasks and await them
+            tasks = [asyncio.create_task(run_task_with_semaphore(item)) for item in items]
             # await all tasks
             results = await asyncio.gather(*tasks)
             self.output = results
