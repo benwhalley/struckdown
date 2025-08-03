@@ -209,9 +209,6 @@ async def process_single_segment(segment, model, credentials, context={}, cache=
         # For this segment, include the result in the prompt parts.
         prompt_parts.append(res)
 
-    import pdb
-
-    pdb.set_trace()
     return results
 
 
