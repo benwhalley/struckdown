@@ -94,8 +94,6 @@ def run(
         traceback.print_exc()
         raise typer.Exit(1)
 
-    # import pdb; pdb.set_trace()
-
     analysis.config.llm_credentials.llm_api_key = (
         analysis.config.llm_credentials.llm_api_key[:5] + "***"
     )
