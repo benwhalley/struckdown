@@ -75,16 +75,15 @@ class LLM(BaseModel):
         )
 
 
-def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
+def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_tokens=None):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
 
     logger.info(
-        f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}"
+        f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
     logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
-
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=llm.model_name,
@@ -92,6 +91,7 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3):
             messages=[{"role": "user", "content": prompt}],
             max_retries=max_retries,
             temperature=llm.temperature,
+            max_tokens=max_tokens,
         )
         msg, lt, meta = res, None, com.dict()
 
@@ -154,7 +154,9 @@ class ChatterResult(BaseModel):
     )
 
 
-async def process_single_segment(segment, model, credentials, context={}, cache=True):
+async def process_single_segment(
+    segment, model, credentials, context={}, cache=True, max_retries=3, max_tokens=None
+):
     """
     Process a single segment sequentially, building context as we go.
     This is used by both single-segment prompts and as a building block
@@ -192,7 +194,14 @@ async def process_single_segment(segment, model, credentials, context={}, cache=
 
         # Call the LLM via structured_chat.
         res, completion_obj = await anyio.to_thread.run_sync(
-            lambda: structured_chat(rendered_prompt, model, credentials, return_type=rt),
+            lambda: structured_chat(
+                rendered_prompt,
+                model,
+                credentials,
+                return_type=rt,
+                max_retries=max_retries,
+                max_tokens=max_tokens,
+            ),
             cancellable=True,
         )
 
@@ -288,6 +297,8 @@ async def chatter(
     credentials=None,
     context={},
     action_lookup=ACTION_LOOKUP,
+    max_retries=3,
+    max_tokens=None,
 ):
     """
     example:
@@ -317,7 +328,14 @@ async def chatter(
                     else:
                         resolved_context = await merge_contexts(context)
 
-                    result = await process_single_segment(seg, model, credentials, resolved_context)
+                    result = await process_single_segment(
+                        seg,
+                        model,
+                        credentials,
+                        resolved_context,
+                        max_retries=max_retries,
+                        max_tokens=max_tokens,
+                    )
                     segment_futures[sid] = result
 
                 tg.start_soon(run_segment)

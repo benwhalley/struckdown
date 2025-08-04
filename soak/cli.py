@@ -86,7 +86,13 @@ def run(
         # all pipelines are now DAG pipelines - run directly with asyncio
         import asyncio
 
-        analysis = asyncio.run(pipeline.run())
+        analysis, errors = asyncio.run(pipeline.run())
+        if errors:
+            logger.error(f"Errors during pipeline execution: {errors}")
+            logger.warning("Entering pdb for debugging")
+            import pdb
+
+            pdb.set_trace()
     except Exception as e:
         print(f"Error during pipeline execution: {e}", file=sys.stderr)
         import traceback

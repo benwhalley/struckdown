@@ -39,6 +39,7 @@ from chatter import LLM, ChatterResult, LLMCredentials, chatter
 from chatter.parsing import parse_syntax
 from chatter.return_type_models import ACTION_LOOKUP
 from decouple import config
+from decouple import config as env_config
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -129,7 +130,7 @@ class QualitativeAnalysis(BaseModel):
     themes: Optional[List[Theme]] = None
     narrative: Optional[str] = None
     details: Dict[str, Any] = Field(default_factory=dict)
-    config: Optional["DAGConfig"] = None
+
     pipeline: Optional[str] = None
 
     def name(self):
@@ -194,6 +195,13 @@ class QualitativeAnalysisComparison(BaseModel):
         return out
 
 
+def get_default_llm_credentials():
+    return LLMCredentials(
+        llm_api_key=env_config("LLM_API_KEY"),
+        llm_base_url=env_config("LLM_BASE_URL"),
+    )
+
+
 class DAGConfig(BaseModel):
     document_paths: Optional[List[str]] = []
     documents: List[str] = []
@@ -201,7 +209,7 @@ class DAGConfig(BaseModel):
     temperature: float = 1.0
     chunk_size: int = 20000  # characters, so ~5k tokens or ~4k English words
     extra_context: Dict[str, Any] = {}
-    llm_credentials: Optional[LLMCredentials] = None
+    llm_credentials: LLMCredentials = field(default_factory=get_default_llm_credentials)
     scrub_pii: bool = False
     scrubber_model: str = "en_core_web_md"
     scrubber_salt: Optional[str] = Field(default="42", exclude=True)
@@ -265,8 +273,18 @@ class DAG(BaseModel):
 
     name: str
     default_context: Dict[str, Any] = {}
+    default_config: Dict[str, Union[str, int, float]] = {}
+
     nodes: List["DAGNodeUnion"] = Field(default_factory=list)
     config: DAGConfig = DAGConfig()
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # add defaults for config fields
+        for k, v in self.default_config.items():
+            if hasattr(self.config, k) and k not in self.config.model_fields_set:
+                setattr(self.config, k, v)
+        logger.info(f"DAG config: {self.config}")
 
     def progress(self):
         last_complete = self.nodes[0]
@@ -336,16 +354,23 @@ class DAG(BaseModel):
             logger.warning(f"DAG {self.name} cancelled")
 
     async def run(self):
-        self.config.load_documents()
-        if not self.config.llm_credentials:
-            raise Exception("LLMCredentials must be set for DAG")
-        for batch in self.get_execution_order():
-            # use anyio structured concurrency - start all tasks in batch concurrently
-            async with anyio.create_task_group() as tg:
-                for name in batch:
-                    tg.start_soon(run_node, self.nodes_dict[name])
-            # all tasks in batch complete when task group exits
-        return self
+        try:
+            self.config.load_documents()
+            if not self.config.llm_credentials:
+                raise Exception("LLMCredentials must be set for DAG")
+            for batch in self.get_execution_order():
+                # use anyio structured concurrency - start all tasks in batch concurrently
+                async with anyio.create_task_group() as tg:
+                    for name in batch:
+                        tg.start_soon(run_node, self.nodes_dict[name])
+                # all tasks in batch complete when task group exits
+            return self, None
+        except Exception as e:
+            import traceback
+
+            err = f"DAG execution failed: {str(e)}\n{traceback.format_exc()}"
+            logger.error(err)
+            return self, str(e)
 
     def get_dependencies_for_node(self, node_name: str) -> Set[str]:
         """Get nodes that must complete before a node can run."""
@@ -533,6 +558,7 @@ class ItemsNode(DAGNode):
         """Resolve all inputs, then zip together, combining multiple inputs"""
         # resolve futures now (it's lazy to this point)
         input_data = {k: self.context[k] for k in self.inputs}
+
         lengths = {k: len(v) if isinstance(v, list) else 1 for k, v in input_data.items()}
         max_len = max(lengths.values())
 
@@ -558,7 +584,7 @@ class ItemsNode(DAGNode):
         return items
 
 
-async def default_map_task(template, context, model, credentials, **kwargs):
+async def default_map_task(template, context, model, credentials, max_tokens=None, **kwargs):
     """Default map task renders the Step template for each input item and calls the LLM."""
 
     rt = render_strict_template(template, context)
@@ -570,6 +596,7 @@ async def default_map_task(template, context, model, credentials, **kwargs):
         model=model,
         credentials=credentials,
         action_lookup=get_action_lookup(),
+        max_tokens=max_tokens,
         **kwargs,
     )
     return result
@@ -584,6 +611,7 @@ class Map(ItemsNode):
     # fn must accepts **kwargs, return iterable
     task: Callable = Field(default=default_map_task, exclude=True)
     default_template: str = "{{input}} <prompt>: [[output]]"
+    max_tokens: Optional[int] = None
 
     @property
     def template(self) -> str:
@@ -598,6 +626,7 @@ class Map(ItemsNode):
             return False
 
     async def run(self) -> List[Any]:
+
         await super().run()
 
         # check if input is BatchList
@@ -624,6 +653,7 @@ class Map(ItemsNode):
                         context={**filtered_context, **item},
                         model=self.get_model(),
                         credentials=self.dag.config.llm_credentials,
+                        max_tokens=self.max_tokens,
                     )
 
             # create async tasks and await them
@@ -655,6 +685,7 @@ class Map(ItemsNode):
                         context={**self.context, **item},
                         model=self.get_model(),
                         credentials=self.dag.config.llm_credentials,
+                        max_tokens=self.max_tokens,
                     )
 
             # create async tasks and await them
@@ -670,6 +701,7 @@ class Transform(ItemsNode):
     # TODO: allow for arbitrary python functions instead of chatter?
     # fn: Field(Callable[..., Iterable[Any]],  exclude=True) = None
     default_template: str = "{{input}} <prompt>: [[output]]"
+    max_tokens: Optional[int] = None
 
     @property
     def template(self) -> str:
@@ -691,6 +723,7 @@ class Transform(ItemsNode):
             model=self.get_model(),
             credentials=self.dag.config.llm_credentials,
             action_lookup=get_action_lookup(),
+            max_tokens=self.max_tokens,
         )
         return self.output
 
@@ -707,14 +740,18 @@ class Reduce(ItemsNode):
         if len(self.inputs) > 1:
             raise ValueError("Reduce nodes can only have one input")
 
-        input_data = self.dag.context[self.inputs[0]]
+        if self.inputs:
+            input_data = self.dag.context[self.inputs[0]]
+        else:
+            input_data = self.dag.config.documents
 
         # if input is a BatchList, return it directly for special handling in run()
         if isinstance(input_data, BatchList):
             return input_data
 
         # otherwise, wrap individual items in the expected format
-        items = [{"input": v, self.inputs[0]: v} for v in input_data]
+        nk = self.inputs and self.inputs[0] or "input_"
+        items = [{"input": v, nk: v} for v in input_data]
         return items
 
     async def run(self, items=None) -> Any:
@@ -773,18 +810,38 @@ class Batch(ItemsNode):
 
 
 class QualitativeAnalysisPipeline(DAG):
-
     name: Optional[str] = None
 
     def result(self):
+        def safe_get_output(name):
+            try:
+                return self.nodes_dict.get(name).output.response
+            except:
+                return None
+            return output.response
 
-        # import pdb; pdb.set_trace()
+        themes_data = safe_get_output("themes")
+        codes_data = safe_get_output("codes")
+        narrative = safe_get_output("narrative")
+
+        try:
+            themes = Themes(**themes_data).themes if themes_data else []
+        except Exception as e:
+            themes = []
+            logging.warning(f"Failed to parse themes: {e}")
+
+        try:
+            codes = CodeList(**codes_data).codes if codes_data else []
+        except Exception as e:
+            codes = []
+            logging.warning(f"Failed to parse codes: {e}")
+
         return Box(
             {
                 "pipeline": self,
-                "themes": Themes(**self.nodes_dict.get("themes").output.response).themes,
-                "codes": CodeList(**self.nodes_dict.get("codes").output.response).codes,
-                "narrative": self.nodes_dict.get("narrative").output.response,
+                "themes": themes,
+                "codes": codes,
+                "narrative": narrative,
                 "detail": self,
             }
         )
