@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import inspect
 import itertools
 import json
 import logging
@@ -10,9 +9,7 @@ import math
 import os
 import re
 import uuid
-from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -31,7 +28,6 @@ from typing import (
 )
 
 import anyio
-import pandas as pd
 import tiktoken
 import yaml
 from box import Box
@@ -48,10 +44,9 @@ from jinja2 import (
     TemplateSyntaxError,
     meta,
 )
-from pydantic import BaseModel, ConfigDict, Field, RootModel, Tag
+from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Annotated
 
-from .async_decorators import flow, task
 from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
 
 if TYPE_CHECKING:
@@ -60,6 +55,8 @@ if TYPE_CHECKING:
 import logging
 
 logger = logging.getLogger(__name__)
+
+SOAK_MAX_RUNTIME = 60 * 60 * 3  # 3 hours
 
 
 def get_action_lookup():
@@ -77,6 +74,19 @@ def get_action_lookup():
 
 MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
 semaphore = anyio.Semaphore(MAX_CONCURRENCY)
+
+
+# exception classes for backward compatibility
+class CancelledRun(Exception):
+    """Exception raised when a flow run is cancelled."""
+
+    pass
+
+
+class Cancelled(Exception):
+    """Exception raised when a task is cancelled."""
+
+    pass
 
 
 class Code(BaseModel):
@@ -237,9 +247,13 @@ class DAGConfig(BaseModel):
 
 
 async def run_node(node):
-    r = await node.run()
-    logger.info(f"COMPLETED: {node.name}")
-    return r
+    try:
+        result = await node.run()
+        logger.info(f"COMPLETED: {node.name}")
+        return result
+    except Exception as e:
+        logger.error(f"Node {node.name} failed: {e}")
+        raise e
 
 
 def get_template_variables(template_string: str) -> Set[str]:
@@ -284,7 +298,6 @@ class DAG(BaseModel):
         for k, v in self.default_config.items():
             if hasattr(self.config, k) and k not in self.config.model_fields_set:
                 setattr(self.config, k, v)
-        logger.info(f"DAG config: {self.config}")
 
     def progress(self):
         last_complete = self.nodes[0]
@@ -360,9 +373,10 @@ class DAG(BaseModel):
                 raise Exception("LLMCredentials must be set for DAG")
             for batch in self.get_execution_order():
                 # use anyio structured concurrency - start all tasks in batch concurrently
-                async with anyio.create_task_group() as tg:
-                    for name in batch:
-                        tg.start_soon(run_node, self.nodes_dict[name])
+                with anyio.fail_after(SOAK_MAX_RUNTIME):  # 2 hours, to cleanup if needed
+                    async with anyio.create_task_group() as tg:
+                        for name in batch:
+                            tg.start_soon(run_node, self.nodes_dict[name])
                 # all tasks in batch complete when task group exits
             return self, None
         except Exception as e:
@@ -626,72 +640,56 @@ class Map(ItemsNode):
             return False
 
     async def run(self) -> List[Any]:
-
         await super().run()
 
-        # check if input is BatchList
         input_data = self.context[self.inputs[0]] if self.inputs else None
-        if isinstance(input_data, BatchList):
-            # flatten BatchList into individual items for processing
+        is_batch = isinstance(input_data, BatchList)
+
+        # Flatten batch input if needed
+        if is_batch:
             all_items = []
             batch_sizes = []
             for batch in input_data.batches:
                 batch_items = [Box({"input": item}) for item in batch]
                 all_items.extend(batch_items)
                 batch_sizes.append(len(batch))
-
-            # process each item individually (exclude BatchList from context)
+            items = all_items
             filtered_context = {
                 k: v for k, v in self.context.items() if not isinstance(v, BatchList)
             }
+        else:
+            items = await self.get_items()
+            filtered_context = self.context
 
-            # create helper function to wrap task execution with semaphore
-            async def run_task_with_semaphore(item):
-                async with semaphore:
-                    return await self.task(
-                        template=self.template,
-                        context={**filtered_context, **item},
-                        model=self.get_model(),
-                        credentials=self.dag.config.llm_credentials,
-                        max_tokens=self.max_tokens,
-                    )
+        results = [None] * len(items)
 
-            # create async tasks and await them
-            tasks = [asyncio.create_task(run_task_with_semaphore(item)) for item in all_items]
+        async with anyio.create_task_group() as tg:
+            for idx, item in enumerate(items):
 
-            # await all tasks
-            results = await asyncio.gather(*tasks)
+                async def run_and_store(index=idx, item=item):
+                    async with semaphore:
+                        results[index] = await self.task(
+                            template=self.template,
+                            context={**filtered_context, **item},
+                            model=self.get_model(),
+                            credentials=self.dag.config.llm_credentials,
+                            max_tokens=self.max_tokens,
+                        )
 
-            # reconstruct BatchList structure
+                tg.start_soon(run_and_store)
+
+        if is_batch:
+            # Reconstruct BatchList structure
             reconstructed_batches = []
             result_idx = 0
             for batch_size in batch_sizes:
                 batch_results = results[result_idx : result_idx + batch_size]
                 reconstructed_batches.append(batch_results)
                 result_idx += batch_size
-
             batch_list_result = BatchList(batches=reconstructed_batches)
             self.output = batch_list_result
             return batch_list_result
         else:
-            # original behavior for non-BatchList inputs
-            items = await self.get_items()
-
-            # create helper function to wrap task execution with semaphore
-            async def run_task_with_semaphore(item):
-                async with semaphore:
-                    return await self.task(
-                        template=self.template,
-                        context={**self.context, **item},
-                        model=self.get_model(),
-                        credentials=self.dag.config.llm_credentials,
-                        max_tokens=self.max_tokens,
-                    )
-
-            # create async tasks and await them
-            tasks = [asyncio.create_task(run_task_with_semaphore(item)) for item in items]
-            # await all tasks
-            results = await asyncio.gather(*tasks)
             self.output = results
             return results
 

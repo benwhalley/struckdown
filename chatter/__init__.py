@@ -15,21 +15,6 @@ from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel, ConfigDict, Field
-from tenacity import retry, retry_unless_exception_type, wait_exponential
-
-# cache policy no longer needed with custom decorators
-# CACHE_POLICY = INPUTS + TASK_SOURCE
-CACHE_ON = False
-from instructor.exceptions import (
-    ClientError,
-    ConfigurationError,
-    IncompleteOutputException,
-    InstructorError,
-    InstructorRetryException,
-    ModeError,
-    ProviderError,
-    ValidationError,
-)
 
 from .parsing import parser
 from .return_type_models import ACTION_LOOKUP

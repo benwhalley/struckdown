@@ -7,13 +7,9 @@ from collections import OrderedDict
 from io import BytesIO
 from typing import Any, Dict, List
 
-import matplotlib
 from chatter import get_embedding
 from django.core.files.images import ImageFile
-from soak.async_decorators import flow, task
 from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
-
-matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
 
 
 class Base64ImageFile(ImageFile):
@@ -122,6 +118,11 @@ def network_similarity_plot(
     threshold=0.6,
 ) -> str:
     """Create similarity plot using embedding visualization."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
+
     import matplotlib.pyplot as plt
     import networkx as nx
     import numpy as np
@@ -254,6 +255,10 @@ def create_pairwise_heatmap(
     a: QualitativeAnalysis, b: QualitativeAnalysis, threshold=0.6, use_threshold=True
 ) -> str:
     """Create a heatmap visualization for a single pair of pipeline results."""
+    import matplotlib
+
+    matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
+
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd

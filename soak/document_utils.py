@@ -3,17 +3,12 @@
 import glob
 import os
 import re
+import shutil
 import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-
-import docx
 import magic
-import pdfplumber
-import scrubadub
-import scrubadub_spacy
-from pdfplumber.utils.exceptions import PdfminerException
 
 
 def strip_null_bytes(obj):
@@ -42,6 +37,8 @@ def get_scrubber(salt, model="en_core_web_md"):
     - stricter email detector (avoids '@' in normal text)
     """
 
+    import scrubadub
+    import scrubadub_spacy
     from scrubadub.detectors import EmailDetector
     from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
     from scrubadub_spacy.detectors import SpacyEntityDetector
@@ -94,10 +91,6 @@ def safer_extract(zip_ref, dest_dir, max_files: int = 1000):
     zip_ref.extractall(dest_dir)
 
 
-import shutil
-from contextlib import contextmanager
-
-
 @contextmanager
 def unpack_zip_to_temp_paths_if_needed(paths: list[str]) -> list[str]:
     """
@@ -148,6 +141,8 @@ def extract_text(path: str) -> str:
 
 def _extract_docx_text(path: str) -> str:
     """Extract text from a DOCX file including headers and footers."""
+    import docx
+
     try:
         doc = docx.Document(path)
         parts = []
@@ -172,6 +167,9 @@ def _extract_docx_text(path: str) -> str:
 
 def _extract_text_cached(path: str, mtime: float) -> str:
     """Extract text based on file extension with error handling."""
+    import pdfplumber
+    from pdfplumber.utils.exceptions import PdfminerException
+
     suffix = Path(path).suffix.lower()
 
     try:
