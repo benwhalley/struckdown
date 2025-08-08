@@ -1,5 +1,9 @@
 """Data models for qualitative analysis pipelines."""
 
+from pathlib import Path
+
+from joblib import Memory
+
 import asyncio
 import hashlib
 import itertools
@@ -31,7 +35,8 @@ import anyio
 import tiktoken
 import yaml
 from box import Box
-from chatter import LLM, ChatterResult, LLMCredentials, chatter
+from chatter import LLM, ChatterResult, LLMCredentials
+from chatter import chatter as chatter_
 from chatter.parsing import parse_syntax
 from chatter.return_type_models import ACTION_LOOKUP
 from decouple import config
@@ -44,6 +49,8 @@ from jinja2 import (
     TemplateSyntaxError,
     meta,
 )
+from jinja_markdown import MarkdownExtension
+from chatter import get_embedding as get_embedding_
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Annotated
 
@@ -59,6 +66,19 @@ logger = logging.getLogger(__name__)
 SOAK_MAX_RUNTIME = 60 * 60 * 3  # 3 hours
 
 
+memory = Memory(Path(".embeddings"), verbose=0)
+
+
+@memory.cache
+def get_embedding(*args, **kwargs):
+    return get_embedding_(*args, **kwargs)
+
+
+# @memory.cache
+def chatter(*args, **kwargs):
+    return chatter_(*args, **kwargs)
+
+
 def get_action_lookup():
     SOAK_ACTION_LOOKUP = dict(ACTION_LOOKUP.copy())
     SOAK_ACTION_LOOKUP.update(
@@ -72,7 +92,7 @@ def get_action_lookup():
     return SOAK_ACTION_LOOKUP
 
 
-MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=10, cast=int)
+MAX_CONCURRENCY = config("MAX_CONCURRENCY", default=20, cast=int)
 semaphore = anyio.Semaphore(MAX_CONCURRENCY)
 
 
@@ -113,7 +133,7 @@ class Theme(BaseModel):
     # refer to codes by slug/identifier
     code_names: List[str] = Field(
         ...,
-        min_length=1,
+        min_length=0,
         max_length=10,
         description="List of the codes that are part of this theme. Identify them accurately by name",
     )
@@ -136,9 +156,11 @@ class Document:
 
 
 class QualitativeAnalysis(BaseModel):
+
     codes: Optional[List[Code]] = None
     themes: Optional[List[Theme]] = None
     narrative: Optional[str] = None
+    quotes: Optional[Any] = None
     details: Dict[str, Any] = Field(default_factory=dict)
 
     pipeline: Optional[str] = None
@@ -151,32 +173,6 @@ class QualitativeAnalysis(BaseModel):
 
     def __str__(self):
         return f"Themes: {self.themes}\nCodes: {self.codes}"
-
-    def to_html(self, template_path: Optional[str] = None) -> str:
-        """Render the analysis as HTML using Jinja2 template from file.
-
-        Args:
-            template_path: Path to the HTML template file. If None, uses default template.
-
-        Returns:
-            Rendered HTML string.
-        """
-        if template_path is None:
-            # Use default template in soak/templates directory
-            template_dir = Path(__file__).parent / "templates"
-            template_name = "qualitative_analysis.html"
-        else:
-            # Use provided template path
-            template_path = Path(template_path)
-            template_dir = template_path.parent
-            template_name = template_path.name
-
-        # Create Jinja2 environment and load template
-        env = Environment(loader=FileSystemLoader(template_dir))
-        template = env.get_template(template_name)
-
-        # Render template with data
-        return template.render(analysis=self)
 
 
 class QualitativeAnalysisComparison(BaseModel):
@@ -215,11 +211,11 @@ def get_default_llm_credentials():
 class DAGConfig(BaseModel):
     document_paths: Optional[List[str]] = []
     documents: List[str] = []
-    model_name: str = "gpt-4o-mini"
+    model_name: str = "gpt-5-mini"
     temperature: float = 1.0
     chunk_size: int = 20000  # characters, so ~5k tokens or ~4k English words
     extra_context: Dict[str, Any] = {}
-    llm_credentials: LLMCredentials = field(default_factory=get_default_llm_credentials)
+    llm_credentials: LLMCredentials = Field(default_factory=get_default_llm_credentials)
     scrub_pii: bool = False
     scrubber_model: str = "en_core_web_md"
     scrubber_salt: Optional[str] = Field(default="42", exclude=True)
@@ -228,6 +224,7 @@ class DAGConfig(BaseModel):
         return LLM(model_name=self.model_name, temperature=self.temperature)
 
     def load_documents(self) -> List[str]:
+
         if hasattr(self, "documents") and self.documents:
             logger.info("Using cached documents")
             return self.documents
@@ -249,7 +246,7 @@ class DAGConfig(BaseModel):
 async def run_node(node):
     try:
         result = await node.run()
-        logger.info(f"COMPLETED: {node.name}")
+        logger.info(f"COMPLETED: {node.name}\n")
         return result
     except Exception as e:
         logger.error(f"Node {node.name} failed: {e}")
@@ -266,9 +263,13 @@ def get_template_variables(template_string: str) -> Set[str]:
 
 
 def render_strict_template(template_str: str, context: dict) -> str:
+
+    # try:
     env = Environment(undefined=StrictUndefined)
     template = env.from_string(template_str)
     return template.render(**context)
+    # except Exception as e:
+    #     import pdb; pdb.set_trace()
 
 
 @dataclass(frozen=True)
@@ -278,7 +279,8 @@ class Edge:
 
 
 DAGNodeUnion = Annotated[
-    Union["Map", "Reduce", "Transform", "Batch", "Split"], Field(discriminator="type")
+    Union["Map", "Reduce", "Transform", "Batch", "Split", "TransformReduce", "VerifyQuotes"],
+    Field(discriminator="type"),
 ]
 
 
@@ -321,7 +323,9 @@ class DAG(BaseModel):
             "Split": ("(", ")"),  # round edges
             "Map": ("[[", "]]"),  # standard rectangle
             "Reduce": ("{{", "}}"),  # hexagon
-            "Transform": (">", "]"),  # circle
+            "Transform": (">", "]"),  #
+            "TransformReduce": (">", "]"),  #
+            "VerifyQuotes": ("[[", "]]"),  #
             "Batch": ("[[", "]]"),  # subroutine shape
         }
 
@@ -332,6 +336,11 @@ class DAG(BaseModel):
 
         for edge in self.edges:
             lines.append(f"    {edge.from_node} --> {edge.to_node}")
+
+        lines.append(f"""classDef heavyDotted stroke-dasharray: 4 4, stroke-width: 2px;""")
+        for node in self.nodes:
+            if node.type == "TransformReduce":
+                lines.append(f"""class all_themes heavyDotted;""")
 
         return "\n".join(lines)
 
@@ -434,23 +443,28 @@ OutputUnion = Union[
     ChatterResult,
     List[ChatterResult],
     List[List[ChatterResult]],
+    # for top matches
+    List[Dict[str, Union[str, List[Tuple[str, float]]]]],
 ]
 
 
 class DAGNode(BaseModel):
-    model_config = {
-        "discriminator": "type",
-    }
 
+    # this used for reserialization
+    model_config = {"discriminator": "type"}
     type: str = Field(default_factory=lambda self: type(self).__name__, exclude=False)
 
     dag: Optional["DAG"] = Field(default=None, exclude=True)
+
     name: str
     inputs: Optional[List[str]] = []
     template_text: Optional[str] = None
     output: Optional[OutputUnion] = Field(default=None)
 
     def get_model(self):
+        if self.model_name or self.temperature:
+            m = LLM(model_name=self.model_name, temperature=self.temperature)
+            return m
         return self.dag.config.get_model()
 
     def validate_template(self):
@@ -490,21 +504,38 @@ class DAGNode(BaseModel):
         return self.template_text
 
 
+class CompletionDAGNode(DAGNode):
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+    async def run(self, items: List[Any] = None) -> List[Any]:
+        await super().run()
+
+    def output_keys(self) -> List[str]:
+        """Return the list of output keys provided by this node."""
+        try:
+            sections = parse_syntax(self.template)
+            keys = []
+            for section in sections:
+                keys.extend(section.keys())
+            return keys or [self.name]
+        except Exception as e:
+            logger.warning(f"Failed to parse template for output keys: {e}")
+            return ["input"]
+
+
 class Split(DAGNode):
     type: Literal["Split"] = "Split"
 
     name: str = "chunks"
     template_text: str = "{{input}}"
 
-    near: List[str] = ["\n\n", "\n", ".", " "]
     chunk_size: int = 20000
     min_split: int = 500
-    split_unit: Literal["chars", "tokens"] = "chars"
+    overlap: int = 0
+    split_unit: Literal["chars", "tokens", "words", "sentences"] = "tokens"
     encoding_name: str = "cl100k_base"
-
-    @property
-    def token_encoder(self):
-        return tiktoken.get_encoding(self.encoding_name)
 
     @property
     def template(self):
@@ -512,57 +543,81 @@ class Split(DAGNode):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
         if len(self.inputs) > 1:
             raise ValueError("Split node can only have one input")
 
-        assert self.chunk_size > self.min_split, "chunk_size must be greater than min_split"
+        if self.chunk_size < self.min_split:
+            logger.warning(
+                f"Chunk size must be larger than than min_split. Setting min_split to chunk_size // 2 = {self.chunk_size // 2}"
+            )
+            self.min_split = self.chunk_size // 2
 
     async def run(self) -> List[str]:
+        import numpy as np
+
         await super().run()
         input_docs = self.context[self.inputs[0]]
         self.output = list(itertools.chain.from_iterable(map(self.split_document, input_docs)))
-        logger.info(f"CREATED {len(self.output)} chunks")
+        lens = [len(self.tokenize(doc, method=self.split_unit)) for doc in self.output]
+        logger.info(
+            f"CREATED {len(self.output)} chunks; average length ({self.split_unit}): {np.mean(lens).round(1)}, max: {max(lens)}, min: {min(lens)}."
+        )
+
         return self.output
 
     def split_document(self, doc: str) -> List[str]:
         if self.split_unit == "chars":
-            return self._split_by_length(doc, len_fn=len)
+            return self._split_by_length(doc, len_fn=len, overlap=self.overlap)
+
+        tokens = self.tokenize(doc, method=self.split_unit)
+        spans = self._compute_spans(len(tokens), self.chunk_size, self.min_split, self.overlap)
+        return [self._format_chunk(tokens[start:end]) for start, end in spans if end > start]
+
+    def tokenize(self, doc: str, method: str) -> List[Union[int, str]]:
+        if method == "tokens":
+            return self.token_encoder.encode(doc)
+
+        elif method == "sentences":
+            import nltk
+
+            return nltk.sent_tokenize(doc)
+        elif method == "words":
+            import nltk
+
+            return nltk.word_tokenize(doc)
         else:
-            encode = self.token_encoder.encode
-            return self._split_by_length(doc, len_fn=lambda s: len(encode(s)))
+            raise ValueError(f"Unsupported tokenization method: {method}")
 
-    def _split_by_length(self, doc: str, len_fn: Callable[[str], int]) -> List[str]:
-        doc_len = len_fn(doc)
-        if doc_len <= self.chunk_size:
-            return [doc.strip()]
+    def _compute_spans(
+        self, n: int, chunk_size: int, min_split: int, overlap: int
+    ) -> List[Tuple[int, int]]:
+        if n <= chunk_size:
+            return [(0, n)]
 
-        # Compute ideal chunk target and find separators
-        n_chunks = max(1, math.ceil(doc_len / self.chunk_size))
-        target = max(self.min_split, math.ceil(doc_len / n_chunks))
+        n_chunks = max(1, math.ceil(n / chunk_size))
+        target = max(min_split, math.ceil(n / n_chunks))
+        spans = []
+        start = 0
+        for _ in range(n_chunks - 1):
+            end = min(n, start + target)
+            spans.append((start, end))
+            start = max(0, end - overlap)
+        spans.append((start, n))
+        return spans
 
-        # Find all candidate breakpoints (based on char indices)
-        split_points = []
-        for sep in self.near:
-            split_points += [m.end() for m in re.finditer(re.escape(sep), doc)]
-        split_points = sorted(set(p for p in split_points if p >= self.min_split))
+    def _format_chunk(self, chunk_tokens: List[Union[int, str]]) -> str:
+        if not chunk_tokens:
+            return ""
+        if self.split_unit == "tokens":
+            return self.token_encoder.decode(chunk_tokens).strip()
+        elif self.split_unit in {"words", "sentences"}:
+            return " ".join(chunk_tokens).strip()
+        else:
+            raise ValueError(f"Unexpected split_unit in format_chunk: {self.split_unit}")
 
-        # Greedy chunking using split_unit length function
-        chunks, last = [], 0
-        for i in range(1, n_chunks):
-            ideal = i * target
-            candidates = [p for p in split_points if last < p and len_fn(doc[last:p]) <= target]
-            if not candidates:
-                # fallback to next available split
-                candidates = [p for p in split_points if p > last]
-            if not candidates:
-                break
-            best = candidates[-1]
-            chunks.append(doc[last:best].strip())
-            last = best
-        chunks.append(doc[last:].strip())
-
-        return [c for c in chunks if len_fn(c) >= self.min_split or len(chunks) == 1]
+    @property
+    def token_encoder(self):
+        return tiktoken.get_encoding(self.encoding_name)
 
 
 class ItemsNode(DAGNode):
@@ -616,20 +671,26 @@ async def default_map_task(template, context, model, credentials, max_tokens=Non
     return result
 
 
-class Map(ItemsNode):
+# TODO implement scrubber as a node?
+# class Scrub(ItemsNode):
+#     type: Literal["Scrub"] = "Scrub"
+
+#     def run(self) -> List[Any]:
+
+
+class Map(ItemsNode, CompletionDAGNode):
     model_config = {
         "discriminator": "type",
     }
 
     type: Literal["Map"] = "Map"
-    # fn must accepts **kwargs, return iterable
+
     task: Callable = Field(default=default_map_task, exclude=True)
-    default_template: str = "{{input}} <prompt>: [[output]]"
-    max_tokens: Optional[int] = None
+    template_text: str = None
 
     @property
     def template(self) -> str:
-        return self.template_text or self.default_template
+        return self.template_text
 
     def validate_template(self):
         try:
@@ -640,7 +701,7 @@ class Map(ItemsNode):
             return False
 
     async def run(self) -> List[Any]:
-        await super().run()
+        # await super().run()
 
         input_data = self.context[self.inputs[0]] if self.inputs else None
         is_batch = isinstance(input_data, BatchList)
@@ -694,19 +755,17 @@ class Map(ItemsNode):
             return results
 
 
-class Transform(ItemsNode):
+class Transform(ItemsNode, CompletionDAGNode):
     type: Literal["Transform"] = "Transform"
     # TODO: allow for arbitrary python functions instead of chatter?
     # fn: Field(Callable[..., Iterable[Any]],  exclude=True) = None
-    default_template: str = "{{input}} <prompt>: [[output]]"
-    max_tokens: Optional[int] = None
+    template_text: str = Field(default="{{input}} <prompt>: [[output]]")
 
     @property
     def template(self) -> str:
-        return self.template_text or self.default_template
+        return self.template_text
 
     async def run(self):
-        await super().run()
 
         items = await self.get_items()
 
@@ -728,11 +787,11 @@ class Transform(ItemsNode):
 
 class Reduce(ItemsNode):
     type: Literal["Reduce"] = "Reduce"
-    default_template: str = "{{input}}"
+    template_text: str = "{{input}}\n"
 
     @property
     def template(self) -> str:
-        return self.template_text or self.default_template
+        return self.template_text
 
     def get_items(self):
         if len(self.inputs) > 1:
@@ -793,7 +852,6 @@ class Batch(ItemsNode):
     type: Literal["Batch"] = "Batch"
     # batch_fn: Optional[Callable] = None
     batch_size: int = 10
-    default_template: Optional[str] = None
 
     async def run(self) -> List[List[Any]]:
         await super().run()
@@ -810,39 +868,356 @@ class Batch(ItemsNode):
 class QualitativeAnalysisPipeline(DAG):
     name: Optional[str] = None
 
+    def to_html(self, template_path: Optional[str] = None) -> str:
+        """Render the analysis as HTML using Jinja2 template from file.
+
+        Args:
+            template_path: Path to the HTML template file. If None, uses default template.
+
+        Returns:
+            Rendered HTML string.
+        """
+        if template_path is None:
+            # Use default template in soak/templates directory
+            template_dir = Path(__file__).parent / "templates"
+            template_name = "qualitative_analysis.html"
+        else:
+            # Use provided template path
+            template_path = Path(template_path)
+            template_dir = template_path.parent
+            template_name = template_path.name
+
+        # Create Jinja2 environment and load template
+        env = Environment(
+            loader=FileSystemLoader(template_dir), extensions=["jinja_markdown.MarkdownExtension"]
+        )
+
+        template = env.get_template(template_name)
+
+        # Render template with data
+        return template.render(pipeline=self, result=self.result())
+
     def result(self):
+
         def safe_get_output(name):
             try:
                 return self.nodes_dict.get(name).output.response
             except:
                 return None
-            return output.response
 
         themes_data = safe_get_output("themes")
         codes_data = safe_get_output("codes")
         narrative = safe_get_output("narrative")
 
         try:
-            themes = Themes(**themes_data).themes if themes_data else []
+            quotes = self.nodes_dict.get("quotes")
+        except:
+            quotes = None
+
+        # import pdb; pdb.set_trace()
+
+        try:
+            themes = themes_data.themes if themes_data else []
         except Exception as e:
             themes = []
             logging.warning(f"Failed to parse themes: {e}")
 
         try:
-            codes = CodeList(**codes_data).codes if codes_data else []
+            codes = codes_data.codes if codes_data else []
         except Exception as e:
             codes = []
             logging.warning(f"Failed to parse codes: {e}")
 
-        return Box(
+        return QualitativeAnalysis.model_validate(
             {
-                "pipeline": self,
                 "themes": themes,
                 "codes": codes,
                 "narrative": narrative,
-                "detail": self,
+                "detail": self.model_dump(),
+                "quotes": quotes,
             }
         )
+
+
+class VerifyQuotes(DAGNode):
+
+    type: Literal["VerifyQuotes"] = "VerifyQuotes"
+    threshold: float = 0.6
+    stats: Optional[Dict[str, Any]] = None
+
+    async def run(self) -> List[Any]:
+        await super().run()
+
+        import nltk
+        from sklearn.metrics.pairwise import cosine_similarity
+        import numpy as np
+
+        alldocs = "\n\n".join(self.dag.config.documents)
+        sentences = nltk.sent_tokenize(alldocs)
+        real_quotes = sentences
+        codes = self.context.get("codes", None)
+        if not codes:
+            raise Exception("VerifyQuotes must be run after node called `codes`")
+
+        extr_quotes = list(itertools.chain(*[i.quotes for i in codes.response.codes]))
+
+        # embed real and extracted quotes
+        # import pdb; pdb.set_trace()
+        try:
+            real_emb = np.array(get_embedding(real_quotes))
+            extr_emb = np.array(get_embedding(extr_quotes))
+        except Exception as e:
+            print(e)
+            import pdb
+
+            pdb.set_trace()
+
+        # calculate cosine similarity
+        sims = cosine_similarity(extr_emb, real_emb)
+
+        # find top matches and sort by similarity
+        top_matches = []
+        max_matches = 10
+        for quote, row in zip(extr_quotes, sims):
+            real_and_sim = list(zip(real_quotes, row))
+            above_thresh = [(r, float(s)) for r, s in real_and_sim if s >= self.threshold]
+
+            if above_thresh:
+                matches = sorted(above_thresh, key=lambda x: -x[1])[:max_matches]
+            else:
+                top3_idx = row.argsort()[-3:]
+                matches = sorted(
+                    [(real_quotes[j], float(row[j])) for j in top3_idx], key=lambda x: -x[1]
+                )[:max_matches]
+
+            top_matches.append(
+                {
+                    "quote": quote,
+                    "matches": matches,
+                }
+            )
+
+        # calulate stats on matches
+        try:
+            best_match_sims = [m["matches"][0][1] for m in top_matches if m["matches"]]
+            average_sim = float(np.mean(best_match_sims)) if best_match_sims else None
+            min_sim = float(np.min(best_match_sims)) if best_match_sims else None
+            percentiles = (
+                np.percentile(best_match_sims, [10, 90]) if best_match_sims else [None, None]
+            )
+            # Count no matches above threshold
+            n_total = len(top_matches)
+            n_below_thresh = sum(
+                1 for m in top_matches if all(sim < self.threshold for _, sim in m["matches"])
+            )
+            pct_below_thresh = (n_below_thresh / n_total) * 100 if n_total else 0
+            self.stats = {
+                "average_best_sim": average_sim,
+                "min_best_sim": min_sim,
+                "10th_percentile_best_sim": (
+                    float(percentiles[0]) if percentiles[0] is not None else None
+                ),
+                "90th_percentile_best_sim": (
+                    float(percentiles[1]) if percentiles[1] is not None else None
+                ),
+                "n_no_match_above_threshold": n_below_thresh,
+                "pct_no_match_above_threshold": round(pct_below_thresh, 2),
+            }
+        except Exception as e:
+            logger.error(f"Error calculating stats: {e}")
+            self.stats = {"error": str(e)}
+
+        self.output = top_matches
+
+        return top_matches
+
+
+class TransformReduce(CompletionDAGNode):
+    """
+    Recursively reduce a list into a single item by transforming it with an LLM template.
+
+    If inputs are ChatterResult with specific keys, then the TransformReduce must produce a ChatterResult with the same keys.
+
+    """
+
+    type: Literal["TransformReduce"] = "TransformReduce"
+
+    chunk_size: int = 20000
+    min_split: int = 500
+    overlap: int = 0
+    split_unit: Literal["chars", "tokens", "words", "sentences"] = "tokens"
+    encoding_name: str = "cl100k_base"
+    reduce_template: str = "{{input}}\n\n"
+    template_text: str = "<text>\n{{input}}\n</text>\n\n-----\nSummarise the text: [[output]]"
+    max_levels: int = 5
+
+    reduction_tree: List[List[OutputUnion]] = Field(default_factory=list, exclude=False)
+
+    @property
+    def token_encoder(self):
+        return tiktoken.get_encoding(self.encoding_name)
+
+    def tokenize(self, doc: str) -> List[Union[int, str]]:
+        if self.split_unit == "tokens":
+            return self.token_encoder.encode(doc)
+        elif self.split_unit == "sentences":
+            import nltk
+
+            return nltk.sent_tokenize(doc)
+        elif self.split_unit == "words":
+            import nltk
+
+            return nltk.word_tokenize(doc)
+        else:
+            raise ValueError(f"Unsupported tokenization method: {self.split_unit}")
+
+    def _compute_spans(self, n: int) -> List[Tuple[int, int]]:
+        if n <= self.chunk_size:
+            return [(0, n)]
+        n_chunks = max(1, math.ceil(n / self.chunk_size))
+        target = max(self.min_split, math.ceil(n / n_chunks))
+        spans = []
+        start = 0
+        for _ in range(n_chunks - 1):
+            end = min(n, start + target)
+            spans.append((start, end))
+            start = max(0, end - self.overlap)
+        spans.append((start, n))
+        return spans
+
+    def chunk_document(self, doc: str) -> List[str]:
+        if self.split_unit == "chars":
+            if len(doc) <= self.chunk_size:
+                return [doc.strip()]
+            spans = self._compute_spans(len(doc))
+            return [doc[start:end].strip() for start, end in spans]
+        tokens = self.tokenize(doc)
+        spans = self._compute_spans(len(tokens))
+
+        if self.split_unit == "tokens":
+            return [self.token_encoder.decode(tokens[start:end]).strip() for start, end in spans]
+        else:
+            return [" ".join(tokens[start:end]).strip() for start, end in spans]
+
+    def chunk_items(self, items: List[str]) -> List[str]:
+        # import pdb; pdb.set_trace()
+        joined = "\n".join(
+            [
+                render_strict_template(
+                    self.reduce_template, {**self.context, **i.outputs, "input": i}
+                )
+                for i in items
+            ]
+        )
+        return self.chunk_document(joined)
+
+    def batch_by_units(self, items: List[str]) -> List[List[str]]:
+        batches = []
+        current_batch = []
+        current_units = 0
+
+        for item in items:
+            if self.split_unit == "chars":
+                item_len = len(item)
+            elif self.split_unit == "tokens":
+                item_len = len(self.token_encoder.encode(item))
+            elif self.split_unit == "words":
+                item_len = len(item.split())
+            elif self.split_unit == "sentences":
+                import nltk
+
+                item_len = len(nltk.sent_tokenize(item))
+            else:
+                raise ValueError(f"Unknown split_unit: {self.split_unit}")
+
+            # If adding this item would exceed batch size, flush
+            if current_units + item_len > self.chunk_size and current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_units = 0
+
+            current_batch.append(item)
+            current_units += item_len
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
+
+    async def run(self) -> str:
+        await super().run()
+
+        raw_items = self.context[self.inputs[0]]
+
+        if isinstance(raw_items, str):
+            raw_items = [raw_items]
+        elif not isinstance(raw_items, list):
+            raise ValueError("Input to TransformReduce must be a list of strings")
+
+        # Initial chunking
+        current = self.chunk_items(raw_items)
+
+        self.reduction_tree = [current]
+
+        level = 0
+        nbatches = len(current)
+        logger.info(f"Starting with {nbatches} batches")
+
+        while len(current) > 1:
+            level += 1
+            logger.warning(f"TransformReduce level: {level}")
+            if level > self.max_levels:
+                raise RuntimeError("Exceeded max cascade depth")
+
+            # Chunk input into batches
+            batches = self.batch_by_units(current)
+            if len(batches) > (nbatches and nbatches or 1e10):
+                import pdb
+
+                pdb.set_trace()
+                raise Exception(
+                    f"Batches {len(batches)} equals or exceeded original batch size {nbatches} so likely won't ever converge to 1 item. Try increasing the chunk_size or rewriting the prompt to be more concise."
+                )
+            nbatches = len(batches)
+
+            logger.info(f"Cascade Reducing {len(batches)} batches")
+            results: List[Any] = [None] * len(batches)
+
+            async with anyio.create_task_group() as tg:
+                for idx, batch in enumerate(batches):
+
+                    async def run_and_store(index=idx, batch=batch):
+                        prompt = render_strict_template(
+                            self.template_text, {**self.context, "input": batch}
+                        )
+                        async with semaphore:
+                            results[index] = await chatter(
+                                multipart_prompt=prompt,
+                                model=self.get_model(),
+                                credentials=self.dag.config.llm_credentials,
+                                action_lookup=get_action_lookup(),
+                                max_tokens=self.max_tokens,
+                            )
+
+                    tg.start_soon(run_and_store)
+
+            # Extract string results and re-chunk for next level
+            current = self.chunk_items(results)
+            self.reduction_tree.append(current)
+
+        final_prompt = render_strict_template(
+            self.template_text, {"input": current[0], **self.context}
+        )
+        final_response = await chatter(
+            multipart_prompt=final_prompt,
+            model=self.get_model(),
+            credentials=self.dag.config.llm_credentials,
+            action_lookup=get_action_lookup(),
+            max_tokens=self.max_tokens,
+        )
+
+        self.output = final_response
+        return final_response
 
 
 # Resolve forward references after QualitativeAnalysisPipeline is defined

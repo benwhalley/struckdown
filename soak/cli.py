@@ -26,7 +26,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
+logger = logging.getLogger(__name__)
 
 PIPELINE_DIR = Path(__file__).parent / "pipelines"
 
@@ -48,19 +48,19 @@ def run(
     input_files: list[str] = typer.Argument(
         ..., help="File patterns or zip files (supports globs like '*.txt')"
     ),
+    model_name: str = typer.Option("gpt-4o-mini", help="LLM model name"),
     output: str = typer.Option(
-        None, "--output", "-o", help="Output file path (stdout if not specified)"
+        None,
+        "--output",
+        "-o",
+        help="Output file path name (without extensions) (stdout if not specified)",
     ),
-    format: str = typer.Option("json", "--format", "-f", help="Output format: json, yaml, or html"),
+    format: str = typer.Option("json", "--format", "-f", help="Output format: json or html"),
     include_documents: bool = typer.Option(
         False, "--include-documents", help="Include original documents in output"
     ),
 ):
     """Run a pipeline on input files."""
-
-    # validate format parameter
-    if format not in ["json", "yaml", "html"]:
-        raise typer.BadParameter("Format must be 'json', 'yaml', or 'html'")
 
     try:
         pipyml = PIPELINE_DIR / pipeline / "soak.yaml"
@@ -74,13 +74,12 @@ def run(
     print(f"Loading pipeline from {pipyml}", file=sys.stderr)
     pipeline = load_template_bundle(pipyml)
 
-    pipeline.config.document_paths = None
-    pipeline.config.documents = None
-
+    pipeline.config.model_name = model_name
     pipeline.config.llm_credentials = LLMCredentials()
 
     with unpack_zip_to_temp_paths_if_needed(input_files) as docfiles:
         pipeline.config.document_paths = docfiles
+        pipeline.config.documents = pipeline.config.load_documents()
 
     try:
         # all pipelines are now DAG pipelines - run directly with asyncio
@@ -90,9 +89,7 @@ def run(
         if errors:
             logger.error(f"Errors during pipeline execution: {errors}")
             logger.warning("Entering pdb for debugging")
-            import pdb
 
-            pdb.set_trace()
     except Exception as e:
         print(f"Error during pipeline execution: {e}", file=sys.stderr)
         import traceback
@@ -108,21 +105,27 @@ def run(
     if not include_documents:
         analysis.config.documents = []
 
+    # import pdb; pdb.set_trace()
     # generate output content based on format
-    if format == "json":
-        content = json.dumps(analysis.model_dump(), indent=2)
-    elif format == "yaml":
-        content = yaml.dump(analysis, default_flow_style=False, indent=2)
-    elif format == "html":
-        content = analysis.to_html()
+
+    jsoncontent = analysis.model_dump_json()
+    htmlcontent = analysis.to_html()
 
     # output to stdout or file
     if output is None:
-        print(content)
+        if format == "json":
+            print(jsoncontent)
+        elif format == "html":
+            print(htmlcontent)
+        else:
+            raise typer.BadParameter("Format must be 'json' or 'html' or specify output file name")
+
     else:
-        print(f"Writing output to {output}")
-        with open(output, "w") as f:
-            f.write(content)
+        print(f"Writing output to {output}.json and {output}.html")
+        with open(output + ".html", "w", encoding="utf-8") as f:
+            f.write(htmlcontent)
+        with open(output + ".json", "w", encoding="utf-8") as f:
+            f.write(jsoncontent)
 
 
 @app.command(name="list")

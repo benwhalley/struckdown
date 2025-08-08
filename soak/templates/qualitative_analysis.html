@@ -1,101 +1,238 @@
 <!DOCTYPE html>
+
 <html>
+<meta charset="UTF-8">
+
 <head>
     <title>Qualitative Analysis Report</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .theme { background-color: #f0f0f0; padding: 20px; margin: 20px 0; border-radius: 8px; }
-        .theme h2 { color: #333; margin-top: 0; }
-        .code { background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #007bff; }
-        .code h3 { color: #555; margin-top: 0; }
-        .quote { font-style: italic; color: #666; margin: 5px 0; padding-left: 20px; }
-        .summary { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 30px; }
 
-        .docs { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 30px; }
-    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/4.6.2/css/bootstrap-grid.min.css" integrity="sha512-uzG4YY/dpwIEUrfjYud6T7ieVM06DwkHYiB28wgbtq0w4hSGx3XyDF2Oh/VaxB0hmyxyR3hYHNQc4Chb/dS1Sw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/4.6.2/css/bootstrap-reboot.min.css" integrity="sha512-Hvxqga90bvpEid1McCftiBMcfB8cPXI+TZR3GVf4KUdLu3NPx6/gPXSQTdY7AHaLLJDSJym6kOotc713b2D7gQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/4.6.2/css/bootstrap.min.css" integrity="sha512-rt/SrQ4UNIaGfDyEXZtNcyWvQeOq0QLygHluFQcSjaGB04IxWhal71tKuzP6K8eYXYB6vJV4pHkXcmFGGQ1/0w==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/4.6.2/js/bootstrap.bundle.min.js" integrity="sha512-igl8WEUuas9k5dtnhKqyyld6TzzRjvMqLC79jkgT3z02FvJyHAuUtyemm/P/jYSne1xwFI06ezQxEwweaiV7VA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
 </head>
+
+
 <body>
+
+  <div class="container">
     <h1>Qualitative Analysis Report</h1>
 
-    <div class="summary">
-        <h2>Summary</h2>
-        <p><strong>Total Documents:</strong> {{ analysis.details.documents|length if analysis.details.documents else 0 }}</p>
-        <p><strong>Total Themes:</strong> {{ analysis.themes|length if analysis.themes else 0 }}</p>
-        <p><strong>Total Codes:</strong> {{ analysis.codes|length if analysis.codes else 0 }}</p>
-    </div>
+  <div class="row">
+    <div class="col-6">
 
-    {% if analysis.themes %}
-    <h2>Themes</h2>
-    {% for theme in analysis.themes %}
-    <div class="theme">
-        <h2>{{ theme.name }}</h2>
-        <p>{{ theme.description }}</p>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.8.1/mermaid.min.js" integrity="sha512-BFmLwKC92En/Mv3/tTlkzotbuaJlvgUvGRyDh1037lTgKhP326tEL1mDN0wl8kXC/ZbNsKd7mT4iOjFC+EhoNg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
-        {% if theme.codes %}
-        <h3>Associated Codes:</h3>
-        {% for code in theme.codes %}
-        <div class="code">
-            <h3>{{ code.name }}</h3>
-            <p><strong>Description:</strong> {{ code.description }}</p>
-            {% if code.quotes %}
-            <p><strong>Example Quotes:</strong></p>
-            {% for quote in code.quotes %}
-            <p class="quote">"{{ quote }}"</p>
-            {% endfor %}
-            {% endif %}
+      <style>
+        .mermaid-container {
+          background-color: #f8f9fa;
+          border: 1px solid #dee2e6;
+          padding: 20px;
+        }
+        .mermaid {
+          text-align: center;
+        }
+        .mermaid-header {
+          font-weight: bold;
+          margin-bottom: 10px;
+          color: #333;
+        }
+      </style>
+
+      <div class="mermaid-container">
+        <div class="mermaid">
+          {{ pipeline.to_mermaid()|safe }}
         </div>
+      </div>
+
+
+      <script>
+        mermaid.initialize({
+          startOnLoad: true,
+          theme: 'default',
+          flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true,
+            curve: 'basis'
+          }
+        });
+      </script>
+
+
+      <h5 class="mt-4">Default context</h5>
+      <ul class="list-group">
+        <li class="list-group-item">Pipeline: <code>{{pipeline.name}}</code></li>
+
+        {% for k, v in pipeline.default_context.items() %}
+        <li class="list-group-item">{{k}}:<code> {{v}}</code></li>
         {% endfor %}
-        {% endif %}
+
+      </ul>
+
+      {% if pipeline.config.extra_context %}
+      <h5 class="mt-4">Extra context</h5>
+      <ul class="list-group">
+        {% for k, v in pipeline.config.extra_context.items() %}
+        <li class="list-group-item">{{k}}:<code> {{v}}</code></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+     <h5 class="mt-4">Contents:</h5>
+      <ul class="list-group">
+        <li class="list-group-item"><a href="#narrative">Narrative</a></li>
+
+        <li class="list-group-item"><a href="#themes">Themes</a></li>
+        <li class="list-group-item"><a href="#codes">Codes</a></li>
+        <li class="list-group-item"><a href="#quotes">Quotes</a></li>
+
+        <li class="list-group-item"><a href="#documents">Document paths</a></li>
+      </ul>
+
     </div>
-    {% endfor %}
+
+    <div class="col-6">
+      <h5>Themes</h5>
+      <ul>
+        {% for t in result.themes %}
+        <li>{{t.name}}</li>
+        {% endfor %}
+      </ul>
+
+
+    <h5 class="mt-4">Codes</h5>
+      <ul>
+        {% for t in result.codes %}
+        <li>{{t.name}}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+
+  </div>
+
+
+  <hr class="mt-5">
+
+  <h2 id="narrative">Narrative</h2>
+  <div>
+{% markdown %}
+{{ result.narrative }}
+{% endmarkdown %}
+  </div>
+
+
+
+
+  <hr class="mt-5">
+
+  <h2 id="themes">Themes</h2>
+  {% for theme in result.themes %}
+  <div class="theme mt-4">
+    <h5>{{ theme.name }}</h5>
+    <p>{{ theme.description }}</p>
+    <p>Linked codes:
+      {% for code in theme.code_names %}
+        {{code}}{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    </p>
+  </div>
+  {% endfor %}
+
+  <hr class="mt-5">
+
+  <h1 id="codes">Codes and supporting quotes</h1>
+  {% for code in result.codes %}
+  <div class="mt-2 card card-body">
+    <h6 class="card-title">{{ code.name }}</h6>
+    <p>{{ code.description }}</p>
+    {% if code.quotes %}
+    <p>Example Quotes:</p>
+    <ul>
+      {% for quote in code.quotes %}
+      <li>{{ quote }}</li>
+      {% endfor %}
+    </ul>
     {% endif %}
+  </div>
+  {% endfor %}
 
 
-    <h2>Reflexivity</h2>
-    {{ analysis.details.reflexive_thoughts if analysis.details.reflexive_thoughts else "No reflexive thoughts recorded." }}
+  <hr class="mt-5">
 
+<h1 id="quotes">Checking quotes</h1>
+  <div>
+    <style>
+  .sim-high   { color: green; }
+  .sim-mid    { color: orange; }
+  .sim-low    { color: red; }
+  .sim-verylow { color: grey; }
+</style>
 
-
-    {% if analysis.codes and not analysis.themes %}
-    <h2>Codes</h2>
-    {% for code in analysis.codes %}
-    <div class="code">
-        <h3>{{ code.name }}</h3>
-        <p><strong>Description:</strong> {{ code.description }}</p>
-        {% if code.quotes %}
-        <p><strong>Example Quotes:</strong></p>
-        {% for quote in code.quotes %}
-        <p class="quote">"{{ quote }}"</p>
-        {% endfor %}
+<table class="table">
+  <tr>
+    <th>LLM Extracted Quote</th>
+    <th>Matches in original text</th>
+  </tr>
+  {% for q in result.quotes.output %}
+  <tr>
+    <td>{{ q.quote|e }}</td>
+    <td>
+      <ul>
+      {% for match, sim in q.matches %}
+        {% set cls = "sim-verylow" %}
+        {% if sim > 0.7 %}
+          {% set cls = "sim-high" %}
+        {% elif sim > 0.6 %}
+          {% set cls = "sim-mid" %}
+        {% elif sim > 0.5 %}
+          {% set cls = "sim-low" %}
         {% endif %}
-    </div>
-    {% endfor %}
-    {% endif %}
+        <li class="{{ cls }}">
+         {{ match|e }} (sim.:  {{ "%.2f"|format(sim) }})
+        </li>
+      {% endfor %}
+      </ul>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+
+  <h2>Stats on matching quotes</h2>
+  <pre style="white-space: pre-wrap;">
+    {{ result.quotes.stats }}
+  </pre>
+  </div>
+
+  <hr class="mt-5">
 
 
 
 
-    <div class="docs intermediate">
-        <h3>Intermediate Findings</h3>
-        <pre style="white-space: pre-wrap;">
-{{analysis.details }}
-        </pre>
-    </div>
+</div>
 
 
-    <div class="docs">
-        <h3>Documents</h3>
-        {% if analysis.details.documents %}
-        {% for doc in analysis.details.documents %}
-        <p>
-            <code>{{ doc.id if doc.id else loop.index }}</code>:
-            {{ doc.content[:100] if doc.content else doc[:100] }}...
-        </p>
+
+
+ <div class="col-12">
+
+      {% if pipeline.config.document_paths %}
+      <hr>
+      <h2 class="mt-4" id="documents">Documents</h5>
+      <ul class="list-group">
+        {% for k in pipeline.config.document_paths %}
+        <li class="list-group-item">{{k}}</code></li>
         {% endfor %}
-        {% else %}
-        <p>No documents available for display.</p>
-        {% endif %}
+      </ul>
+      {% endif %}
+
+
     </div>
 
-</body>
-</html>
+
+</div>

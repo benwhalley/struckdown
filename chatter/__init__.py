@@ -1,8 +1,7 @@
-""""""
-
 import logging
 import re
 import traceback
+from more_itertools import chunked
 from collections import OrderedDict, defaultdict
 from types import FunctionType
 from typing import Any, Callable, Dict, List, Optional
@@ -49,7 +48,7 @@ class LLMCredentials(BaseModel):
 
 class LLM(BaseModel):
     model_name: str = "gpt-4o-mini"
-    temperature: float = 1.0
+    temperature: Optional[float] = 1.0
 
     def __str__(self):
         return self.model_name
@@ -68,7 +67,9 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_to
     logger.info(
         f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
-    logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+
+    logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=llm.model_name,
@@ -86,9 +87,10 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_to
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
 
-    logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
-    logger.info(f"{LC.PURPLE}Response type: {type(res)}{LC.RESET}\n\n")
-    logger.warning(res)
+    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+    logger.info(
+        f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
+    )
     return res, com
 
 
@@ -169,7 +171,7 @@ async def process_single_segment(
         rendered_prompt = template.render(**accumulated_context)
 
         # Debug the context to see what's available to template tags
-        logger.info(f"Template context keys: {list(accumulated_context.keys())}")
+        logger.debug(f"Template context keys: {list(accumulated_context.keys())}")
 
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
@@ -290,13 +292,14 @@ async def chatter(
     chatter("tell a joke [[joke]]")
     """
 
-    logger.info(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
+    logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
     segments = parser(action_lookup=action_lookup).parse(multipart_prompt.strip())
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
     if max([len(i) for i in plan]) > 1:
         logger.info(f"Execution plan includes concurrency: {plan}")
+
     segment_futures = {}
 
     for batch in plan:
@@ -335,20 +338,30 @@ async def chatter(
     return final
 
 
-def get_embedding(texts, model_name="text-embedding-3-large", dimensions=3072) -> list:
-    """
-    get_embedding(["hello", ])
-    """
-    client = openai.OpenAI(api_key=config("LLM_API_KEY"), base_url=config("LLM_BASE_URL"))
-    response = client.embeddings.create(
-        input=texts,
-        model=model_name,
-        dimensions=dimensions,
-    )
-    return [i.embedding for i in response.data]
-
-
 def chatter_sync(
     multipart_prompt: str, model=None, credentials=None, context={}, action_lookup=ACTION_LOOKUP
 ):
     return anyio.run(chatter, multipart_prompt, model, credentials, context, action_lookup)
+
+
+def get_embedding(
+    texts, model_name="text-embedding-3-large", dimensions=3072, batch_size=500
+) -> list:
+    """
+    Get embeddings for a list of texts, batching requests to the API.
+
+    Example:
+        get_embedding(["hello", "world"])
+    """
+    client = openai.OpenAI(api_key=config("LLM_API_KEY"), base_url=config("LLM_BASE_URL"))
+
+    embeddings = []
+    for batch in chunked(texts, batch_size):
+        response = client.embeddings.create(
+            input=batch,
+            model=model_name,
+            dimensions=dimensions,
+        )
+        embeddings.extend(i.embedding for i in response.data)
+
+    return embeddings
