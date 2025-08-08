@@ -1,14 +1,16 @@
 import logging
-import typer
 from pathlib import Path
-from . import chatter, LLM, LLMCredentials, ACTION_LOOKUP
 from typing import List
 
-logging.getLogger('prefect').setLevel(logging.WARNING)
-logging.getLogger('chatter').setLevel(logging.WARNING)
+import typer
+
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter_sync
+
+logging.getLogger("chatter").setLevel(logging.WARNING)
 
 
 app = typer.Typer()
+
 
 @app.command()
 def run(
@@ -22,14 +24,20 @@ def run(
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
-    result = chatter(prompt_str, model=model, credentials=credentials, action_lookup=ACTION_LOOKUP)
+    result = chatter_sync(
+        multipart_prompt=prompt_str,
+        model=model,
+        credentials=credentials,
+        action_lookup=ACTION_LOOKUP,
+    )
 
-    for k, v in result.items():
-        typer.echo(f"{k}: {v}")
+    for k, v in result.results.items():
+        typer.echo(f"{k}: {v.output}")
 
     if show_context:
         typer.echo("\nFinal context:")
         typer.echo(result.outputs)
+
 
 if __name__ == "__main__":
     app()

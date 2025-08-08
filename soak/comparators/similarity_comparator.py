@@ -7,17 +7,9 @@ from collections import OrderedDict
 from io import BytesIO
 from typing import Any, Dict, List
 
-import matplotlib
-from django.core.files.images import ImageFile
 from chatter import get_embedding
-from prefect import flow, task
-from prefect.cache_policies import INPUTS
-from prefect.task_runners import ConcurrentTaskRunner
-
-from soak.dag import resolve
+from django.core.files.images import ImageFile
 from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
-
-matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
 
 
 class Base64ImageFile(ImageFile):
@@ -29,7 +21,6 @@ class Base64ImageFile(ImageFile):
         return base64.b64encode(self.read()).decode("utf-8")
 
 
-@task(persist_result=True, cache_policy=INPUTS)
 def compare_result_similarity(
     A: QualitativeAnalysis, B: QualitativeAnalysis, threshold: float = 0.6
 ) -> Dict[str, Any]:
@@ -47,8 +38,8 @@ def compare_result_similarity(
         - similarity_matrix: raw cosine similarity values
     """
 
-    A = [i.name for i in A.themes]
-    B = [i.name for i in B.themes]
+    A = [i.name for i in A.result().themes]
+    B = [i.name for i in B.result().themes]
 
     import numpy as np
     from sklearn.metrics.pairwise import cosine_similarity
@@ -119,7 +110,6 @@ def compare_result_similarity(
     }
 
 
-@task(persist_result=True, cache_policy=INPUTS)
 def network_similarity_plot(
     pipeline_results: List[QualitativeAnalysis],
     method="umap",
@@ -128,6 +118,11 @@ def network_similarity_plot(
     threshold=0.6,
 ) -> str:
     """Create similarity plot using embedding visualization."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
+
     import matplotlib.pyplot as plt
     import networkx as nx
     import numpy as np
@@ -136,10 +131,10 @@ def network_similarity_plot(
     from sklearn.metrics.pairwise import cosine_similarity
     from umap import UMAP
 
-    theme_sets_ = [[j.name for j in i.themes] for i in pipeline_results]
+    theme_sets_ = [[j.name for j in i.result().themes] for i in pipeline_results]
     theme_sets = [i for i in theme_sets_ if i]
 
-    pipeline_names = [i.name() for i in pipeline_results]
+    pipeline_names = [i.name for i in pipeline_results]
 
     # Get embeddings for all sets
     embeddings = [get_embedding(set_str) for set_str in theme_sets]
@@ -256,11 +251,14 @@ def network_similarity_plot(
     return Base64ImageFile(buffer, name="similarity_plot.png")
 
 
-@task(persist_result=True, cache_policy=INPUTS)
 def create_pairwise_heatmap(
     a: QualitativeAnalysis, b: QualitativeAnalysis, threshold=0.6, use_threshold=True
 ) -> str:
     """Create a heatmap visualization for a single pair of pipeline results."""
+    import matplotlib
+
+    matplotlib.use("Agg")  # Non-GUI backend for headless use (saves to file only)
+
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
@@ -272,8 +270,8 @@ def create_pairwise_heatmap(
             return theme
         return theme[: max_len - 3] + "..."
 
-    themes_a = [i.name for i in a.themes]
-    themes_b = [i.name for i in b.themes]
+    themes_a = [i.name for i in a.result().themes]
+    themes_b = [i.name for i in b.result().themes]
     themes_a_display = [truncate_theme(t) for t in themes_a]
     themes_b_display = [truncate_theme(t) for t in themes_b]
 
@@ -330,9 +328,9 @@ def create_pairwise_heatmap(
 
     # TODO: set nicer titles
 
-    ax.set_title(f"Theme Similarity Matrix\n{a.name()} vs {b.name()}. Threshold: {threshold}")
-    ax.set_xlabel(b.name())
-    ax.set_ylabel(a.name())
+    ax.set_title(f"Theme Similarity Matrix\n{a.name} vs {b.name}. Threshold: {threshold}")
+    ax.set_xlabel(b.name)
+    ax.set_ylabel(a.name)
 
     # Better tick label handling
     ax.tick_params(axis="x", rotation=45)
@@ -351,7 +349,7 @@ def create_pairwise_heatmap(
     plt.subplots_adjust(bottom=0.2)  # Add extra space at bottom for rotated labels
 
     suffix = threshold and f"_threshold={threshold}" or ""
-    plot_name = f"heatmap_{a.name()}_{b.name()}{suffix}.png"
+    plot_name = f"heatmap_{a.name}_{b.name}{suffix}.png"
     buffer = BytesIO()
     fig.savefig(buffer, dpi=300, bbox_inches="tight", format="png")
     plt.close(fig)
@@ -363,7 +361,6 @@ def create_pairwise_heatmap(
 class SimilarityComparator:
     """Comparator calculates similarity statistics and makes plot/heatmaps."""
 
-    @flow(persist_result=False)
     def compare(self, pipeline_results: List[QualitativeAnalysis], config={}):
 
         threshold = config.get("threshold", 0.6)
@@ -373,27 +370,22 @@ class SimilarityComparator:
 
         result_combinations = list(itertools.combinations(pipeline_results, 2))
 
+        # run synchronously
         similarity_results = [
-            compare_result_similarity.submit(
-                i,
-                j,
-                threshold=threshold,
-            )
-            for i, j in result_combinations
+            compare_result_similarity(i, j, threshold=threshold) for i, j in result_combinations
         ]
 
         heatmaps = [
-            create_pairwise_heatmap.submit(a, b, threshold=threshold, use_threshold=False)
+            create_pairwise_heatmap(a, b, threshold=threshold, use_threshold=False)
             for a, b in result_combinations
         ]
 
         thresholded_heatmaps = [
-            create_pairwise_heatmap.submit(a, b, threshold=threshold)
-            for a, b in result_combinations
+            create_pairwise_heatmap(a, b, threshold=threshold) for a, b in result_combinations
         ]
 
         network_plot = network_similarity_plot(
-            pipeline_results,
+            [i for i in pipeline_results],
             method=method,
             n_neighbors=n_neighbors,
             min_dist=min_dist,
@@ -401,21 +393,19 @@ class SimilarityComparator:
         )
 
         result_combinations_dict = OrderedDict(
-            {i.name() + "_" + j.name(): (i, j) for i, j in result_combinations}
+            {i.name + "_" + j.name: (i, j) for i, j in result_combinations}
         )
 
-        stats_dict = {
-            k: v for k, v in zip(result_combinations_dict.keys(), resolve(similarity_results))
-        }
+        stats_dict = {k: v for k, v in zip(result_combinations_dict.keys(), similarity_results)}
 
-        heatmap_dict = {k: v for k, v in zip(result_combinations_dict.keys(), resolve(heatmaps))}
+        heatmap_dict = {k: v for k, v in zip(result_combinations_dict.keys(), heatmaps)}
 
         thresh_heatmap_dict = {
-            k: v for k, v in zip(result_combinations_dict.keys(), resolve(thresholded_heatmaps))
+            k: v for k, v in zip(result_combinations_dict.keys(), thresholded_heatmaps)
         }
 
         return QualitativeAnalysisComparison(
-            results=pipeline_results,
+            results=[i.result() for i in pipeline_results],
             combinations=result_combinations_dict,
             statistics=stats_dict,
             comparison_plots={
@@ -437,7 +427,7 @@ if False:
         for j in [i.result_json for i in Analysis.objects.filter(result_json__isnull=False)][-6:]
         if isinstance(j, dict)
     ]
-    pipeline_results[0].name()
+    pipeline_results[0].name
 
     x = list(reversed(pipeline_results))
     comp = SimilarityComparator().compare(pipeline_results)

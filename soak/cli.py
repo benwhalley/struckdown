@@ -1,31 +1,32 @@
 """Command-line interface for running qualitative analysis pipelines."""
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
 import typer
+import yaml
+from chatter import LLMCredentials
 from decouple import config as env_config
 
-from .dag import pipeline_from_yaml
-from .document_utils import extract_text, unpack_zip_to_temp_paths_if_needed
+from .document_utils import unpack_zip_to_temp_paths_if_needed
+from .specs import load_template_bundle
 
-import logging
+logging.basicConfig(
+    level=logging.INFO,  # or DEBUG
+    format="%(asctime)s | %(levelname)s | %(name)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logging.getLogger("chatter").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-
-def get_unique_path(path: Path) -> Path:
-    if not path.exists():
-        return path
-    for i in range(1, 1_000):
-        new_path = path.with_stem(f"{path.stem}_{i}")
-        if not new_path.exists():
-            return new_path
-    raise FileExistsError("Too many files with the same name.")
+logging.getLogger().setLevel(logging.INFO)
 
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
+logger = logging.getLogger(__name__)
 
 PIPELINE_DIR = Path(__file__).parent / "pipelines"
 
@@ -47,7 +48,17 @@ def run(
     input_files: list[str] = typer.Argument(
         ..., help="File patterns or zip files (supports globs like '*.txt')"
     ),
-    output: str = typer.Option("output.json", "--output", "-o"),
+    model_name: str = typer.Option("gpt-4o-mini", help="LLM model name"),
+    output: str = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path name (without extensions) (stdout if not specified)",
+    ),
+    format: str = typer.Option("json", "--format", "-f", help="Output format: json or html"),
+    include_documents: bool = typer.Option(
+        False, "--include-documents", help="Include original documents in output"
+    ),
 ):
     """Run a pipeline on input files."""
 
@@ -59,25 +70,62 @@ def run(
         pipyml = Path(pipeline)
         if not pipyml.is_file():
             raise FileNotFoundError(f"Pipeline file not found: {pipyml}")
-    pipeline = pipeline_from_yaml(pipyml.read_text())
-    pipeline.document_paths = None
-    pipeline._documents = None
 
-    print(pipeline)
+    print(f"Loading pipeline from {pipyml}", file=sys.stderr)
+    pipeline = load_template_bundle(pipyml)
+
+    pipeline.config.model_name = model_name
+    pipeline.config.llm_credentials = LLMCredentials()
 
     with unpack_zip_to_temp_paths_if_needed(input_files) as docfiles:
-        pipeline.document_paths = docfiles
+        pipeline.config.document_paths = docfiles
+        pipeline.config.documents = pipeline.config.load_documents()
 
     try:
-        # all pipelines are now DAG pipelines
-        result = pipeline.run()
+        # all pipelines are now DAG pipelines - run directly with asyncio
+        import asyncio
+
+        analysis, errors = asyncio.run(pipeline.run())
+        if errors:
+            logger.error(f"Errors during pipeline execution: {errors}")
+            logger.warning("Entering pdb for debugging")
+
     except Exception as e:
+        print(f"Error during pipeline execution: {e}", file=sys.stderr)
+        import traceback
+
+        traceback.print_exc()
         raise typer.Exit(1)
 
-    np = get_unique_path(Path(output))
-    print(f"Writing output to {np}")
-    with open(Path(np), "w") as f:
-        f.write(json.dumps(result.result().model_dump()))
+    analysis.config.llm_credentials.llm_api_key = (
+        analysis.config.llm_credentials.llm_api_key[:5] + "***"
+    )
+
+    # remove documents from output if not requested
+    if not include_documents:
+        analysis.config.documents = []
+
+    # import pdb; pdb.set_trace()
+    # generate output content based on format
+
+    jsoncontent = analysis.model_dump_json()
+    htmlcontent = analysis.to_html()
+
+    # output to stdout or file
+    if output is None:
+        if format == "json":
+            print(jsoncontent)
+        elif format == "html":
+            print(htmlcontent)
+        else:
+            raise typer.BadParameter("Format must be 'json' or 'html' or specify output file name")
+
+    else:
+        print(f"Writing output to {output}.json and {output}.html")
+        with open(output + ".html", "w", encoding="utf-8") as f:
+            f.write(htmlcontent)
+        with open(output + ".json", "w", encoding="utf-8") as f:
+            f.write(jsoncontent)
 
 
 @app.command(name="list")
@@ -89,7 +137,7 @@ def list_pipelines():
         print("Available DAG pipelines:")
         for path in yaml_files:
             try:
-                _ = pipeline_from_yaml(path.read_text())
+                _ = load_template_bundle(path)
                 status = "✓"
                 issues = []
             except Exception as e:

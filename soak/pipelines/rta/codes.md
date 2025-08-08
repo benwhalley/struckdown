@@ -37,4 +37,4 @@ Codes to analyze/align:
 
 Make new/aligned codes in the required format.
 
-[[codes:codes]]
+[[Codes:codes]]

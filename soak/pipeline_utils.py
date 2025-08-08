@@ -14,6 +14,4 @@ def discover_pipelines() -> list[str]:
 
     import pipelines
 
-    return sorted(
-        [name for _, name, ispkg in pkgutil.iter_modules(pipelines.__path__) if ispkg]
-    )
+    return sorted([name for _, name, ispkg in pkgutil.iter_modules(pipelines.__path__) if ispkg])
