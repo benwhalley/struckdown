@@ -23,6 +23,7 @@ dependencies = [
     "typer>=0.16.0",
     "umap-learn>=0.5.9.post2",
     "asyncpg>=0.30.0",
+    "more-itertools>=10.7.0",
 ]
 
 [tool.setuptools.packages.find]
