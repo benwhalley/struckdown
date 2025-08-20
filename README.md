@@ -5,57 +5,53 @@
 - soak
 
 
-
 # SETUP
+
+On OS X or linux:
 
 Install UV
 
 https://docs.astral.sh/uv/getting-started/installation
 
 
-Set 2 env vars:
+Clone the repo:
 
+```
+git clone https://github.com/benwhalley/llemma
+cd llemma
+```
+
+
+Install the package:
+
+```
+uv pip install -e .
+```
+
+Set 2 environment variables:
+
+```
 export LLM_API_KEY=your_api_key
 export LLM_BASE_URL=https://your-endpoint.com (any OpenAI compatible)
-
-Or on windows,
-
-set LLM_API_KEY=your_api_key
-set LLM_BASE_URL=https://your-endpoint.com
-
-
-## Running with uv (recommended)
-
-
-```
-uv run chatter "tell me a joke [[joke]] was it funny? [[bool:funny]]"
-uv run soak run demo data/5LC.docx
 ```
 
-## Or with docker (on windows if uv fails)
+
+# Running  with uv (recommended) 
+
+## Chatter
+
+Test the setup by running a chatter prompt:
 
 ```
-docker build -t soak .
-alias soak='docker run -it \
-  -e LLM_API_KEY \
-  -e LLM_BASE_URL \
-  -v "$HOME/.uv-cache":/root/.cache/uv \
-  -v "$PWD":/app \
-  -w /app soak uv run soak'
-
-alias chatter='docker run -it \
-  -e LLM_API_KEY \
-  -e LLM_BASE_URL \
-  -v "$HOME/.uv-cache":/root/.cache/uv \
-  -v "$PWD":/app \
-  -w /app soak uv run chatter'
-
-
+uv run chatter "Tell me a joke: [[joke]]. Was it funny? [[bool:funny]]"
 ```
 
-Then
+
+## Soak: qualitative analysis
 
 ```
-soak run demo data/5LC.docx
-chatter "tell me a joke [[joke]] was it funny? [[bool:funny]]"
+uv run soak run demo soak/data/yt-cfs.txt --output yt-cfs-example
 ```
+
+
+
