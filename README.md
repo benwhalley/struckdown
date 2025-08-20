@@ -36,7 +36,7 @@ export LLM_BASE_URL=https://your-endpoint.com (any OpenAI compatible)
 ```
 
 
-# Running  with uv (recommended) 
+# Running  with uv (recommended)
 
 ## Chatter
 
