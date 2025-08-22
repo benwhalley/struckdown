@@ -156,7 +156,8 @@ class Document:
 
 
 class QualitativeAnalysis(BaseModel):
-
+    
+    label: Optional[str] = None
     codes: Optional[List[Code]] = None
     themes: Optional[List[Theme]] = None
     narrative: Optional[str] = None
@@ -165,8 +166,11 @@ class QualitativeAnalysis(BaseModel):
 
     pipeline: Optional[str] = None
 
+    def theme_text_for_comparison(self): 
+        return [i.name for i in self.themes]
+        
     def name(self):
-        return self.sha256()[:8]
+        return self.label or self.sha256()[:8]
 
     def sha256(self):
         return hashlib.sha256(json.dumps(self.model_dump()).encode()).hexdigest()[:8]
@@ -176,8 +180,8 @@ class QualitativeAnalysis(BaseModel):
 
 
 class QualitativeAnalysisComparison(BaseModel):
-    results: List["QualitativeAnalysisPipeline"]
-    combinations: Dict[str, Tuple["QualitativeAnalysisPipeline", "QualitativeAnalysisPipeline"]]
+    results: List["QualitativeAnalysis"]
+    combinations: Any #Dict[str, Tuple["QualitativeAnalysis", "QualitativeAnalysis"]]
     statistics: Dict[str, Dict]
     comparison_plots: Dict[str, Dict[str, Any]]  # eg. heatmaps.xxxyyy = List
     additional_plots: Dict[str, Any]
@@ -898,43 +902,19 @@ class QualitativeAnalysisPipeline(DAG):
         return template.render(pipeline=self, result=self.result())
 
     def result(self):
-
         def safe_get_output(name):
             try:
-                return self.nodes_dict.get(name).output.response
+                return Box(self.nodes_dict.get(name).output.response, default=None)
             except:
                 return None
-
-        themes_data = safe_get_output("themes")
-        codes_data = safe_get_output("codes")
-        narrative = safe_get_output("narrative")
-
-        try:
-            quotes = self.nodes_dict.get("quotes")
-        except:
-            quotes = None
-
-        # import pdb; pdb.set_trace()
-
-        try:
-            themes = themes_data.themes if themes_data else []
-        except Exception as e:
-            themes = []
-            logging.warning(f"Failed to parse themes: {e}")
-
-        try:
-            codes = codes_data.codes if codes_data else []
-        except Exception as e:
-            codes = []
-            logging.warning(f"Failed to parse codes: {e}")
-
+        
         return QualitativeAnalysis.model_validate(
             {
-                "themes": themes,
-                "codes": codes,
-                "narrative": narrative,
+                "themes": safe_get_output("themes").themes,
+                "codes": safe_get_output("codes").codes,
+                "narrative": safe_get_output("narrative"),
                 "detail": self.model_dump(),
-                "quotes": quotes,
+                "quotes": safe_get_output("quotes"),
             }
         )
 
