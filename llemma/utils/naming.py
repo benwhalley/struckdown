@@ -2,12 +2,14 @@
 
 import re
 
-from django.db.models import Model
 from django.db.models.query import QuerySet
 
 
 def get_available_name(
-    base_name: str, queryset: QuerySet, name_field: str = "name", suffix: str = " (copy)"
+    base_name: str,
+    queryset: QuerySet,
+    name_field: str = "name",
+    suffix: str = " (copy)",
 ) -> str:
     """
     Generate a unique name for a copied object.

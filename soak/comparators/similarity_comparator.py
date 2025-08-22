@@ -5,15 +5,16 @@ import itertools
 import textwrap
 from collections import OrderedDict
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List
 
 from chatter import get_embedding as get_embedding_
 from django.core.files.images import ImageFile
-from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
-from pathlib import Path
 from joblib import Memory
+from soak.models import QualitativeAnalysis, QualitativeAnalysisComparison
 
 memory = Memory(Path(".embeddings"), verbose=0)
+
 
 @memory.cache
 def get_embedding(*args, **kwargs):
@@ -28,6 +29,7 @@ class Base64ImageFile(ImageFile):
             self.open()
         self.seek(0)
         return base64.b64encode(self.read()).decode("utf-8")
+
 
 @memory.cache
 def compare_result_similarity(
@@ -52,10 +54,10 @@ def compare_result_similarity(
 
     import numpy as np
     from sklearn.metrics.pairwise import cosine_similarity
-    
+
     emb_A = get_embedding(list(map(lambda x: x.strip(), A)))
     emb_B = get_embedding(list(map(lambda x: x.strip(), B)))
-    
+
     assert len(emb_A) == len(A), f"Mismatch in emb_A: {len(emb_A)} != {len(A)}"
     assert len(emb_B) == len(B), f"Mismatch in emb_B: {len(emb_B)} != {len(B)}"
 
@@ -118,6 +120,7 @@ def compare_result_similarity(
         "similarity_f1": similarity_f1,
     }
 
+
 @memory.cache
 def network_similarity_plot(
     pipeline_results: List[QualitativeAnalysis],
@@ -128,7 +131,7 @@ def network_similarity_plot(
     exclude_within_set_edges=True,  # New parameter to exclude edges within same set
 ) -> str:
     """Create similarity plot using embedding visualization.
-    
+
     Args:
         pipeline_results: List of QualitativeAnalysis objects to compare
         method: Dimensionality reduction method ("umap", "mds", or "pca")
@@ -139,6 +142,7 @@ def network_similarity_plot(
     """
 
     import matplotlib
+
     matplotlib.use("Agg")
 
     import matplotlib.pyplot as plt
@@ -153,11 +157,11 @@ def network_similarity_plot(
     theme_sets = [i for i in theme_sets_ if i]
 
     pipeline_names = [i.name() for i in pipeline_results]
-    
+
     # Get embeddings for all sets
     embeddings = [get_embedding(set_str) for set_str in theme_sets]
     all_emb = np.vstack(embeddings)
-    
+
     # Calculate similarity matrix
     sim_matrix = cosine_similarity(all_emb)
 
@@ -170,7 +174,7 @@ def network_similarity_plot(
 
     # Track which set each node belongs to
     node_to_set = {}
-    
+
     for plot_idx, (emb, original_idx) in enumerate(zip(embeddings, valid_indices)):
         set_str = theme_sets[original_idx]
         lines = set_str
@@ -205,7 +209,7 @@ def network_similarity_plot(
         pos_2d = reducer.fit_transform(all_emb)
 
     pos = {i: pos_2d[i] for i in range(len(all_emb))}
-    
+
     # Add edges based on threshold
     for i in range(len(all_emb)):
         for j in range(i + 1, len(all_emb)):
@@ -214,16 +218,14 @@ def network_similarity_plot(
                 if i in node_to_set and j in node_to_set:
                     if node_to_set[i] == node_to_set[j]:
                         continue
-            
+
             if sim_matrix[i, j] > threshold:
                 G.add_edge(i, j, weight=sim_matrix[i, j])
 
     # Create plot
     plt.close("all")
     fig, ax = plt.subplots(figsize=(12, 10))
-    node_colors = [
-        colors[ord(G.nodes[n].get("set", "?")) - 65] for n in G.nodes
-    ]
+    node_colors = [colors[ord(G.nodes[n].get("set", "?")) - 65] for n in G.nodes]
 
     # Draw nodes with colors
     nx.draw_networkx_nodes(G, pos, node_color=node_colors, alpha=0.8, node_size=200, ax=ax)
@@ -260,15 +262,14 @@ def network_similarity_plot(
         horizontalalignment="left",
         ax=ax,
     )
-    
+
     # Update title to indicate if within-set edges are excluded
     edge_info = " (cross-set edges only)" if exclude_within_set_edges else ""
-    
+
     ax.text(
         1.0,
         -0.15,
-        f"Theme similarity network with {method} layout" 
-        f" (threshold={threshold}){edge_info}",
+        f"Theme similarity network with {method} layout (threshold={threshold}){edge_info}",
         verticalalignment="bottom",
         horizontalalignment="right",
         transform=ax.transAxes,
@@ -284,8 +285,8 @@ def network_similarity_plot(
     plt.close(fig)
     buffer.seek(0)
     return Base64ImageFile(buffer, name="similarity_plot.png")
-    
-    
+
+
 @memory.cache
 def create_pairwise_heatmap(
     a: QualitativeAnalysis, b: QualitativeAnalysis, threshold=0.6, use_threshold=True
@@ -331,7 +332,9 @@ def create_pairwise_heatmap(
     assert similarity_matrix.shape == (
         len(themes_a_display),
         len(themes_b_display),
-    ), f"Shape mismatch: {similarity_matrix.shape} vs {len(themes_a_display)} x {len(themes_b_display)}"
+    ), (
+        f"Shape mismatch: {similarity_matrix.shape} vs {len(themes_a_display)} x {len(themes_b_display)}"
+    )
 
     if use_threshold:
         df_binary = (df_sim >= threshold).astype(int)
@@ -398,7 +401,6 @@ class SimilarityComparator:
     """Comparator calculates similarity statistics and makes plot/heatmaps."""
 
     def compare(self, pipeline_results: List[QualitativeAnalysis], config={}):
-
         threshold = config.get("threshold", 0.6)
         n_neighbors = config.get("n_neighbors", 5)
         min_dist = config.get("min_dist", 0.01)
@@ -426,9 +428,8 @@ class SimilarityComparator:
             n_neighbors=n_neighbors,
             min_dist=min_dist,
             threshold=threshold,
-            
         )
-        
+
         # import pdb; pdb.set_trace()
         result_combinations_dict = OrderedDict(
             {i.name() + "_" + j.name(): (i, j) for i, j in result_combinations}
@@ -443,7 +444,7 @@ class SimilarityComparator:
         }
 
         return QualitativeAnalysisComparison(
-            results= pipeline_results, 
+            results=pipeline_results,
             combinations=result_combinations_dict,
             statistics=stats_dict,
             comparison_plots={

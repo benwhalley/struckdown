@@ -1,6 +1,5 @@
 """Utilities for loading and running analysis pipelines."""
 
-import importlib
 import os
 import pkgutil
 import sys
