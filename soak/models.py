@@ -1,19 +1,10 @@
 """Data models for qualitative analysis pipelines."""
 
-from pathlib import Path
-
-from joblib import Memory
-
-import asyncio
 import hashlib
 import itertools
 import json
 import logging
 import math
-import os
-import re
-import uuid
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -22,7 +13,6 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Iterable,
     List,
     Literal,
     Optional,
@@ -33,10 +23,10 @@ from typing import (
 
 import anyio
 import tiktoken
-import yaml
 from box import Box
 from chatter import LLM, ChatterResult, LLMCredentials
 from chatter import chatter as chatter_
+from chatter import get_embedding as get_embedding_
 from chatter.parsing import parse_syntax
 from chatter.return_type_models import ACTION_LOOKUP
 from decouple import config
@@ -45,21 +35,21 @@ from jinja2 import (
     Environment,
     FileSystemLoader,
     StrictUndefined,
-    Template,
     TemplateSyntaxError,
     meta,
 )
-from jinja_markdown import MarkdownExtension
-from chatter import get_embedding as get_embedding_
-from pydantic import BaseModel, ConfigDict, Field
-from typing_extensions import Annotated
+from joblib import Memory
+from pydantic import BaseModel, Field
 
-from .document_utils import extract_text, get_scrubber, unpack_zip_to_temp_paths_if_needed
+from .document_utils import (
+    extract_text,
+    get_scrubber,
+    unpack_zip_to_temp_paths_if_needed,
+)
 
 if TYPE_CHECKING:
     from .dag import QualitativeAnalysisPipeline
 
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +146,7 @@ class Document:
 
 
 class QualitativeAnalysis(BaseModel):
-
+    label: Optional[str] = None
     codes: Optional[List[Code]] = None
     themes: Optional[List[Theme]] = None
     narrative: Optional[str] = None
@@ -165,8 +155,11 @@ class QualitativeAnalysis(BaseModel):
 
     pipeline: Optional[str] = None
 
+    def theme_text_for_comparison(self):
+        return [i.name for i in self.themes]
+
     def name(self):
-        return self.sha256()[:8]
+        return self.label or self.sha256()[:8]
 
     def sha256(self):
         return hashlib.sha256(json.dumps(self.model_dump()).encode()).hexdigest()[:8]
@@ -176,8 +169,8 @@ class QualitativeAnalysis(BaseModel):
 
 
 class QualitativeAnalysisComparison(BaseModel):
-    results: List["QualitativeAnalysisPipeline"]
-    combinations: Dict[str, Tuple["QualitativeAnalysisPipeline", "QualitativeAnalysisPipeline"]]
+    results: List["QualitativeAnalysis"]
+    combinations: Any  # Dict[str, Tuple["QualitativeAnalysis", "QualitativeAnalysis"]]
     statistics: Dict[str, Dict]
     comparison_plots: Dict[str, Dict[str, Any]]  # eg. heatmaps.xxxyyy = List
     additional_plots: Dict[str, Any]
@@ -224,7 +217,6 @@ class DAGConfig(BaseModel):
         return LLM(model_name=self.model_name, temperature=self.temperature)
 
     def load_documents(self) -> List[str]:
-
         if hasattr(self, "documents") and self.documents:
             logger.info("Using cached documents")
             return self.documents
@@ -263,7 +255,6 @@ def get_template_variables(template_string: str) -> Set[str]:
 
 
 def render_strict_template(template_str: str, context: dict) -> str:
-
     # try:
     env = Environment(undefined=StrictUndefined)
     template = env.from_string(template_str)
@@ -279,7 +270,15 @@ class Edge:
 
 
 DAGNodeUnion = Annotated[
-    Union["Map", "Reduce", "Transform", "Batch", "Split", "TransformReduce", "VerifyQuotes"],
+    Union[
+        "Map",
+        "Reduce",
+        "Transform",
+        "Batch",
+        "Split",
+        "TransformReduce",
+        "VerifyQuotes",
+    ],
     Field(discriminator="type"),
 ]
 
@@ -330,17 +329,17 @@ class DAG(BaseModel):
         }
 
         for node in self.nodes:
-            l, r = shape_map.get(node.type, ("[", "]"))  # fallback to rectangle
+            le, ri = shape_map.get(node.type, ("[", "]"))  # fallback to rectangle
             label = f"{node.type}: {node.name}"
-            lines.append(f"    {node.name}{l}{label}{r}")
+            lines.append(f"    {node.name}{le}{label}{ri}")
 
         for edge in self.edges:
             lines.append(f"    {edge.from_node} --> {edge.to_node}")
 
-        lines.append(f"""classDef heavyDotted stroke-dasharray: 4 4, stroke-width: 2px;""")
+        lines.append("""classDef heavyDotted stroke-dasharray: 4 4, stroke-width: 2px;""")
         for node in self.nodes:
             if node.type == "TransformReduce":
-                lines.append(f"""class all_themes heavyDotted;""")
+                lines.append("""class all_themes heavyDotted;""")
 
         return "\n".join(lines)
 
@@ -415,7 +414,6 @@ class DAG(BaseModel):
 
     def get_required_context_variables(self):
         node_names = [i.name for i in self.nodes]
-        all_vars = []
         tmplts = list(
             itertools.chain(*[get_template_variables(i.template) for i in self.nodes if i.template])
         )
@@ -449,7 +447,6 @@ OutputUnion = Union[
 
 
 class DAGNode(BaseModel):
-
     # this used for reserialization
     model_config = {"discriminator": "type"}
     type: str = Field(default_factory=lambda self: type(self).__name__, exclude=False)
@@ -766,7 +763,6 @@ class Transform(ItemsNode, CompletionDAGNode):
         return self.template_text
 
     async def run(self):
-
         items = await self.get_items()
 
         if not isinstance(items, str):
@@ -812,7 +808,6 @@ class Reduce(ItemsNode):
         return items
 
     async def run(self, items=None) -> Any:
-
         await super().run()
 
         items = items or self.get_items()
@@ -889,7 +884,8 @@ class QualitativeAnalysisPipeline(DAG):
 
         # Create Jinja2 environment and load template
         env = Environment(
-            loader=FileSystemLoader(template_dir), extensions=["jinja_markdown.MarkdownExtension"]
+            loader=FileSystemLoader(template_dir),
+            extensions=["jinja_markdown.MarkdownExtension"],
         )
 
         template = env.get_template(template_name)
@@ -898,49 +894,24 @@ class QualitativeAnalysisPipeline(DAG):
         return template.render(pipeline=self, result=self.result())
 
     def result(self):
-
         def safe_get_output(name):
             try:
-                return self.nodes_dict.get(name).output.response
-            except:
+                return Box(self.nodes_dict.get(name).output.response, default=None)
+            except Exception:
                 return None
-
-        themes_data = safe_get_output("themes")
-        codes_data = safe_get_output("codes")
-        narrative = safe_get_output("narrative")
-
-        try:
-            quotes = self.nodes_dict.get("quotes")
-        except:
-            quotes = None
-
-        # import pdb; pdb.set_trace()
-
-        try:
-            themes = themes_data.themes if themes_data else []
-        except Exception as e:
-            themes = []
-            logging.warning(f"Failed to parse themes: {e}")
-
-        try:
-            codes = codes_data.codes if codes_data else []
-        except Exception as e:
-            codes = []
-            logging.warning(f"Failed to parse codes: {e}")
 
         return QualitativeAnalysis.model_validate(
             {
-                "themes": themes,
-                "codes": codes,
-                "narrative": narrative,
+                "themes": safe_get_output("themes").themes,
+                "codes": safe_get_output("codes").codes,
+                "narrative": safe_get_output("narrative"),
                 "detail": self.model_dump(),
-                "quotes": quotes,
+                "quotes": safe_get_output("quotes"),
             }
         )
 
 
 class VerifyQuotes(DAGNode):
-
     type: Literal["VerifyQuotes"] = "VerifyQuotes"
     threshold: float = 0.6
     stats: Optional[Dict[str, Any]] = None
@@ -949,8 +920,8 @@ class VerifyQuotes(DAGNode):
         await super().run()
 
         import nltk
-        from sklearn.metrics.pairwise import cosine_similarity
         import numpy as np
+        from sklearn.metrics.pairwise import cosine_similarity
 
         alldocs = "\n\n".join(self.dag.config.documents)
         sentences = nltk.sent_tokenize(alldocs)
@@ -987,7 +958,8 @@ class VerifyQuotes(DAGNode):
             else:
                 top3_idx = row.argsort()[-3:]
                 matches = sorted(
-                    [(real_quotes[j], float(row[j])) for j in top3_idx], key=lambda x: -x[1]
+                    [(real_quotes[j], float(row[j])) for j in top3_idx],
+                    key=lambda x: -x[1],
                 )[:max_matches]
 
             top_matches.append(

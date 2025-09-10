@@ -1,15 +1,12 @@
 """Command-line interface for running qualitative analysis pipelines."""
 
-import json
 import logging
 import os
 import sys
 from pathlib import Path
 
 import typer
-import yaml
 from chatter import LLMCredentials
-from decouple import config as env_config
 
 from .document_utils import unpack_zip_to_temp_paths_if_needed
 from .specs import load_template_bundle
@@ -65,7 +62,7 @@ def run(
     try:
         pipyml = PIPELINE_DIR / pipeline / "soak.yaml"
         if not pipyml.is_file():
-            raise FileNotFoundError(f"No such default pipeline")
+            raise FileNotFoundError("No such default pipeline")
     except FileNotFoundError:
         pipyml = Path(pipeline)
         if not pipyml.is_file():

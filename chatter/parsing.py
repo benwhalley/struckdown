@@ -1,9 +1,7 @@
-import functools
 from collections import OrderedDict, namedtuple
 from pathlib import Path
 
-from lark import Lark, Transformer, v_args
-from lark.exceptions import LarkError
+from lark import Lark, Transformer
 
 from .return_type_models import ACTION_LOOKUP
 
@@ -12,7 +10,6 @@ mindframe_grammar = (Path(__file__).parent / "chatter.lark").read_text()
 MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
 
-from collections import OrderedDict, namedtuple
 
 PromptPart = namedtuple("PromptPart", ["key", "return_type", "options", "text"])
 
@@ -244,8 +241,7 @@ def extract_placeholders(template_text):
 def extract_template_tags(template_text):
     """Extract template tag names that need user input for simulation"""
     try:
-
-        sections = parse_syntax(template_text)
+        parse_syntax(template_text)
         # TODO FIX THIS TO USE THE PARSER SECTIONS
         # find ALL {% tag %} template tags in the entire template text
         # this ensures we don't miss template tags that appear between or after completions
@@ -277,7 +273,7 @@ def replace_template_tags_with_placeholders(template_text):
 
         # find all template tags and replace them with the provided replacements
         def replace_tag(match):
-            full_tag = match.group(0)  # the full {% ... %} tag
+            match.group(0)  # the full {% ... %} tag
             tag_name = match.group(1)  # just the tag name
 
             if tag_name in tag_replacements:

@@ -1,10 +1,9 @@
 import logging
 import re
 import traceback
-from more_itertools import chunked
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 from types import FunctionType
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import anyio
 import openai
@@ -13,6 +12,7 @@ from decouple import config
 from decouple import config as env_config
 from instructor import from_openai
 from jinja2 import StrictUndefined, Template
+from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
 
 from .parsing import parser
@@ -79,7 +79,7 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_to
             temperature=llm.temperature,
             max_tokens=max_tokens,
         )
-        msg, lt, meta = res, None, com.dict()
+        _msg, _lt, _meta = res, None, com.dict()
 
     except Exception as e:
         print("USING:", credentials)
@@ -95,14 +95,12 @@ def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_to
 
 
 class SegmentResult(BaseModel):
-
     prompt: str
     output: Any
     completion: Optional[Any] = Field(default=None, exclude=False)
 
 
 class ChatterResult(BaseModel):
-
     type: str = Field(default="chatter", description="Discriminator field for union serialization")
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
 
@@ -129,8 +127,8 @@ class ChatterResult(BaseModel):
         last = self.results.get(next(reversed(self.results)), None)
         return last and last.output or None
 
-    def __str__(self):
-        return f"{self.response}"
+    # def __str__(self):
+    #     return f"{self.response}"
 
     @property
     def outputs(self):
@@ -339,7 +337,11 @@ async def chatter(
 
 
 def chatter_sync(
-    multipart_prompt: str, model=None, credentials=None, context={}, action_lookup=ACTION_LOOKUP
+    multipart_prompt: str,
+    model=None,
+    credentials=None,
+    context={},
+    action_lookup=ACTION_LOOKUP,
 ):
     return anyio.run(chatter, multipart_prompt, model, credentials, context, action_lookup)
 

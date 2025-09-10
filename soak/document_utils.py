@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
+
 import magic
 
 
@@ -38,7 +39,6 @@ def get_scrubber(salt, model="en_core_web_md"):
     """
 
     import scrubadub
-    import scrubadub_spacy
     from scrubadub.detectors import EmailDetector
     from scrubadub.post_processors import FilthReplacer, PrefixSuffixReplacer
     from scrubadub_spacy.detectors import SpacyEntityDetector

@@ -1,11 +1,9 @@
-"""TODO CHECK THIS IS USED"""
-
 """Jinja2 template validation for pipeline templates."""
 
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
-from jinja2 import Environment, Template, meta
+from jinja2 import Environment, meta
 from jinja2.exceptions import TemplateSyntaxError
 
 logger = logging.getLogger(__name__)
@@ -213,7 +211,7 @@ class PipelineTemplateValidator:
                 )
 
         # suggest adding to user inputs
-        user_input_candidates = [var for var in missing_vars if not "." in var and not "_" in var]
+        user_input_candidates = [var for var in missing_vars if "." not in var and "_" not in var]
         if user_input_candidates:
             suggestions.append(
                 f"Consider adding these to user inputs: {', '.join(user_input_candidates)}"
