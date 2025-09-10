@@ -6,11 +6,11 @@ from types import FunctionType
 from typing import Any, Dict, List, Optional
 
 import anyio
-import instructor
 import litellm
 import openai
 from box import Box
 from decouple import config as env_config
+import instructor
 from instructor import from_provider
 from jinja2 import StrictUndefined, Template
 from more_itertools import chunked
@@ -151,7 +151,7 @@ async def process_single_segment_(
     llm: LLM,
     credentials: Optional[LLMCredentials],
     context={},
-    instructor_args=dict(),
+    **kwargs
 ):
     """
     Process a single segment sequentially, building context as we go.
@@ -195,7 +195,7 @@ async def process_single_segment_(
                 return_type=rt,
                 llm=llm,
                 credentials=credentials,
-                instructor_args=instructor_args,
+                **kwargs
             ),
             abandon_on_cancel=True,
         )
@@ -300,7 +300,7 @@ async def chatter_async(
     credentials: Optional[LLMCredentials] = None,
     context={},
     action_lookup=ACTION_LOOKUP,
-    instructor_args=dict(),
+    **kwargs
 ):
     """
     example:
@@ -332,7 +332,7 @@ async def chatter_async(
                         resolved_context = await merge_contexts(context)
 
                     result = await process_single_segment_(
-                        seg, model, credentials, resolved_context, instructor_args
+                        seg, model, credentials, resolved_context, **kwargs
                     )
                     segment_futures[sid] = result
 
@@ -354,7 +354,7 @@ def chatter(
     credentials: Optional[LLMCredentials] = None,
     context={},
     action_lookup=ACTION_LOOKUP,
-    instructor_args=dict(),
+    **kwargs
 ):
     return anyio.run(
         chatter_async,
@@ -363,7 +363,7 @@ def chatter(
         credentials,
         context,
         action_lookup,
-        instructor_args,
+        **kwargs
     )
 
 
