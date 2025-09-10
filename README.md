@@ -1,56 +1,42 @@
 
 # llemma: tools for psychological research, education and practice
 
-- chatter
-- soak
+This project provides a markdown-based language for templated, multi-part LLM calls.
+
 
 
 # SETUP
 
 On OS X or linux:
 
-Install UV
-
-https://docs.astral.sh/uv/getting-started/installation
+Install UV: https://docs.astral.sh/uv/getting-started/installation
 
 
-Clone the repo:
 
 ```
-git clone https://github.com/benwhalley/llemma
-cd llemma
+uv pip install llemma
 ```
 
-
-Install the package:
+Or
 
 ```
+uv pip install git+https://github.com/benwhalley/llemma/  
 uv pip install -e .
 ```
 
-Set 2 environment variables:
+
+Set environment variables:
 
 ```
-export LLM_API_KEY=your_api_key
-export LLM_BASE_URL=https://your-endpoint.com (any OpenAI compatible)
+export OPENAI_API_KEY=...
+export OPENAI_API_BASE=...
+export DEFAULT_LLM="litellm/gpt-4.1-mini"
 ```
 
-
-# Running  with uv (recommended)
-
-## Chatter
-
-Test the setup by running a chatter prompt:
+Test the setup by running a struckdown prompt:
 
 ```
 uv run chatter "Tell me a joke: [[joke]]. Was it funny? [[bool:funny]]"
-```
-
-
-## Soak: qualitative analysis
-
-```
-uv run soak run demo soak/data/yt-cfs.txt --output yt-cfs-example
 ```
 
 

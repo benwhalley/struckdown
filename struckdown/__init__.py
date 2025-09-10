@@ -6,11 +6,12 @@ from types import FunctionType
 from typing import Any, Dict, List, Optional
 
 import anyio
+import instructor
+import litellm
 import openai
 from box import Box
-from decouple import config
 from decouple import config as env_config
-from instructor import from_openai
+from instructor import from_provider
 from jinja2 import StrictUndefined, Template
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,11 @@ from .parsing import parser
 from .return_type_models import ACTION_LOOKUP
 
 logger = logging.getLogger(__name__)
+
+
+class Example(BaseModel):
+    name: str
+    age: int
 
 
 LC = Box(
@@ -36,50 +42,52 @@ LC = Box(
 
 
 class LLMCredentials(BaseModel):
-    llm_api_key: str = Field(default_factory=lambda: env_config("LLM_API_KEY"), exclude=True)
-    llm_base_url: str = Field(default_factory=lambda: env_config("LLM_BASE_URL", default=None))
 
-    def __str__(self):
-        return f"LLMCredentials(api_key='***REDACTED***', base_url='{self.llm_base_url}')"
-
-    def __repr__(self):
-        return self.__str__()
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 class LLM(BaseModel):
-    model_name: str = "gpt-4o-mini"
-    temperature: Optional[float] = 1.0
+    model_name: Optional[str] = Field(
+        default_factory=lambda: env_config("DEFAULT_LLM", "openai/gpt-4.1-mini"),
+        exclude=True,
+    )
 
-    def __str__(self):
-        return self.model_name
+    def client(self, credentials: LLMCredentials = None):
+        client = instructor.from_provider(self.model_name)
+        if credentials:
+            client.api_key = credentials.api_key
+            client.base_url = credentials.base_url
+        return client
 
-    def client(self, credentials: LLMCredentials):
-        return from_openai(
-            openai.OpenAI(api_key=credentials.llm_api_key, base_url=credentials.llm_base_url)
-        )
 
-
-def structured_chat(prompt, llm, credentials, return_type, max_retries=3, max_tokens=None):
+def structured_chat(
+    prompt,
+    return_type,
+    llm: LLM = LLM(),
+    credentials=None,
+    max_retries=3,
+    max_tokens=None,
+    instructor_args=dict(),
+):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
 
     logger.info(
-        f"Using model {llm.model_name}, temperature {llm.temperature}, max_retries {max_retries}, max_tokens: {max_tokens}"
+        f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
 
     logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
-
     try:
+
         res, com = llm.client(credentials).chat.completions.create_with_completion(
-            model=llm.model_name,
+            model=llm.model_name.split("/")[-1],
             response_model=return_type,
             messages=[{"role": "user", "content": prompt}],
-            max_retries=max_retries,
-            temperature=llm.temperature,
-            max_tokens=max_tokens,
+            **instructor_args,
         )
-        _msg, _lt, _meta = res, None, com.dict()
+        _msg, _lt, _meta = res, None, com.model_dump()
 
     except Exception as e:
         print("USING:", credentials)
@@ -101,7 +109,9 @@ class SegmentResult(BaseModel):
 
 
 class ChatterResult(BaseModel):
-    type: str = Field(default="chatter", description="Discriminator field for union serialization")
+    type: str = Field(
+        default="chatter", description="Discriminator field for union serialization"
+    )
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
 
     def __str__(self):
@@ -127,9 +137,6 @@ class ChatterResult(BaseModel):
         last = self.results.get(next(reversed(self.results)), None)
         return last and last.output or None
 
-    # def __str__(self):
-    #     return f"{self.response}"
-
     @property
     def outputs(self):
         return Box({k: v.output for k, v in self.results.items()})
@@ -139,8 +146,12 @@ class ChatterResult(BaseModel):
     )
 
 
-async def process_single_segment(
-    segment, model, credentials, context={}, cache=True, max_retries=3, max_tokens=None
+async def process_single_segment_(
+    segment: str,
+    llm: LLM,
+    credentials: Optional[LLMCredentials],
+    context={},
+    instructor_args=dict(),
 ):
     """
     Process a single segment sequentially, building context as we go.
@@ -181,13 +192,12 @@ async def process_single_segment(
         res, completion_obj = await anyio.to_thread.run_sync(
             lambda: structured_chat(
                 rendered_prompt,
-                model,
-                credentials,
                 return_type=rt,
-                max_retries=max_retries,
-                max_tokens=max_tokens,
+                llm=llm,
+                credentials=credentials,
+                instructor_args=instructor_args,
             ),
-            cancellable=True,
+            abandon_on_cancel=True,
         )
 
         # Only extract .response field if it exists and is not None
@@ -196,7 +206,9 @@ async def process_single_segment(
             res = res.response
 
         # Store the completion in both our final results and accumulated context.
-        results[key] = SegmentResult(output=res, completion=completion_obj, prompt=rendered_prompt)
+        results[key] = SegmentResult(
+            output=res, completion=completion_obj, prompt=rendered_prompt
+        )
 
         accumulated_context[key] = res
 
@@ -212,7 +224,9 @@ class SegmentDependencyGraph:
     def __init__(self, segments: List[OrderedDict]):
         self.segments = segments
         self.dependency_graph = {}  # segment_id -> set of segment_ids it depends on
-        self.segment_vars = {}  # segment_id -> set of variable names defined in this segment
+        self.segment_vars = (
+            {}
+        )  # segment_id -> set of variable names defined in this segment
         self.build_dependency_graph()
 
     def build_dependency_graph(self):
@@ -229,7 +243,9 @@ class SegmentDependencyGraph:
             # Find all template variables {{ VAR}} in the segment by examining the text of each prompt part
             template_vars = set()
             for prompt_part in segment.values():
-                template_vars.update(re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt_part.text))
+                template_vars.update(
+                    re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt_part.text)
+                )
 
             # For each template variable, find which earlier segment defines it
             for var in template_vars:
@@ -256,7 +272,9 @@ class SegmentDependencyGraph:
 
             if not ready and remaining:
                 # Circular dependency detected
-                logging.warning(f"Circular dependency detected in segments: {remaining}")
+                logging.warning(
+                    f"Circular dependency detected in segments: {remaining}"
+                )
                 # Fall back to sequential execution for remaining segments
                 execution_plan.extend([[seg_id] for seg_id in remaining])
                 break
@@ -276,14 +294,13 @@ async def merge_contexts(*contexts):
         return merged
 
 
-async def chatter(
+async def chatter_async(
     multipart_prompt: str,
-    model=None,
-    credentials=None,
+    model: LLM = LLM(),
+    credentials: Optional[LLMCredentials] = None,
     context={},
     action_lookup=ACTION_LOOKUP,
-    max_retries=3,
-    max_tokens=None,
+    instructor_args=dict(),
 ):
     """
     example:
@@ -314,13 +331,8 @@ async def chatter(
                     else:
                         resolved_context = await merge_contexts(context)
 
-                    result = await process_single_segment(
-                        seg,
-                        model,
-                        credentials,
-                        resolved_context,
-                        max_retries=max_retries,
-                        max_tokens=max_tokens,
+                    result = await process_single_segment_(
+                        seg, model, credentials, resolved_context, instructor_args
                     )
                     segment_futures[sid] = result
 
@@ -336,34 +348,63 @@ async def chatter(
     return final
 
 
-def chatter_sync(
+def chatter(
     multipart_prompt: str,
-    model=None,
-    credentials=None,
+    model: LLM = LLM(),
+    credentials: Optional[LLMCredentials] = None,
     context={},
     action_lookup=ACTION_LOOKUP,
+    instructor_args=dict(),
 ):
-    return anyio.run(chatter, multipart_prompt, model, credentials, context, action_lookup)
+    return anyio.run(
+        chatter_async,
+        multipart_prompt,
+        model,
+        credentials,
+        context,
+        action_lookup,
+        instructor_args,
+    )
+
+
+# chatter("tell a gag joke [[joke:joke]]", model=LLM(model_name="gpt-4o")).response
+# chatter("tell a gag joke [[joke:joke]]").response
 
 
 def get_embedding(
-    texts, model_name="text-embedding-3-large", dimensions=3072, batch_size=500
-) -> list:
+    texts: List[str],
+    llm: LLM = LLM(model_name="openai/text-embedding-3-large"),
+    credentials: Optional[LLMCredentials] = None,
+    dimensions: Optional[int] = 3072,
+    batch_size: int = 500,
+) -> List[List[float]]:
     """
-    Get embeddings for a list of texts, batching requests to the API.
+    Get embeddings for a list of texts using litellm directly.
+    """
 
-    Example:
-        get_embedding(["hello", "world"])
-    """
-    client = openai.OpenAI(api_key=config("LLM_API_KEY"), base_url=config("LLM_BASE_URL"))
+    api_key = (
+        credentials.api_key
+        if credentials
+        else env_config("OPENAI_API_KEY", default=None)
+    )
+    base_url = (
+        credentials.base_url
+        if credentials
+        else env_config("OPENAI_API_BASE", default=None)
+    )
 
     embeddings = []
     for batch in chunked(texts, batch_size):
-        response = client.embeddings.create(
+        response = litellm.embedding(
+            model=llm.model_name,
             input=batch,
-            model=model_name,
             dimensions=dimensions,
+            api_key=api_key,
+            api_base=base_url,
         )
-        embeddings.extend(i.embedding for i in response.data)
+        embeddings.extend(item["embedding"] for item in response["data"])
 
     return embeddings
+
+
+# get_embedding(["hello world"])

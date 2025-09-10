@@ -1,20 +1,24 @@
 import logging
-from typing import List
-
+from typing import List, Optional
 import typer
+from decouple import config as env_config
 
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter_sync
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter
 
 logging.getLogger("chatter").setLevel(logging.WARNING)
-
 
 app = typer.Typer()
 
 
 @app.command()
 def run(
-    prompt: List[str] = typer.Argument(..., help="Prompt with slots, e.g. tell a joke [[joke]]"),
-    model_name: str = typer.Option("gpt-4o-mini", help="LLM model name"),
+    prompt: List[str] = typer.Argument(
+        ..., help="Prompt with slots, e.g. tell a joke [[joke]]"
+    ),
+    model_name: Optional[str] = typer.Option(
+        env_config("DEFAULT_LLM", default=None, cast=str),
+        help="LLM model name (overrides DEFAULT_LLM env var)",
+    ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
 ):
     """
@@ -23,7 +27,7 @@ def run(
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
-    result = chatter_sync(
+    result = chatter(
         multipart_prompt=prompt_str,
         model=model,
         credentials=credentials,
