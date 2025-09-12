@@ -7,9 +7,11 @@ from lark import Lark, Transformer
 from .return_type_models import ACTION_LOOKUP
 
 try:
-    mindframe_grammar = (files("struckdown") / "grammar.lark").read_text(encoding="utf-8")
+    mindframe_grammar = (files(__package__) / "grammar.lark").read_text(encoding="utf-8")
 except Exception:
-    mindframe_grammar = open("struckdown/grammar.lark", "r").read()
+    # fallback to relative path from current file
+    grammar_path = Path(__file__).parent / "grammar.lark"
+    mindframe_grammar = grammar_path.read_text(encoding="utf-8")
 
 MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
@@ -24,6 +26,7 @@ class MindframeTransformer(Transformer):
         self.sections = []
         self.current_buf = []  # holds text/vars/etc
         self.current_parts = []  # list of (key, PromptPart)
+        self.shared_header = ""  # holds shared header text
 
     def _flush_section(self):
         if self.current_parts:
@@ -32,7 +35,8 @@ class MindframeTransformer(Transformer):
         self.current_parts = []
 
     def markdown_text(self, items):
-        self.current_buf.append({"type": "text", "text": str(items[0]).strip()})
+        text = str(items[0]).strip()
+        self.current_buf.append({"type": "text", "text": text})
         return None
 
     def placeholder(self, items):
@@ -47,6 +51,24 @@ class MindframeTransformer(Transformer):
                 "text": str(items[0]),
             }  # already includes `{% ... %}`
         )
+        return None
+
+    def begin_delimiter(self, items):
+        # capture everything in current_buf as shared_header (including variables and template tags)
+        header_parts = []
+        for item in self.current_buf:
+            if item["type"] == "text":
+                header_parts.append(item["text"])
+            elif item["type"] == "variable":
+                header_parts.append(f"{{{{{item['name']}}}}}")
+            elif item["type"] == "templatetag":
+                header_parts.append(item["text"])
+        
+        if header_parts:
+            self.shared_header = "\n".join(header_parts).strip()
+        
+        # clear buffer since this was header content
+        self.current_buf = []
         return None
 
     def obliviate(self, items):
@@ -85,7 +107,14 @@ class MindframeTransformer(Transformer):
                 lines.append(f"{{{{{item['name']}}}}}")
             elif item["type"] == "templatetag":
                 lines.append(item["text"])  # already in full {% ... %} form
-        return "\n".join(lines).strip()
+        
+        prompt_text = "\n".join(lines).strip()
+        
+        # prepend shared_header if it exists
+        if self.shared_header:
+            return f"{self.shared_header}\n\n{prompt_text}" if prompt_text else self.shared_header
+        
+        return prompt_text
 
     def _lookup_rt(self, key):
         return self.action_lookup[key]

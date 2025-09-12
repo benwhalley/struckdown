@@ -270,8 +270,13 @@ async def merge_contexts(*contexts):
     merged = {}
     if contexts:
         for c in contexts:
-            merged.update(c)
-        return merged
+            if isinstance(c, ChatterResult):
+                # extract individual variables from ChatterResult
+                for key, segment_result in c.results.items():
+                    merged[key] = segment_result.output
+            else:
+                merged.update(c)
+    return merged
 
 
 async def chatter_async(
@@ -313,7 +318,8 @@ async def chatter_async(
                         # wait for dependencies to complete
                         [await segment_events[d].wait() for d in deps]
                         dep_results = [segment_results[d] for d in deps]
-                        resolved_context = await merge_contexts(*dep_results)
+                        # merge base context with dependency results
+                        resolved_context = await merge_contexts(context, *dep_results)
                     else:
                         resolved_context = await merge_contexts(context)
 

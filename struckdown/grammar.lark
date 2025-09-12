@@ -1,4 +1,4 @@
-?start: (single_completion | list_completion | placeholder | templatetag | obliviate | markdown)* completion
+?start: (single_completion | list_completion | placeholder | templatetag | begin_delimiter | obliviate | markdown)* completion
 
 // markdown: /[^{{\[\¡]+/ -> markdown_text
 // using negative lookahead to avoid matching single { or [
@@ -7,6 +7,7 @@ markdown: /(?:(?!{{|\[\[|¡).)+/s  -> markdown_text
 placeholder: "{{" WS? var_path WS? "}}"
 var_path: CNAME ("." CNAME)*
 
+begin_delimiter: "¡BEGIN" -> begin_delimiter
 
 obliviate: "¡OBLIVIATE" -> obliviate
 

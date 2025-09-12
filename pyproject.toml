@@ -23,6 +23,7 @@ dependencies = [
     "typer>=0.16.0",
     "more-itertools>=10.7.0",
     "jinja-markdown>=1.210911",
+    "pytest>=8.4.2",
 ]
 
 [tool.setuptools.packages.find]
