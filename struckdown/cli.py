@@ -12,9 +12,7 @@ app = typer.Typer()
 
 @app.command()
 def run(
-    prompt: List[str] = typer.Argument(
-        ..., help="Prompt with slots, e.g. tell a joke [[joke]]"
-    ),
+    prompt: List[str] = typer.Argument(..., help="Prompt with slots, e.g. tell a joke [[joke]]"),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
         help="LLM model name (overrides DEFAULT_LLM env var)",
