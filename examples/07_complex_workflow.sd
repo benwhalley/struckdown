@@ -1,0 +1,38 @@
+# Complex Workflow Example
+# Shows a multi-step analysis workflow with dependencies
+
+You are a data analyst. Be precise and analytical.
+
+¡BEGIN
+
+Given this dataset description: {{dataset_description}}
+
+Identify the key research questions we should investigate: 3*[[research_question]]
+
+¡OBLIVIATE
+
+For the research questions you identified:
+{{research_questions}}
+
+Choose the most important one and explain why: [[priority_question]]
+
+¡OBLIVIATE
+
+Research Question: {{priority_question}}
+
+Design a methodology to answer this question: [[methodology]]
+
+¡OBLIVIATE
+
+Methodology: {{methodology}}
+
+What are the potential limitations and how would you address them: [[limitations]]
+
+¡OBLIVIATE
+
+Given:
+- Research Question: {{priority_question}}
+- Methodology: {{methodology}}  
+- Limitations: {{limitations}}
+
+Write an executive summary of the proposed research: [[executive_summary]]

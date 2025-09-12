@@ -1,0 +1,18 @@
+# Variables in Shared Header Example
+# Shows that template variables before ¡BEGIN are included in shared context
+
+You are a {{role}} who always {{instruction}}.
+
+Additional context: {{context}}
+
+¡BEGIN
+
+Generate a creative idea: [[idea]]
+
+¡OBLIVIATE
+
+Evaluate the idea "{{idea}}" according to your role as {{role}}: [[evaluation]]
+
+¡OBLIVIATE
+
+Final recommendation based on your evaluation: [[recommendation]]

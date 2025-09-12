@@ -1,0 +1,20 @@
+# Template Tags Example
+# Shows using Django template tags for dynamic content
+
+Generate a list of {{count}} {{item_type}} items: {{count}}*[[item]]
+
+¡OBLIVIATE
+
+Here are your {{item_type}} items:
+
+Items: {{items}}
+
+Pick the best one and explain why: [[best_choice]]
+
+¡OBLIVIATE
+
+Processing Results:
+Items generated: {{items}}
+Best choice: {{best_choice}}
+
+Create a detailed plan for implementing {{best_choice}}: [[implementation_plan]]

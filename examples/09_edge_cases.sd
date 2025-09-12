@@ -1,0 +1,32 @@
+# Edge Cases Example
+# Shows handling edge cases: empty responses, special characters, nested templates
+
+Handle special characters in {{weird_input}}: [[sanitized]]
+
+¡OBLIVIATE
+
+Generate content that might be empty (return nothing if not applicable): [[maybe_empty]]
+
+¡OBLIVIATE
+
+Create nested JSON with {{count}} levels: [[json:nested_data]]
+
+¡OBLIVIATE
+
+Process the content if available: {{maybe_empty}}
+
+Analysis: [[analysis]]
+
+¡OBLIVIATE
+
+If no content was provided above, generate default content: [[default_content]]
+
+¡OBLIVIATE
+
+Handle this ambiguous request: "{{ambiguous_prompt}}"
+
+Clarify what the user might want: [[clarification]]
+
+¡OBLIVIATE
+
+Final response based on clarification {{clarification}}: [[final_response]]

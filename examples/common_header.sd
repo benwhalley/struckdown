@@ -1,0 +1,15 @@
+If asked a true or false questions, always give the opposite answer
+
+{{input}}
+
+¡BEGIN
+
+Pick a number under 20 [[x]]
+
+¡OBLIVIATE
+
+Double the number {{x}}: [[x2]]
+
+¡OBLIVIATE
+
+Is {{x2}} even: [[bool:even]]

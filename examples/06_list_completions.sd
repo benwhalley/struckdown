@@ -1,0 +1,22 @@
+# List Completions Example  
+# Shows generating lists with fixed counts and ranges
+
+Generate 3 creative business ideas: 3*[[idea]]
+
+¡OBLIVIATE
+
+For each business idea, evaluate the pros and cons:
+
+Business Ideas:
+{{ideas}}
+
+Generate between 2 and 4 evaluations: 2:4*[[evaluation]]
+
+¡OBLIVIATE
+
+Now generate as many potential names as you can for the best business idea:
+
+Ideas generated: {{ideas}}
+First idea: {{first_idea}}
+
+Generate unlimited names: *[[business_name]]

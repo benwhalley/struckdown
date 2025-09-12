@@ -1,0 +1,17 @@
+# Shared Header Example
+# Shows using ¡BEGIN for shared context across all prompts
+
+You are a helpful research assistant. Always be thorough and cite sources when possible.
+Use clear, professional language.
+
+¡BEGIN
+
+Research the history of {{topic}} and provide key findings: [[findings]]
+
+¡OBLIVIATE
+
+Based on your research about {{topic}}, what are the current trends and future outlook: [[outlook]]
+
+¡OBLIVIATE
+
+Create a bibliography for your research on {{topic}}: [[bibliography]]

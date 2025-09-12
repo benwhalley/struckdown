@@ -1,0 +1,12 @@
+# Simple Chain Example  
+# Shows chaining completions with obliviate
+
+Write a short story: [[story]]
+
+¡OBLIVIATE
+
+Summarize this story in one sentence:
+
+{{story}}
+
+Summary: [[summary]]
