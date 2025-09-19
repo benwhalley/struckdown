@@ -20,18 +20,18 @@ def test_template_variable_dependency():
 
 {{joke}}
 joke 2 [[jk]]"""
-    
+
     context = {"topic": "cats"}
     result = chatter(prompt, context=context, extra_kwargs={"max_tokens": 100})
-    
+
     # both completions should succeed
     assert "joke" in result.results
     assert "jk" in result.results
-    
+
     # check that the first joke is about the topic
     joke_output = result.results["joke"].output
     assert len(joke_output) > 0
-    
+
     # check that second completion also generated content
     jk_output = result.results["jk"].output
     assert len(jk_output) > 0
@@ -47,18 +47,18 @@ def test_bool_dependency_positive():
 {{joke}}
 
 is the joke about {{topic}} [[bool:jk]]"""
-    
+
     context = {"topic": "cats"}
     result = chatter(prompt, context=context, extra_kwargs={"max_tokens": 50})
-    
+
     # both completions should succeed
     assert "joke" in result.results
     assert "jk" in result.results
-    
+
     # joke should be generated
     joke_output = result.results["joke"].output
     assert len(joke_output) > 0
-    
+
     # jk should be a boolean
     jk_output = result.results["jk"].output
     assert isinstance(jk_output, bool)
@@ -76,18 +76,18 @@ def test_bool_dependency_negative():
 {{joke}}
 
 Is the joke about something other than {{topic}}? Answer false. [[bool:jk]]"""
-    
+
     context = {"topic": "cats"}
     result = chatter(prompt, context=context, extra_kwargs={"max_tokens": 50})
-    
+
     # both completions should succeed
     assert "joke" in result.results
     assert "jk" in result.results
-    
+
     # joke should be generated
     joke_output = result.results["joke"].output
     assert len(joke_output) > 0
-    
+
     # jk should be a boolean
     jk_output = result.results["jk"].output
     assert isinstance(jk_output, bool)
@@ -106,14 +106,14 @@ The story: {{story}}
 The subject was {{subject}} and object was {{object}}.
 
 Summarize this in one word: [[word]]"""
-    
+
     context = {"subject": "cats", "object": "dogs"}
     result = chatter(prompt, context=context, extra_kwargs={"max_tokens": 100})
-    
+
     # all completions should succeed
     assert "story" in result.results
     assert "word" in result.results
-    
+
     # check outputs exist
     assert len(result.results["story"].output) > 0
     assert len(result.results["word"].output) > 0
@@ -130,14 +130,14 @@ Double the number {{num}}: [[doubled]]
 ¡OBLIVIATE
 
 The doubled result is {{doubled}}. Is this even? [[bool:is_even]]"""
-    
+
     result = chatter(prompt, extra_kwargs={"max_tokens": 50})
-    
+
     # all three completions should succeed
     assert "num" in result.results
     assert "doubled" in result.results
     assert "is_even" in result.results
-    
+
     # check types
     assert isinstance(result.results["is_even"].output, bool)
 
@@ -153,13 +153,13 @@ Think of a number: [[x]]
 ¡OBLIVIATE
 
 Double the number {{x}}: [[x2]]"""
-    
+
     result = chatter(prompt, extra_kwargs={"max_tokens": 50})
-    
+
     # both completions should succeed
     assert "x" in result.results
     assert "x2" in result.results
-    
+
     # check that outputs exist
     assert len(result.results["x"].output) > 0
     assert len(result.results["x2"].output) > 0
@@ -172,9 +172,9 @@ def test_without_shared_header():
 ¡OBLIVIATE
 
 Rate the joke {{joke}} from 1-10: [[rating]]"""
-    
+
     result = chatter(prompt, extra_kwargs={"max_tokens": 50})
-    
+
     # both completions should succeed
     assert "joke" in result.results
     assert "rating" in result.results
@@ -191,10 +191,10 @@ Explain {{topic}}: [[explanation]]
 ¡OBLIVIATE
 
 Summarize your explanation about {{topic}}: [[summary]]"""
-    
+
     context = {"domain": "physics", "topic": "quantum mechanics"}
     result = chatter(prompt, context=context, extra_kwargs={"max_tokens": 100})
-    
+
     # both completions should succeed
     assert "explanation" in result.results
     assert "summary" in result.results
