@@ -6,20 +6,26 @@ from types import FunctionType
 from typing import Any, Dict, List, Optional
 
 import anyio
+import instructor
 import litellm
 import openai
 from box import Box
 from decouple import config as env_config
-import instructor
 from instructor import from_provider
-from jinja2 import StrictUndefined, Template
+from jinja2 import StrictUndefined, Template, Undefined
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
-
 from struckdown.parsing import parser
 from struckdown.return_type_models import ACTION_LOOKUP
 
 logger = logging.getLogger(__name__)
+
+
+class KeepUndefined(Undefined):
+    """Custom Undefined class that preserved {{vars}} if they are not defined in context."""
+
+    def __str__(self):
+        return f"{{{{ {self._undefined_name} }}}}"
 
 
 class Example(BaseModel):
@@ -107,7 +113,9 @@ class SegmentResult(BaseModel):
 
 
 class ChatterResult(BaseModel):
-    type: str = Field(default="chatter", description="Discriminator field for union serialization")
+    type: str = Field(
+        default="chatter", description="Discriminator field for union serialization"
+    )
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
 
     def __str__(self):
@@ -183,7 +191,11 @@ async def process_single_segment_(
         # Call the LLM via structured_chat.
         res, completion_obj = await anyio.to_thread.run_sync(
             lambda: structured_chat(
-                rendered_prompt, return_type=rt, llm=llm, credentials=credentials, **kwargs
+                rendered_prompt,
+                return_type=rt,
+                llm=llm,
+                credentials=credentials,
+                **kwargs,
             ),
             abandon_on_cancel=True,
         )
@@ -194,7 +206,9 @@ async def process_single_segment_(
             res = res.response
 
         # Store the completion in both our final results and accumulated context.
-        results[key] = SegmentResult(output=res, completion=completion_obj, prompt=rendered_prompt)
+        results[key] = SegmentResult(
+            output=res, completion=completion_obj, prompt=rendered_prompt
+        )
 
         accumulated_context[key] = res
 
@@ -210,7 +224,9 @@ class SegmentDependencyGraph:
     def __init__(self, segments: List[OrderedDict]):
         self.segments = segments
         self.dependency_graph = {}  # segment_id -> set of segment_ids it depends on
-        self.segment_vars = {}  # segment_id -> set of variable names defined in this segment
+        self.segment_vars = (
+            {}
+        )  # segment_id -> set of variable names defined in this segment
         self.build_dependency_graph()
 
     def build_dependency_graph(self):
@@ -227,7 +243,9 @@ class SegmentDependencyGraph:
             # Find all template variables {{ VAR}} in the segment by examining the text of each prompt part
             template_vars = set()
             for prompt_part in segment.values():
-                template_vars.update(re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt_part.text))
+                template_vars.update(
+                    re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt_part.text)
+                )
 
             # For each template variable, find which earlier segment defines it
             for var in template_vars:
@@ -254,7 +272,9 @@ class SegmentDependencyGraph:
 
             if not ready and remaining:
                 # Circular dependency detected
-                logging.warning(f"Circular dependency detected in segments: {remaining}")
+                logging.warning(
+                    f"Circular dependency detected in segments: {remaining}"
+                )
                 # Fall back to sequential execution for remaining segments
                 execution_plan.extend([[seg_id] for seg_id in remaining])
                 break
@@ -294,7 +314,14 @@ async def chatter_async(
 
     logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
-    segments = parser(action_lookup=action_lookup).parse(multipart_prompt.strip())
+    multipart_prompt_prefilled = Template(
+        multipart_prompt,
+        undefined=KeepUndefined,
+    ).render(**context)
+
+    segments = parser(action_lookup=action_lookup).parse(
+        multipart_prompt_prefilled.strip()
+    )
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
     if max([len(i) for i in plan]) > 1:
@@ -324,7 +351,11 @@ async def chatter_async(
                         resolved_context = await merge_contexts(context)
 
                     result = await process_single_segment_(
-                        seg, model, credentials, resolved_context, **(extra_kwargs or {})
+                        seg,
+                        model,
+                        credentials,
+                        resolved_context,
+                        **(extra_kwargs or {}),
                     )
                     segment_results[sid] = result
                     segment_events[sid].set()  # signal completion
@@ -351,7 +382,13 @@ def chatter(
     extra_kwargs=None,
 ):
     return anyio.run(
-        chatter_async, multipart_prompt, model, credentials, context, action_lookup, extra_kwargs
+        chatter_async,
+        multipart_prompt,
+        model,
+        credentials,
+        context,
+        action_lookup,
+        extra_kwargs,
     )
 
 
@@ -366,8 +403,16 @@ def get_embedding(
     Get embeddings for a list of texts using litellm directly.
     """
 
-    api_key = credentials.api_key if credentials else env_config("OPENAI_API_KEY", default=None)
-    base_url = credentials.base_url if credentials else env_config("OPENAI_API_BASE", default=None)
+    api_key = (
+        credentials.api_key
+        if credentials
+        else env_config("OPENAI_API_KEY", default=None)
+    )
+    base_url = (
+        credentials.base_url
+        if credentials
+        else env_config("OPENAI_API_BASE", default=None)
+    )
 
     embeddings = []
     for batch in chunked(texts, batch_size):
