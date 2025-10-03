@@ -48,8 +48,12 @@ LC = Box(
 
 
 class LLMCredentials(BaseModel):
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: Optional[str] = Field(
+        default_factory=lambda: env_config("LLM_API_KEY", None)
+    )
+    base_url: Optional[str] = Field(
+        default_factory=lambda: env_config("LLM_API_BASE", None)
+    )
 
 
 class LLM(BaseModel):
@@ -59,10 +63,17 @@ class LLM(BaseModel):
     )
 
     def client(self, credentials: LLMCredentials = None):
-        client = instructor.from_provider(self.model_name)
-        if credentials:
-            client.api_key = credentials.api_key
-            client.base_url = credentials.base_url
+        if credentials is None:
+            credentials = LLMCredentials()
+
+        if not credentials.api_key or not credentials.base_url:
+            raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
+
+        # Create the instructor client with credentials already set
+        client = instructor.from_provider(
+            self.model_name, api_key=credentials.api_key, base_url=credentials.base_url
+        )
+
         return client
 
 
@@ -70,16 +81,16 @@ def structured_chat(
     prompt,
     return_type,
     llm: LLM = LLM(),
-    credentials=None,
+    credentials=LLMCredentials(),
     max_retries=3,
     max_tokens=None,
-    instructor_args=dict(),
+    extra_kwargs=None,
 ):
     """
     Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
     """
 
-    logger.info(
+    logger.debug(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
 
@@ -89,12 +100,11 @@ def structured_chat(
             model=llm.model_name.split("/")[-1],
             response_model=return_type,
             messages=[{"role": "user", "content": prompt}],
-            **instructor_args,
+            **(extra_kwargs or {}),
         )
         _msg, _lt, _meta = res, None, com.model_dump()
 
     except Exception as e:
-        print("USING:", credentials)
         full_traceback = traceback.format_exc()
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
@@ -129,11 +139,17 @@ class ChatterResult(BaseModel):
         if isinstance(value, SegmentResult):
             self.results[key] = value
         else:
-            self.results[key] = SegmentResult(output=value)
+            self.results[key] = SegmentResult(prompt="", output=value)
 
     def update(self, d: Dict[str, Any]):
         for k, v in d.items():
             self[k] = v
+
+    def keys(self):
+        return self.results.keys()
+
+    def __len__(self):
+        return len(self.results)
 
     @property
     def response(self):
@@ -195,7 +211,7 @@ async def process_single_segment_(
                 return_type=rt,
                 llm=llm,
                 credentials=credentials,
-                **kwargs,
+                extra_kwargs=kwargs,
             ),
             abandon_on_cancel=True,
         )
@@ -312,7 +328,7 @@ async def chatter_async(
     chatter("tell a joke [[joke]]")
     """
 
-    logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
+    logger.info(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
     multipart_prompt_prefilled = Template(
         multipart_prompt,
@@ -370,6 +386,7 @@ async def chatter_async(
         result = segment_results[sid]
         final.update(result.results)
 
+    logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
     return final
 
 
@@ -395,7 +412,7 @@ def chatter(
 def get_embedding(
     texts: List[str],
     llm: LLM = LLM(model_name="openai/text-embedding-3-large"),
-    credentials: Optional[LLMCredentials] = None,
+    credentials: LLMCredentials = LLMCredentials(),
     dimensions: Optional[int] = 3072,
     batch_size: int = 500,
 ) -> List[List[float]]:
@@ -403,16 +420,8 @@ def get_embedding(
     Get embeddings for a list of texts using litellm directly.
     """
 
-    api_key = (
-        credentials.api_key
-        if credentials
-        else env_config("OPENAI_API_KEY", default=None)
-    )
-    base_url = (
-        credentials.base_url
-        if credentials
-        else env_config("OPENAI_API_BASE", default=None)
-    )
+    api_key = credentials.api_key
+    base_url = credentials.base_url
 
     embeddings = []
     for batch in chunked(texts, batch_size):
@@ -426,6 +435,3 @@ def get_embedding(
         embeddings.extend(item["embedding"] for item in response["data"])
 
     return embeddings
-
-
-# get_embedding(["hello world"])

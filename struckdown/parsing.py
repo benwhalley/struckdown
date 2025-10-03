@@ -114,14 +114,6 @@ class MindframeTransformer(Transformer):
 
         prompt_text = "\n".join(lines).strip()
 
-        # prepend shared_header if it exists
-        if self.shared_header:
-            return (
-                f"{self.shared_header}\n\n{prompt_text}"
-                if prompt_text
-                else self.shared_header
-            )
-
         return prompt_text
 
     def _lookup_rt(self, key):

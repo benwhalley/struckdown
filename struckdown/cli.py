@@ -27,6 +27,7 @@ def run(
     """
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
+
     model = LLM(model_name=model_name)
     result = chatter(
         multipart_prompt=prompt_str,
