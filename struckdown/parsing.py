@@ -19,7 +19,7 @@ MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
 
 
-PromptPart = namedtuple("PromptPart", ["key", "return_type", "options", "text"])
+PromptPart = namedtuple("PromptPart", ["key", "return_type", "options", "text", "shared_header", "quantifier"])
 
 
 class MindframeTransformer(Transformer):
@@ -98,9 +98,12 @@ class MindframeTransformer(Transformer):
             return_type=body["return_type"],
             options=body.get("options", []),
             text=prompt,
+            shared_header=self.shared_header,  # Store shared_header separately
+            quantifier=body.get("quantifier", None),
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []  # reset prompt buffer
+        # Don't auto-flush - let sections build up naturally within OBLIVIATE blocks
 
     def _collapse_prompt_text(self):
         lines = []
@@ -121,10 +124,26 @@ class MindframeTransformer(Transformer):
 
     # All other methods: passthrough or reused from your original
     def typed_completion(self, items):
+        # items can be: [type, key, options] or [type, quantifier, key, options]
+        type_name = str(items[0])
+
+        # Check if second item is a quantifier (tuple) or key (string)
+        if len(items) > 1 and isinstance(items[1], tuple):
+            # Has quantifier: [type, quantifier, key, ...]
+            quantifier = items[1]
+            key = str(items[2])
+            options = items[3] if len(items) > 3 else []
+        else:
+            # No quantifier: [type, key, ...]
+            quantifier = None
+            key = str(items[1]) if len(items) > 1 else "response"
+            options = items[2] if len(items) > 2 else []
+
         return {
-            "return_type": self._lookup_rt(str(items[0])),
-            "key": str(items[1]),
-            "options": items[2] if len(items) > 2 else [],
+            "return_type": self._lookup_rt(type_name),
+            "key": key,
+            "options": options,
+            "quantifier": quantifier,
         }
 
     def untyped_completion(self, items):
@@ -151,6 +170,29 @@ class MindframeTransformer(Transformer):
 
     def ranged(self, items):
         return (int(str(items[0])), int(str(items[1])))
+
+    # Quantifier transformer methods
+    def zero_or_more(self, items):
+        return (0, None)
+
+    def one_or_more(self, items):
+        return (1, None)
+
+    def zero_or_one(self, items):
+        return (0, 1)
+
+    def exact(self, items):
+        n = int(str(items[0]))
+        return (n, n)
+
+    def at_least(self, items):
+        n = int(str(items[0]))
+        return (n, None)
+
+    def between(self, items):
+        min_n = int(str(items[0]))
+        max_n = int(str(items[1]))
+        return (min_n, max_n)
 
     def start(self, items):
         # end of parse: flush final section

@@ -18,8 +18,15 @@ obliviate: "¡OBLIVIATE" -> obliviate
 // Single: [[type:var|opt1,opt2]]
 single_completion: "[[" WS? completion_body WS? "]]"
 
-completion_body: CNAME ":" CNAME ("|" option_list)? -> typed_completion
+completion_body: CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion
     | CNAME ("|" option_list)? -> untyped_completion
+
+quantifier: "*"                           -> zero_or_more
+          | "+"                           -> one_or_more
+          | "?"                           -> zero_or_one
+          | "{" NUMBER "}"                -> exact
+          | "{" NUMBER "," "}"            -> at_least
+          | "{" NUMBER "," NUMBER "}"     -> between
 
 option_list: option ("," option)*
 // allow quoted strings in options

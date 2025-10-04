@@ -66,26 +66,64 @@ class ChunkedConversationResponse(BaseModel):
     )
 
 
-def selection_response_model(valid_options):
-    """Factor to produce a pydantic model with specific options required."""
+def selection_response_model(valid_options, quantifier=None):
+    """Factory to produce a pydantic model with specific options required.
+
+    Args:
+        valid_options: List of valid option strings
+        quantifier: Optional tuple of (min_items, max_items) where None means unlimited
+                   Examples: (1, 3) = 1 to 3 items, (0, None) = 0 or more, (2, 2) = exactly 2
+    """
 
     if not valid_options:
         raise ValueError("valid_options must be a non-empty list of strings")
 
     literals = Literal[tuple(valid_options)]
 
-    # Create a dynamic model with the constrained field `value`, setting `__module__` explicitly
-    return create_model(
-        "SelectionResponse",
-        response=(
-            literals,
-            Field(
-                ...,
-                description="A selection from one of the options. No discussion or explanation, just the text of the choice, exactly matching one of the options provided.",
+    if quantifier:
+        # Multiple selection mode
+        min_items, max_items = quantifier
+
+        # Build field kwargs dynamically
+        field_kwargs = {}
+        if min_items is not None:
+            field_kwargs["min_length"] = min_items
+        if max_items is not None:
+            field_kwargs["max_length"] = max_items
+
+        # Build description based on constraints
+        if min_items == max_items:
+            constraint_desc = f"exactly {min_items}"
+        elif max_items is None:
+            constraint_desc = f"at least {min_items}" if min_items > 0 else "any number of"
+        elif min_items == 0:
+            constraint_desc = f"up to {max_items}"
+        else:
+            constraint_desc = f"between {min_items} and {max_items}"
+
+        description = f"A list of {constraint_desc} selections from the options. Each selection must exactly match one of the provided options. No discussion or explanation."
+
+        return create_model(
+            "MultiSelectionResponse",
+            response=(
+                List[literals],
+                Field(..., description=description, **field_kwargs),
             ),
-        ),
-        __module__=__name__,
-    )
+            __module__=__name__,
+        )
+    else:
+        # Single selection mode (backward compatible)
+        return create_model(
+            "SelectionResponse",
+            response=(
+                literals,
+                Field(
+                    ...,
+                    description="A selection from one of the options. No discussion or explanation, just the text of the choice, exactly matching one of the options provided.",
+                ),
+            ),
+            __module__=__name__,
+        )
 
 
 class BooleanResponse(BaseModel):

@@ -179,12 +179,21 @@ async def process_single_segment_(
     prompt_parts = []
     accumulated_context = context.copy()
 
+    # Extract shared_header from first prompt_part (all parts in segment share same header)
+    shared_header = ""
+    if segment:
+        first_part = next(iter(segment.values()))
+        shared_header = first_part.shared_header if hasattr(first_part, 'shared_header') else ""
+
     for key, prompt_part in segment.items():
         # Append the raw text for this prompt part.
         prompt_parts.append(prompt_part.text)
         # Build the prompt for this completion from the parts within this segment.
         try:
             segment_prompt = "\n\n--\n\n".join(filter(bool, map(str, prompt_parts)))
+            # Prepend shared_header once for the entire segment
+            if shared_header:
+                segment_prompt = f"{shared_header}\n\n{segment_prompt}" if segment_prompt else shared_header
         except Exception as e:
             logger.error(f"Error building segment prompt: {prompt_parts}\n{e}")
 
@@ -200,7 +209,8 @@ async def process_single_segment_(
 
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
-            rt = prompt_part.return_type(prompt_part.options)
+            # Pass both options and quantifier to factory functions (like selection_response_model)
+            rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
         else:
             rt = prompt_part.return_type
 
