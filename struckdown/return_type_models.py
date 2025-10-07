@@ -95,7 +95,9 @@ def selection_response_model(valid_options, quantifier=None):
         if min_items == max_items:
             constraint_desc = f"exactly {min_items}"
         elif max_items is None:
-            constraint_desc = f"at least {min_items}" if min_items > 0 else "any number of"
+            constraint_desc = (
+                f"at least {min_items}" if min_items > 0 else "any number of"
+            )
         elif min_items == 0:
             constraint_desc = f"up to {max_items}"
         else:

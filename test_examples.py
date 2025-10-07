@@ -12,7 +12,6 @@ from struckdown import chatter
 from struckdown.parsing import extract_all_placeholders, parse_syntax
 
 
-
 def test_all_examples():
     """Test all .sd example files in the examples/ directory"""
     examples_dir = Path(__file__).parent / "examples"

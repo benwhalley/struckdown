@@ -172,5 +172,101 @@ class ChatterSimpleTestCase(unittest.TestCase):
         self.assertEqual(execution_plan[2], ["segment_2"])
 
 
+class SharedHeaderTestCase(unittest.TestCase):
+    """Test the ¡BEGIN shared header functionality"""
+
+    def test_shared_header_parsing(self):
+        """Test that ¡BEGIN correctly separates shared header from completions"""
+        from struckdown.parsing import parse_syntax
+
+        template = """System instruction: You are a helpful assistant.
+
+¡BEGIN
+
+Tell a joke [[joke]]"""
+
+        sections = parse_syntax(template)
+
+        # Should have 1 section with 1 completion
+        self.assertEqual(len(sections), 1)
+        self.assertIn("joke", sections[0])
+
+        # The prompt part should have the shared_header stored
+        part = sections[0]["joke"]
+        self.assertEqual(
+            part.shared_header, "System instruction: You are a helpful assistant."
+        )
+        self.assertEqual(part.text, "Tell a joke")
+
+    def test_shared_header_with_multiple_segments(self):
+        """Test that shared header is preserved across OBLIVIATE segments"""
+        from struckdown.parsing import parse_syntax
+
+        template = """You are a comedy expert.
+
+¡BEGIN
+
+Tell a joke [[joke]]
+
+¡OBLIVIATE
+
+Rate the joke from 1-10 [[int:rating]]"""
+
+        sections = parse_syntax(template)
+
+        # Should have 2 sections
+        self.assertEqual(len(sections), 2)
+
+        # Both sections should have the same shared_header
+        self.assertEqual(sections[0]["joke"].shared_header, "You are a comedy expert.")
+        self.assertEqual(
+            sections[1]["rating"].shared_header, "You are a comedy expert."
+        )
+
+    def test_shared_header_with_template_variables(self):
+        """Test that shared header can contain template variables"""
+        from struckdown.parsing import parse_syntax
+
+        template = """You are an expert in {{domain}}.
+
+¡BEGIN
+
+Explain {{topic}} [[explanation]]"""
+
+        sections = parse_syntax(template)
+
+        part = sections[0]["explanation"]
+        self.assertIn("{{domain}}", part.shared_header)
+        # Note: parsing preserves the newline structure
+        self.assertIn("Explain", part.text)
+        self.assertIn("{{topic}}", part.text)
+
+    def test_no_shared_header(self):
+        """Test that templates without ¡BEGIN work as before"""
+        from struckdown.parsing import parse_syntax
+
+        template = """Tell a joke [[joke]]"""
+
+        sections = parse_syntax(template)
+
+        part = sections[0]["joke"]
+        self.assertEqual(part.shared_header, "")
+        self.assertEqual(part.text, "Tell a joke")
+
+    def test_shared_header_empty(self):
+        """Test that ¡BEGIN at start of template results in empty shared_header"""
+        from struckdown.parsing import parse_syntax
+
+        template = """¡BEGIN
+
+Tell a joke [[joke]]"""
+
+        sections = parse_syntax(template)
+
+        part = sections[0]["joke"]
+        self.assertEqual(part.shared_header, "")
+        self.assertEqual(part.text, "Tell a joke")
+
+
 if __name__ == "__main__":
     unittest.main()

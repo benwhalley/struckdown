@@ -15,6 +15,8 @@ from instructor import from_provider
 from jinja2 import StrictUndefined, Template, Undefined
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
+
+from struckdown.cache import clear_cache, memory
 from struckdown.parsing import parser
 from struckdown.return_type_models import ACTION_LOOKUP
 
@@ -49,10 +51,10 @@ LC = Box(
 
 class LLMCredentials(BaseModel):
     api_key: Optional[str] = Field(
-        default_factory=lambda: env_config("LLM_API_KEY", None)
+        default_factory=lambda: env_config("LLM_API_KEY", None), repr=False
     )
     base_url: Optional[str] = Field(
-        default_factory=lambda: env_config("LLM_API_BASE", None)
+        default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
     )
 
 
@@ -77,6 +79,41 @@ class LLM(BaseModel):
         return client
 
 
+@memory.cache(ignore=["return_type", "llm", "credentials"])
+def _call_llm_cached(
+    prompt: str,
+    model_name: str,
+    max_retries: int,
+    max_tokens: Optional[int],
+    extra_kwargs_str: str,
+    return_type,
+    llm,
+    credentials,
+):
+    """
+    Cache the raw completion dict from the LLM.
+    This is the expensive API call we want to cache.
+    Returns dicts (not Pydantic models) so they pickle safely.
+    """
+    logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+    try:
+        res, com = llm.client(credentials).chat.completions.create_with_completion(
+            model=model_name.split("/")[-1],
+            response_model=return_type,
+            messages=[{"role": "user", "content": prompt}],
+            **(eval(extra_kwargs_str) if extra_kwargs_str else {}),
+        )
+    except Exception as e:
+        full_traceback = traceback.format_exc()
+        logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
+        raise e
+
+    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+
+    # Serialize to dicts for safe pickling (instructor always returns Pydantic models)
+    return res.model_dump(), com.model_dump()
+
+
 def structured_chat(
     prompt,
     return_type,
@@ -87,33 +124,48 @@ def structured_chat(
     extra_kwargs=None,
 ):
     """
-    Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object
-    """
+    Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object.
 
+    Results are cached to disk using joblib.Memory. Cache behavior can be controlled via the
+    STRUCKDOWN_CACHE environment variable:
+    - Default: ~/.struckdown/cache
+    - Disable: Set to "0", "false", or empty string
+    - Custom location: Set to any valid directory path
+
+    Cache key includes: prompt, model_name, max_retries, max_tokens, extra_kwargs_str
+    Credentials are NOT included in the cache key (same prompt + model will hit cache regardless of API key).
+    """
     logger.debug(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
 
-    logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+    extra_kwargs_str = str(extra_kwargs) if extra_kwargs else ""
+
     try:
-        res, com = llm.client(credentials).chat.completions.create_with_completion(
-            model=llm.model_name.split("/")[-1],
-            response_model=return_type,
-            messages=[{"role": "user", "content": prompt}],
-            **(extra_kwargs or {}),
+        res_dict, com_dict = _call_llm_cached(
+            prompt=prompt,
+            model_name=llm.model_name,
+            max_retries=max_retries,
+            max_tokens=max_tokens,
+            extra_kwargs_str=extra_kwargs_str,
+            return_type=return_type,
+            llm=llm,
+            credentials=credentials,
         )
-        _msg, _lt, _meta = res, None, com.model_dump()
 
-    except Exception as e:
-        full_traceback = traceback.format_exc()
-        logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
+        # Deserialize dicts back to Pydantic models (cached function always returns dicts)
+        res = return_type.model_validate(res_dict)
+        com = Box(com_dict)
+
+        logger.debug(
+            f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
+        )
+        return res, com
+
+    except (EOFError, Exception) as e:
+        # If cache fails, log and re-raise
+        logger.warning(f"Cache/LLM error: {e}")
         raise e
-
-    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
-    logger.info(
-        f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
-    )
-    return res, com
 
 
 class SegmentResult(BaseModel):
@@ -183,7 +235,9 @@ async def process_single_segment_(
     shared_header = ""
     if segment:
         first_part = next(iter(segment.values()))
-        shared_header = first_part.shared_header if hasattr(first_part, 'shared_header') else ""
+        shared_header = (
+            first_part.shared_header if hasattr(first_part, "shared_header") else ""
+        )
 
     for key, prompt_part in segment.items():
         # Append the raw text for this prompt part.
@@ -193,7 +247,11 @@ async def process_single_segment_(
             segment_prompt = "\n\n--\n\n".join(filter(bool, map(str, prompt_parts)))
             # Prepend shared_header once for the entire segment
             if shared_header:
-                segment_prompt = f"{shared_header}\n\n{segment_prompt}" if segment_prompt else shared_header
+                segment_prompt = (
+                    f"{shared_header}\n\n{segment_prompt}"
+                    if segment_prompt
+                    else shared_header
+                )
         except Exception as e:
             logger.error(f"Error building segment prompt: {prompt_parts}\n{e}")
 
@@ -338,7 +396,7 @@ async def chatter_async(
     chatter("tell a joke [[joke]]")
     """
 
-    logger.info(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
+    logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
     multipart_prompt_prefilled = Template(
         multipart_prompt,
@@ -351,7 +409,7 @@ async def chatter_async(
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
     if max([len(i) for i in plan]) > 1:
-        logger.info(f"Execution plan includes concurrency: {plan}")
+        logger.debug(f"Execution plan includes concurrency: {plan}")
 
     import anyio
     from anyio import Event
@@ -421,7 +479,9 @@ def chatter(
 
 def get_embedding(
     texts: List[str],
-    llm: LLM = LLM(model_name="openai/text-embedding-3-large"),
+    llm: LLM = LLM(
+        model_name=env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large")
+    ),
     credentials: LLMCredentials = LLMCredentials(),
     dimensions: Optional[int] = 3072,
     batch_size: int = 500,
@@ -435,6 +495,7 @@ def get_embedding(
 
     embeddings = []
     for batch in chunked(texts, batch_size):
+        logger.debug(f"Getting batch of embeddings:\n{texts}")
         response = litellm.embedding(
             model=llm.model_name,
             input=batch,
@@ -442,6 +503,7 @@ def get_embedding(
             api_key=api_key,
             api_base=base_url,
         )
+
         embeddings.extend(item["embedding"] for item in response["data"])
 
     return embeddings

@@ -104,8 +104,12 @@ class QuantifierModelGenerationTestCase(unittest.TestCase):
 
         # Check constraints - Pydantic stores min/max in separate metadata objects
         metadata_objs = field_info.metadata
-        min_len = next((m.min_length for m in metadata_objs if hasattr(m, 'min_length')), None)
-        max_len = next((m.max_length for m in metadata_objs if hasattr(m, 'max_length')), None)
+        min_len = next(
+            (m.min_length for m in metadata_objs if hasattr(m, "min_length")), None
+        )
+        max_len = next(
+            (m.max_length for m in metadata_objs if hasattr(m, "max_length")), None
+        )
 
         self.assertEqual(min_len, 3)
         self.assertEqual(max_len, 3)
@@ -118,8 +122,12 @@ class QuantifierModelGenerationTestCase(unittest.TestCase):
 
         # Check constraints
         metadata_objs = field_info.metadata
-        min_len = next((m.min_length for m in metadata_objs if hasattr(m, 'min_length')), None)
-        max_len = next((m.max_length for m in metadata_objs if hasattr(m, 'max_length')), None)
+        min_len = next(
+            (m.min_length for m in metadata_objs if hasattr(m, "min_length")), None
+        )
+        max_len = next(
+            (m.max_length for m in metadata_objs if hasattr(m, "max_length")), None
+        )
 
         self.assertEqual(min_len, 1)
         self.assertEqual(max_len, 3)
@@ -132,8 +140,12 @@ class QuantifierModelGenerationTestCase(unittest.TestCase):
 
         # Check constraints
         metadata_objs = field_info.metadata
-        min_len = next((m.min_length for m in metadata_objs if hasattr(m, 'min_length')), None)
-        max_len = next((m.max_length for m in metadata_objs if hasattr(m, 'max_length')), None)
+        min_len = next(
+            (m.min_length for m in metadata_objs if hasattr(m, "min_length")), None
+        )
+        max_len = next(
+            (m.max_length for m in metadata_objs if hasattr(m, "max_length")), None
+        )
 
         self.assertEqual(min_len, 2)
         self.assertIsNone(max_len)  # No max constraint
@@ -146,8 +158,12 @@ class QuantifierModelGenerationTestCase(unittest.TestCase):
 
         # Check constraints - should allow empty list
         metadata_objs = field_info.metadata
-        min_len = next((m.min_length for m in metadata_objs if hasattr(m, 'min_length')), None)
-        max_len = next((m.max_length for m in metadata_objs if hasattr(m, 'max_length')), None)
+        min_len = next(
+            (m.min_length for m in metadata_objs if hasattr(m, "min_length")), None
+        )
+        max_len = next(
+            (m.max_length for m in metadata_objs if hasattr(m, "max_length")), None
+        )
 
         self.assertEqual(min_len, 0)
         self.assertIsNone(max_len)  # No max constraint

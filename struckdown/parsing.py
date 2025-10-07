@@ -19,7 +19,10 @@ MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
 
 
-PromptPart = namedtuple("PromptPart", ["key", "return_type", "options", "text", "shared_header", "quantifier"])
+PromptPart = namedtuple(
+    "PromptPart",
+    ["key", "return_type", "options", "text", "shared_header", "quantifier"],
+)
 
 
 class MindframeTransformer(Transformer):
