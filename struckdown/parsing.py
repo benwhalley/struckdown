@@ -21,7 +21,7 @@ DEFAULT_RETURN_TYPE = "respond"
 
 PromptPart = namedtuple(
     "PromptPart",
-    ["key", "return_type", "options", "text", "shared_header", "quantifier"],
+    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type"],
 )
 
 
@@ -103,6 +103,7 @@ class MindframeTransformer(Transformer):
             text=prompt,
             shared_header=self.shared_header,  # Store shared_header separately
             quantifier=body.get("quantifier", None),
+            action_type=body.get("action_type"),
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []  # reset prompt buffer
@@ -147,6 +148,7 @@ class MindframeTransformer(Transformer):
             "key": key,
             "options": options,
             "quantifier": quantifier,
+            "action_type": type_name,
         }
 
     def untyped_completion(self, items):
@@ -154,6 +156,7 @@ class MindframeTransformer(Transformer):
             "return_type": self._lookup_rt("default"),
             "key": str(items[0]),
             "options": items[1] if len(items) > 1 else [],
+            "action_type": "default",
         }
 
     def option_list(self, items):

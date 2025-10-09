@@ -60,7 +60,7 @@ class LLMCredentials(BaseModel):
 
 class LLM(BaseModel):
     model_name: Optional[str] = Field(
-        default_factory=lambda: env_config("DEFAULT_LLM", "openai/gpt-4.1-mini"),
+        default_factory=lambda: env_config("DEFAULT_LLM", "gpt-4.1-mini"),
         exclude=True,
     )
 
@@ -71,7 +71,7 @@ class LLM(BaseModel):
         if not credentials.api_key or not credentials.base_url:
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
 
-        # Create the instructor client with credentials already set
+        # reate the instructor client with credentials already set
         client = instructor.from_provider(
             self.model_name, api_key=credentials.api_key, base_url=credentials.base_url
         )
@@ -98,9 +98,11 @@ def _call_llm_cached(
     logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
-            model=model_name.split("/")[-1],
+            model="".join(model_name.split("/")[1:]),
             response_model=return_type,
             messages=[{"role": "user", "content": prompt}],
+            # this is important! watch out though... dropping params silently, so things like temperature aren't set on GPT-5-mini
+            drop_params=True,
             **(eval(extra_kwargs_str) if extra_kwargs_str else {}),
         )
     except Exception as e:
@@ -138,9 +140,8 @@ def structured_chat(
     logger.debug(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
-
     extra_kwargs_str = str(extra_kwargs) if extra_kwargs else ""
-
+    logger.debug(f"LLM kwargs: {extra_kwargs}")
     try:
         res_dict, com_dict = _call_llm_cached(
             prompt=prompt,
@@ -172,6 +173,8 @@ class SegmentResult(BaseModel):
     prompt: str
     output: Any
     completion: Optional[Any] = Field(default=None, exclude=False)
+    action: Optional[str] = Field(default=None, description="Action type (e.g., 'pick', 'bool', 'int')")
+    options: Optional[List[str]] = Field(default=None, description="Valid options for pick-type actions")
 
 
 class ChatterResult(BaseModel):
@@ -291,7 +294,11 @@ async def process_single_segment_(
 
         # Store the completion in both our final results and accumulated context.
         results[key] = SegmentResult(
-            output=res, completion=completion_obj, prompt=rendered_prompt
+            output=res,
+            completion=completion_obj,
+            prompt=rendered_prompt,
+            action=prompt_part.action_type,
+            options=prompt_part.options if prompt_part.options else None,
         )
 
         accumulated_context[key] = res
