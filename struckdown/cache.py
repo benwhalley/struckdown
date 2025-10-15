@@ -1,16 +1,26 @@
 """
 Caching utilities for struckdown using joblib.Memory.
 
-Cache can be controlled via STRUCKDOWN_CACHE environment variable:
+Cache can be controlled via environment variables:
+
+STRUCKDOWN_CACHE:
 - Default: ~/.struckdown/cache
 - Disable: Set to "0", "false", or empty string
 - Custom location: Set to any valid directory path
+
+STRUCKDOWN_CACHE_SIZE:
+- Default: 10240 (MB) = 10 GB
+- Set to desired cache size limit in megabytes
+- Cache is reduced to this size when the module is loaded (keeps most recently accessed items)
+- NOTE: Cache can grow beyond this limit during runtime; size limit is only enforced at module load
+- Set to 0 for unlimited cache (not recommended)
 """
 
 import hashlib
 import logging
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -36,6 +46,23 @@ def get_cache_dir() -> Optional[Path]:
     return Path(cache_setting).expanduser()
 
 
+def get_cache_size_limit() -> Optional[int]:
+    """
+    Get the cache size limit in bytes from environment variable.
+
+    Returns None for unlimited cache, or bytes limit for LRU eviction.
+    Default: 10240 MB (10 GB)
+    """
+    size_mb = env_config("STRUCKDOWN_CACHE_SIZE", default=10240, cast=int)
+
+    # 0 means unlimited
+    if size_mb == 0:
+        return None
+
+    # Convert MB to bytes
+    return size_mb * 1024 * 1024
+
+
 def hash_return_type(return_type: Any) -> str:
     """
     Create a stable hash for a return_type (Pydantic model or callable).
@@ -58,21 +85,48 @@ def hash_return_type(return_type: Any) -> str:
 
 # Initialize the Memory object
 cache_dir = get_cache_dir()
+cache_size_limit = get_cache_size_limit()
 memory = None
+
+def _reduce_cache_size_async(memory_obj, size_limit):
+    """Reduce cache size in a background thread to avoid blocking module import."""
+    try:
+        memory_obj.reduce_size(bytes_limit=size_limit)
+        logger.info(f"Cache size reduced to {size_limit / (1024**3):.1f} GB limit")
+    except Exception as e:
+        logger.warning(f"Failed to reduce cache size: {e}")
+
 
 if cache_dir is not None:
     try:
-        # Try to create the cache directory
         cache_dir.mkdir(parents=True, exist_ok=True)
         memory = Memory(location=str(cache_dir), verbose=0)
+        if cache_size_limit:
+            # Reduce cache to fit within size limit in background thread
+            thread = threading.Thread(
+                target=_reduce_cache_size_async,
+                args=(memory, cache_size_limit),
+                daemon=True
+            )
+            thread.start()
+            logger.info(f"Cache initialized at {cache_dir} with {cache_size_limit / (1024**3):.1f} GB limit (cleanup in progress)")
+        else:
+            logger.info(f"Cache initialized at {cache_dir} with no size limit")
     except (PermissionError, OSError) as e:
-        # If we can't access the configured cache dir, try local fallback
+        logger.warning("Failed to create cache directory at ~/.struckdown/cache trying local directory cacheing.")
         try:
             fallback_dir = Path(".struckdown/cache")
             fallback_dir.mkdir(parents=True, exist_ok=True)
             memory = Memory(location=str(fallback_dir), verbose=0)
+            if cache_size_limit:
+                thread = threading.Thread(
+                    target=_reduce_cache_size_async,
+                    args=(memory, cache_size_limit),
+                    daemon=True
+                )
+                thread.start()
         except (PermissionError, OSError):
-            # If both fail, disable caching
+            logger.warning("Failed to create local cache directory .struckdown/cache. Caching is disabled.")
             memory = Memory(location=None, verbose=0)
 else:
     # Caching disabled - use a no-op Memory object

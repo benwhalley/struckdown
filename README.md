@@ -32,6 +32,37 @@ export LLM_API_BASE=...
 export DEFAULT_LLM="litellm/gpt-4.1-mini"
 ```
 
+## Cache Configuration
+
+Struckdown caches LLM responses to disk to save costs and improve performance. The cache can be configured via environment variables:
+
+### `STRUCKDOWN_CACHE`
+Controls the cache directory location:
+- **Default**: `~/.struckdown/cache`
+- **Disable caching**: Set to `"0"`, `"false"`, or empty string
+- **Custom location**: Set to any valid directory path
+
+Example:
+```bash
+export STRUCKDOWN_CACHE="~/my-project/.cache"  # Use custom location
+export STRUCKDOWN_CACHE="0"                     # Disable caching
+```
+
+### `STRUCKDOWN_CACHE_SIZE`
+Controls the maximum cache size in **megabytes**:
+- **Default**: `10240` (10 GB)
+- **Unlimited**: Set to `0` (not recommended for production)
+- When the limit is exceeded, the oldest cached items are automatically evicted (LRU policy)
+
+Example:
+```bash
+export STRUCKDOWN_CACHE_SIZE=20480  # 20 GB limit
+export STRUCKDOWN_CACHE_SIZE=1024   # 1 GB limit
+export STRUCKDOWN_CACHE_SIZE=0      # Unlimited (use with caution)
+```
+
+**Note**: The cache is shared across all processes that use struckdown. If you're running multiple applications (e.g., Celery workers, web servers), they will all use the same cache directory and size limit.
+
 Test the setup by running a struckdown prompt:
 
 ```

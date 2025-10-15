@@ -1,0 +1,66 @@
+# Number Extraction Examples
+
+This example demonstrates the `number` response type in Struckdown.
+The `number` type can extract both integers and floats, with optional min/max constraints.
+
+## Example 1: Extract a simple integer
+The answer to life, the universe, and everything is 42 [[number:answer]]
+
+## Example 2: Extract a float (price)
+The item costs $19.99 [[number:price]]
+
+## Example 3: Extract with minimum constraint
+Your test score is 85 out of 100 [[number:score|min=0]]
+
+## Example 4: Extract with maximum constraint
+Progress: 75% complete [[number:progress|max=100]]
+
+## Example 5: Extract with min and max constraints (range)
+Customer rating: 4.5 out of 5 stars [[number:rating|min=0,max=5]]
+
+## Example 6: Extract negative numbers
+Current temperature: -12.5 degrees Celsius [[number:temperature]]
+
+## Example 7: Extract multiple numbers (list)
+Dimensions: 10.5 x 20 x 15.75 inches [[number*:dimensions]]
+
+## Example 8: Extract list with quantifier (exactly 3 values)
+RGB color values: 255, 128, 64 [[number{3}:rgb]]
+
+## Example 9: Extract list with constraints
+Test scores: 85, 92, 78, 95 [[number*:scores|min=0,max=100]]
+
+## Example 10: Extract 2-5 numbers with range constraint
+Product ratings: 4.5, 3.8, 4.9, 4.2 [[number{2,5}:ratings|min=0,max=5]]
+
+## Example 11: Practical - Financial data
+Q1 Revenue: $1,234,567.89
+Q2 Revenue: $1,456,789.01
+Q3 Revenue: $1,678,901.23
+
+Extract quarterly revenues [[number*:quarterly_revenues]]
+
+## Example 12: Practical - Scientific measurements
+Experimental readings: 0.0015, 0.0018, 0.0021, 0.0019 grams [[number*:readings]]
+
+## Example 13: Practical - Sports statistics
+Player scored 23 points, 8 rebounds, and 5 assists [[number{3}:stats]]
+
+## Example 14: Optional number (may not be present)
+No numeric data available [[number:optional_value]]
+This should return null/None
+
+## Example 15: Zero is a valid number
+Account balance: $0.00 [[number:balance]]
+
+## Example 16: Required flag - strict validation
+Your age: 25 [[number:age|min=0,max=120,required]]
+This will raise an error if age is missing or out of range
+
+## Example 17: Without required - lenient behavior
+Optional discount: 5% off [[number:discount|min=0,max=100]]
+Returns None if no discount found or if out of range
+
+## Example 18: Required with list
+Exam scores are mandatory: 85, 92, 78 [[number*:scores|min=0,max=100,required]]
+All scores must be present and within range

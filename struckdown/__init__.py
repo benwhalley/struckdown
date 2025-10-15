@@ -19,6 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from struckdown.cache import clear_cache, memory
 from struckdown.parsing import parser
 from struckdown.return_type_models import ACTION_LOOKUP
+from struckdown.temporal_patterns import expand_temporal_pattern
+from struckdown.number_validation import parse_number_options, validate_number_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +184,10 @@ class ChatterResult(BaseModel):
         default="chatter", description="Discriminator field for union serialization"
     )
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
+    interim_results: Dict[str, List[SegmentResult]] = Field(
+        default_factory=dict,
+        description="Intermediate LLM calls and processing steps for multi-stage extractions (e.g., pattern expansion)"
+    )
 
     def __str__(self):
         return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
@@ -229,10 +235,34 @@ async def process_single_segment_(
     This is used by both single-segment prompts and as a building block
     for parallel processing.
     """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     results = ChatterResult()
     prompt_parts = []
     accumulated_context = context.copy()
+
+    # Inject temporal context for date/time extractions
+    # Check if any prompt parts use temporal response types
+    uses_temporal_types = any(
+        prompt_part.action_type in ["date", "datetime", "time", "duration"]
+        for prompt_part in segment.values()
+    )
+
+    if uses_temporal_types:
+        # Get current datetime with timezone
+        try:
+            # Try to get local timezone
+            current_dt = datetime.now().astimezone()
+        except Exception:
+            # Fallback to UTC if timezone detection fails
+            current_dt = datetime.now(ZoneInfo("UTC"))
+
+        # Add temporal context that won't conflict with user variables
+        accumulated_context["_current_date"] = current_dt.date().isoformat()
+        accumulated_context["_current_time"] = current_dt.time().isoformat()
+        accumulated_context["_current_datetime"] = current_dt.isoformat()
+        accumulated_context["_current_timezone"] = str(current_dt.tzinfo)
 
     # Extract shared_header from first prompt_part (all parts in segment share same header)
     shared_header = ""
@@ -258,9 +288,16 @@ async def process_single_segment_(
         except Exception as e:
             logger.error(f"Error building segment prompt: {prompt_parts}\n{e}")
 
+        # Add temporal context hint if this is a temporal extraction
+        temporal_hint = ""
+        if prompt_part.action_type in ["date", "datetime", "time", "duration", "date_rule"]:
+            temporal_hint = f"\n\n--- TEMPORAL CONTEXT (for resolving relative references only) ---\nUse this ONLY to resolve relative temporal expressions like 'tomorrow', 'next week', 'in 3 days', etc.\nDO NOT return these values as your answer. Extract temporal information from the INPUT TEXT above.\nReturn null if no temporal information can be found or interpreted in the input text.\n\nCurrent Date: {accumulated_context.get('_current_date', 'N/A')}\nCurrent Time: {accumulated_context.get('_current_time', 'N/A')}\nTimezone: {accumulated_context.get('_current_timezone', 'N/A')}\n--- END CONTEXT ---"
+
         # Render the prompt template.
         template = Template(
-            segment_prompt + "\nAlways use the tools/JSON response.\n\n```json\n",
+            segment_prompt
+            + temporal_hint
+            + "\nAlways use the tools/JSON response.\n\n```json\n",
             undefined=StrictUndefined,
         )
         rendered_prompt = template.render(**accumulated_context)
@@ -270,8 +307,13 @@ async def process_single_segment_(
 
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
-            # Pass both options and quantifier to factory functions (like selection_response_model)
-            rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
+            # Factory functions: all now support both options and quantifier
+            if prompt_part.action_type in ["date", "datetime", "time", "duration", "number"]:
+                # Temporal and numeric types use both options (for constraints/flags) and quantifier (for lists)
+                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
+            else:
+                # Other factory functions like pick also use both
+                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
         else:
             rt = prompt_part.return_type
 
@@ -287,24 +329,82 @@ async def process_single_segment_(
             abandon_on_cancel=True,
         )
 
-        # Only extract .response field if it exists and is not None
-        # otherwise just return the object
-        if hasattr(res, "response") and res.response is not None:
-            res = res.response
+        # Extract .response field if it exists (even if None)
+        # For temporal types, we need to check the actual response value
+        if hasattr(res, "response"):
+            extracted_value = res.response
+        else:
+            extracted_value = res
+
+        # Handle date/datetime pattern expansion via RRULE
+        if prompt_part.action_type in ["date", "datetime"]:
+            pattern_string = None
+            is_single_value = not prompt_part.quantifier
+
+            # Check if we have a pattern string
+            if is_single_value:
+                # For single values, check if result is a string
+                if isinstance(extracted_value, str):
+                    pattern_string = extracted_value
+            else:
+                # For lists, check if first element is a string
+                if isinstance(extracted_value, list) and len(extracted_value) > 0:
+                    if isinstance(extracted_value[0], str):
+                        pattern_string = extracted_value[0]
+
+            if pattern_string:
+                # Use the extracted function to handle pattern expansion
+                extracted_value, interim_steps = await expand_temporal_pattern(
+                    pattern_string=pattern_string,
+                    action_type=prompt_part.action_type,
+                    is_single_value=is_single_value,
+                    quantifier=prompt_part.quantifier,
+                    llm=llm,
+                    credentials=credentials,
+                    accumulated_context=accumulated_context,
+                )
+                # Store interim steps in results
+                if interim_steps:
+                    if key not in results.interim_results:
+                        results.interim_results[key] = []
+                    results.interim_results[key].extend(interim_steps)
+
+        # Validate required temporal fields (only applies to single values, not lists)
+        # For lists, quantifier min_length already handles validation
+        if prompt_part.action_type in ["date", "datetime", "time", "duration"]:
+            if not prompt_part.quantifier:  # Only validate single values
+                is_required = prompt_part.options and "required" in prompt_part.options
+                if is_required and extracted_value is None:
+                    raise ValueError(
+                        f"Required temporal field '{key}' (type: {prompt_part.action_type}) "
+                        f"could not be extracted from the input text. "
+                        f"Please ensure the input contains valid {prompt_part.action_type} information."
+                    )
+
+        # Validate numeric fields with min/max constraints
+        if prompt_part.action_type == "number":
+            min_val, max_val, is_required = parse_number_options(prompt_part.options)
+            extracted_value = validate_number_constraints(
+                extracted_value,
+                field_name=key,
+                min_val=min_val,
+                max_val=max_val,
+                is_required=is_required,
+            )
 
         # Store the completion in both our final results and accumulated context.
         results[key] = SegmentResult(
-            output=res,
+            output=extracted_value,
             completion=completion_obj,
             prompt=rendered_prompt,
             action=prompt_part.action_type,
             options=prompt_part.options if prompt_part.options else None,
         )
 
-        accumulated_context[key] = res
+        accumulated_context[key] = extracted_value
 
         # For this segment, include the result in the prompt parts.
-        prompt_parts.append(res)
+        prompt_parts.append(extracted_value)
 
     return results
 
@@ -460,6 +560,11 @@ async def chatter_async(
         sid = f"segment_{i}"
         result = segment_results[sid]
         final.update(result.results)
+        # Merge interim_results from this segment
+        for key, interim_steps in result.interim_results.items():
+            if key not in final.interim_results:
+                final.interim_results[key] = []
+            final.interim_results[key].extend(interim_steps)
 
     logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
     return final

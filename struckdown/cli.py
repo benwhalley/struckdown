@@ -21,10 +21,15 @@ def run(
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
+    
+    verbose: bool = typer.Option(False, help="Print the full ChatterResult object"),
 ):
     """
     Run the chatter pipeline from the command line.
     """
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     prompt_str = " ".join(prompt)  # Join tokens into single prompt
     credentials = LLMCredentials()
 
@@ -42,7 +47,7 @@ def run(
     if show_context:
         typer.echo("\nFinal context:")
         typer.echo(result.outputs)
-
+    
 
 if __name__ == "__main__":
     app()
