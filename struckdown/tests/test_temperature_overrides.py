@@ -18,34 +18,34 @@ class TemperatureDefaultsTestCase(unittest.TestCase):
 
     def test_default_response_temperature(self):
         """DefaultResponse should have temperature 0.7"""
-        self.assertEqual(DefaultResponse._llm_config.temperature, 0.7)
+        self.assertEqual(DefaultResponse.llm_config.temperature, 0.7)
 
     def test_extract_response_temperature(self):
         """ExtractedResponse should have temperature 0.0 for deterministic extraction"""
-        self.assertEqual(ExtractedResponse._llm_config.temperature, 0.0)
+        self.assertEqual(ExtractedResponse.llm_config.temperature, 0.0)
 
     def test_poem_response_temperature(self):
         """PoeticalResponse should have temperature 1.5 for high creativity"""
-        self.assertEqual(PoeticalResponse._llm_config.temperature, 1.5)
+        self.assertEqual(PoeticalResponse.llm_config.temperature, 1.5)
 
     def test_integer_response_temperature(self):
         """IntegerResponse should have temperature 0.0 for deterministic numbers"""
-        self.assertEqual(IntegerResponse._llm_config.temperature, 0.0)
+        self.assertEqual(IntegerResponse.llm_config.temperature, 0.0)
 
     def test_selection_model_temperature(self):
         """Selection model should have temperature 0.0 for deterministic picking"""
         model = selection_response_model(["option1", "option2"])
-        self.assertEqual(model._llm_config.temperature, 0.0)
+        self.assertEqual(model.llm_config.temperature, 0.0)
 
     def test_number_model_temperature(self):
         """Number model should have temperature 0.1 for flexible extraction"""
         model = number_response_model()
-        self.assertEqual(model._llm_config.temperature, 0.1)
+        self.assertEqual(model.llm_config.temperature, 0.1)
 
     def test_date_model_temperature(self):
         """Date model should have temperature 0.1 for flexible temporal extraction"""
         model = date_response_model()
-        self.assertEqual(model._llm_config.temperature, 0.1)
+        self.assertEqual(model.llm_config.temperature, 0.1)
 
 
 class OptionParsingTestCase(unittest.TestCase):

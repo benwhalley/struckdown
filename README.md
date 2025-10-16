@@ -138,6 +138,116 @@ You can test prompts with the chat command:
 ```
 
 
+# CLI Usage
+
+## Commands
+
+**`sd chat`** - Run a single prompt interactively:
+```bash
+sd chat "Tell me a joke: [[joke]]"
+```
+
+**`sd batch`** - Process multiple inputs in batch mode:
+```bash
+# From files
+sd batch inputs/*.txt "Extract [[name]]" -o results.json
+
+# From stdin
+cat data.txt | sd batch "Summarize: [[summary]]"
+
+# Chain commands
+sd batch *.txt "Purpose: [[purpose]]" | sd batch "Similar on Amazon: [[product]]" -k
+```
+
+## Global Options
+
+**`--version`** / **`-v`** - Show version and exit:
+```bash
+sd --version
+# Output: 0.1.6
+```
+
+**`--help`** - Show help for any command:
+```bash
+sd --help
+sd batch --help
+```
+
+## Batch Options
+
+**`-o` / `--output`** - Output file (format auto-detected from extension):
+```bash
+sd batch *.txt "[[name]]" -o results.json   # JSON
+sd batch *.txt "[[name]]" -o results.csv    # CSV
+sd batch *.txt "[[name]]" -o results.xlsx   # Excel
+```
+
+**`-p` / `--prompt`** - Load prompt from file:
+```bash
+sd batch *.txt -p prompt.sd -o results.json
+```
+
+**`-k` / `--keep-inputs`** - Include input fields in output:
+```bash
+sd batch *.txt "[[summary]]" -k
+# Output includes: filename, input, content, basename + extracted fields
+```
+
+**`-q` / `--quiet`** - Suppress progress output:
+```bash
+sd batch *.txt "[[name]]" -o results.json --quiet
+```
+
+**`--verbose`** - Enable debug logging:
+```bash
+sd batch *.txt "[[name]]" --verbose
+```
+
+## Progress Bars
+
+By default, `sd batch` shows a progress bar with ETA during processing:
+
+```bash
+$ sd batch inputs/*.txt "[[summary]]" -o results.json
+Processing ⠋ ━━━━━━━━━━━━━━━━━━━━━━ 47/100 47% 0:00:23
+```
+
+**Progress bar behavior:**
+- **Shown by default** when stderr is a TTY (terminal)
+- **Auto-disabled** when piping or redirecting stderr
+- **Suppressed with `--quiet`** flag
+
+```bash
+# Progress shown (terminal)
+sd batch *.txt "[[name]]" -o out.json
+
+# Progress auto-hidden (piped)
+sd batch *.txt "[[name]]" | jq .
+
+# Progress suppressed (explicit)
+sd batch *.txt "[[name]]" -o out.json --quiet
+```
+
+## Output Streams
+
+Following CLI best practices:
+
+- **stdout** = Primary output (results, `--version`, `--help`)
+- **stderr** = Diagnostics (errors, progress bars, verbose logs)
+
+This ensures clean piping and redirection:
+```bash
+# Capture results, ignore progress
+sd batch *.txt "[[name]]" > results.json
+
+# Capture results, save errors separately
+sd batch *.txt "[[name]]" > results.json 2> errors.log
+
+# Process with jq (progress won't pollute output)
+sd batch *.txt "[[name]]" | jq '.[] | .name'
+```
+
+
 # SETUP
 
 Install UV: https://docs.astral.sh/uv/getting-started/installation

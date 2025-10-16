@@ -335,8 +335,8 @@ async def process_single_segment_(
 
         # Build LLM kwargs: start with model defaults, then apply slot-specific overrides
         # Start with the response model's LLM config defaults
-        if hasattr(rt, '_llm_config') and isinstance(rt._llm_config, LLMConfig):
-            llm_config = rt._llm_config.model_copy()
+        if hasattr(rt, 'llm_config') and isinstance(rt.llm_config, LLMConfig):
+            llm_config = rt.llm_config.model_copy()
         else:
             llm_config = LLMConfig()  # Fall back to base defaults
 

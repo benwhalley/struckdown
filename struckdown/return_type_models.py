@@ -16,10 +16,10 @@ class LLMConfig(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     model: Optional[str] = None
     max_tokens: Optional[int] = Field(default=None, gt=0)
-    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    top_k: Optional[int] = Field(default=None, gt=0)
-    frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
-    presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
+    # top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # top_k: Optional[int] = Field(default=None, gt=0)
+    # frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
+    # presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
 
     model_config = ConfigDict(extra='forbid')  # Reject unknown parameters
 
@@ -27,17 +27,13 @@ class LLMConfig(BaseModel):
 class ResponseModel(BaseModel):
     """Base class for all Struckdown response models with LLM parameter defaults.
 
-    Subclasses should set _llm_config to customize LLM call parameters.
+    Subclasses should set llm_config to customize LLM call parameters.
     """
 
     # Class-level config for LLM parameters (not part of response schema)
     # Subclasses override this to set their own defaults
-    _llm_config: LLMConfig = LLMConfig(temperature=0.7, model=None)
+    llm_config: LLMConfig = LLMConfig(model=None)
 
-
-# Note: We rely on Pydantic's native type coercion and instructor's type handling
-# Custom validators are not needed - Pydantic converts ISO strings to date/datetime/time automatically
-# and instructor ensures the LLM returns properly typed JSON that matches the schema
 
 
 class DefaultResponse(ResponseModel):
@@ -48,7 +44,7 @@ class DefaultResponse(ResponseModel):
         description="An intelligent completion that responds to the context in a concise manner.",
     )
 
-DefaultResponse._llm_config = LLMConfig(temperature=0.7, model=None)
+DefaultResponse.llm_config = LLMConfig(temperature=0.7, model=None)
 
 
 class ExtractedResponse(ResponseModel):
@@ -59,7 +55,7 @@ class ExtractedResponse(ResponseModel):
         description="Text extracted from the context verbatim. Copy text exactly as it appears in the context. Never paraphrase or summarize. Never include any additional information.",
     )
 
-ExtractedResponse._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic extraction
+ExtractedResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # deterministic extraction
 
 
 class SpokenResponse(ResponseModel):
@@ -70,7 +66,7 @@ class SpokenResponse(ResponseModel):
         description="A spoken response, continuing the previous conversation. Don't label the speaker or use quotes, just produce the words spoken.",
     )
 
-SpokenResponse._llm_config = LLMConfig(temperature=0.8, model=None)  # More natural variation
+SpokenResponse.llm_config = LLMConfig(temperature=0.8, model=None)  # More natural variation
 
 
 class InternalThoughtsResponse(ResponseModel):
@@ -81,7 +77,7 @@ class InternalThoughtsResponse(ResponseModel):
         description="Your thoughts. Never a spoken response, yet -- just careful step by step thinking, planning and reasoning, written in super-concise note form. Always on topic and relevant to the task at hand.",
     )
 
-InternalThoughtsResponse._llm_config = LLMConfig(temperature=0.5, model=None)  # Moderate creativity for reasoning
+InternalThoughtsResponse.llm_config = LLMConfig(temperature=0.5, model=None)  # Moderate creativity for reasoning
 
 
 class PoeticalResponse(ResponseModel):
@@ -92,7 +88,7 @@ class PoeticalResponse(ResponseModel):
         description="A response, continuing the previous conversation but always in POETRICAL form - often a haiku.",
     )
 
-PoeticalResponse._llm_config = LLMConfig(temperature=1.5, model=None)  # High creativity
+PoeticalResponse.llm_config = LLMConfig(temperature=1.5, model=None)  # High creativity
 
 
 class ConversationSegment(BaseModel):
@@ -109,7 +105,7 @@ class ChunkedConversationResponse(ResponseModel):
         description="Returns a list of ConversationSegments, each with a description",
     )
 
-ChunkedConversationResponse._llm_config = LLMConfig(temperature=0.7, model=None)
+ChunkedConversationResponse.llm_config = LLMConfig(temperature=0.7, model=None)
 
 
 def selection_response_model(valid_options, quantifier=None, required_prefix=False):
@@ -194,7 +190,7 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
             ),
             __module__=__name__,
         )
-        model._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
+        model.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
         return model
     else:
         # Single selection mode
@@ -226,7 +222,7 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
                 ),
                 __module__=__name__,
             )
-        model._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
+        model.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
         return model
 
 
@@ -238,7 +234,7 @@ class BooleanResponse(ResponseModel):
         description="Returns true or false only, based on the question/statement posed.",
     )
 
-BooleanResponse._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic boolean
+BooleanResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic boolean
 
 
 class IntegerResponse(ResponseModel):
@@ -249,7 +245,7 @@ class IntegerResponse(ResponseModel):
         description="Valid integers only.",
     )
 
-IntegerResponse._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic integers
+IntegerResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic integers
 
 
 def number_response_model(options=None, quantifier=None, required_prefix=False):
@@ -335,7 +331,7 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
             ),
             __module__=__name__,
         )
-        model._llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
+        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
         return model
     else:
         # Single extraction mode
@@ -371,7 +367,7 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
                 ),
                 __module__=__name__,
             )
-        model._llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
+        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
         return model
 
 
@@ -418,7 +414,7 @@ class DateRuleResponse(ResponseModel):
         description="Position in set (e.g., [1] for 'first', [-1] for 'last')"
     )
 
-DateRuleResponse._llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic rule parsing
+DateRuleResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic rule parsing
 
 
 def temporal_response_model(field_type, type_name, description, required=False, quantifier=None, required_prefix=False):
@@ -487,7 +483,7 @@ When in doubt, if the pattern involves repetition or requires calculating multip
             ),
             __module__=__name__,
         )
-        model._llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
         return model
     else:
         # Single extraction mode
@@ -518,7 +514,7 @@ The pattern will be expanded automatically and the first occurrence will be used
                 ),
                 __module__=__name__,
             )
-            model._llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+            model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
             return model
         else:
             # Optional field: accept field_type, str, or None
@@ -547,7 +543,7 @@ The pattern will be expanded automatically and the first occurrence will be used
                 ),
                 __module__=__name__,
             )
-            model._llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+            model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
             return model
 
 
