@@ -7,8 +7,17 @@ from typing import List, Optional
 
 import typer
 from decouple import config as env_config
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeRemainingColumn,
+)
+from rich.console import Console
 
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, __version__
 from .output_formatters import write_output
 
 from jinja2 import Environment, meta
@@ -16,6 +25,28 @@ from jinja2 import Environment, meta
 app = typer.Typer(help="struckdown: structured conversations with language models")
 
 logger = logging.getLogger(__name__)
+
+
+def version_callback(value: bool):
+    """Print version and exit."""
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help="Show version and exit",
+        callback=version_callback,
+        is_eager=True,
+    )
+):
+    """struckdown: structured conversations with language models"""
+    pass
 
 
 def auto_prepend_input(prompt: str) -> str:
@@ -123,6 +154,7 @@ def batch(
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
     verbose: bool = typer.Option(False, help="Enable debug logging"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
 ):
     """
     Process multiple inputs in batch mode.
@@ -217,7 +249,15 @@ def batch(
     results = []
     errors = []
 
-    for i, input_item in enumerate(input_data):
+    # Determine if we should show progress bar
+    # Show progress if: not quiet AND stderr is a TTY (not redirected)
+    show_progress = not quiet and sys.stderr.isatty()
+
+    # Create console for progress output (always to stderr)
+    console = Console(stderr=True)
+
+    # Define the processing function to avoid code duplication
+    def process_item(i, input_item, progress_task=None, progress_obj=None):
         try:
             # Execute chatter with the input context
             result = chatter(
@@ -244,7 +284,11 @@ def batch(
             results.append(output_item)
 
             if verbose:
-                typer.echo(f"Processed item {i+1}/{len(input_data)}: {output_item.get('filename', f'item_{i}')}", err=True)
+                # Use console for verbose output to ensure it doesn't conflict with progress bar
+                console.print(f"Processed item {i+1}/{len(input_data)}: {output_item.get('filename', f'item_{i}')}")
+
+            if progress_obj and progress_task is not None:
+                progress_obj.update(progress_task, advance=1)
 
         except Exception as e:
             error_msg = f"Error processing item {i+1}: {e}"
@@ -252,7 +296,28 @@ def batch(
             errors.append(error_msg)
             if verbose:
                 import traceback
-                typer.echo(traceback.format_exc(), err=True)
+                console.print(traceback.format_exc())
+
+            if progress_obj and progress_task is not None:
+                progress_obj.update(progress_task, advance=1)
+
+    # Process with or without progress bar
+    if show_progress:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Processing", total=len(input_data))
+            for i, input_item in enumerate(input_data):
+                process_item(i, input_item, task, progress)
+    else:
+        # No progress bar, just process silently
+        for i, input_item in enumerate(input_data):
+            process_item(i, input_item)
 
     # Report errors if any
     if errors:

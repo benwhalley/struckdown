@@ -23,6 +23,14 @@ from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
 from struckdown.number_validation import parse_number_options, validate_number_constraints
 
+# Version - reads from package metadata (set in pyproject.toml)
+try:
+    from importlib.metadata import version, PackageNotFoundError
+    __version__ = version("struckdown")
+except PackageNotFoundError:
+    # Package is not installed (e.g., running from source in dev mode)
+    __version__ = "0.0.0+dev"
+
 # Suppress Pydantic serialization warnings from OpenAI/Anthropic SDK completion objects
 # These occur when serializing completion metadata and are benign
 warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")

@@ -1,23 +1,31 @@
 
-# struckdown:  markdown based syntax for structured conversations with language models
+# struckdown:  markdown-like syntax for structured conversations with language models
 
-This project provides a markdown-based language for templated, multi-part LLM calls.
-
+Markdown-based syntax for structured LLM use.
 
 # TLDR;
 
 Imagine you have some product data:
 
-```
+```bash
 % ls *.txt
 butter_robot.txt
 meeseeks_box.txt
 microverse_battery.txt
 plumbus.txt
 portal_gun.txt
+
+% tail *.txt
+==> plumbus.txt <==
+First, they take the dinglebop and smooth it out with a bunch of schleem. The schleem is then repurposed for later batches. They take the dinglebop and push it through the grumbo, where the fleeb is rubbed against it. It's important that the fleeb is rubbed, because the fleeb has all of the fleeb juice. Then a Shlami shows up and he rubs it and spits on it. They cut the fleeb. There are several hizzards in the way.
+The blamfs rub against the chumbles. And the ploobis and grumbo are shaved away. That leaves you with a regular old Plumbus!
+Price: 6½ brapples
+Dimensions: Standard Plumbus sizing
+Weight: 2.3 greebles
+Made in: Dimension C-137
 ```
 
-They don't make much sense, but you see if the LLM knows:
+The texts don't make much sense, but you check if the LLM knows better:
 
 ```
 % sd batch *.txt "Purpose, <5 words: [[purpose]]"
@@ -135,7 +143,7 @@ You can test prompts with the chat command:
 Install UV: https://docs.astral.sh/uv/getting-started/installation
 
 ```
-uv tool install struckdown
+uv tool install https://github.com/benwhalley/struckdown/
 
 # or 
 uv pip install git+https://github.com/benwhalley/struckdown/  
