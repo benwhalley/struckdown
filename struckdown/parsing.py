@@ -146,8 +146,9 @@ class MindframeTransformer(Transformer):
                     try:
                         # Create a minimal config with just this parameter to validate it
                         test_config = {key: value}
-                        LLMConfig.model_validate(test_config, strict=False)
-                        kwargs_dict[key] = value
+                        validated = LLMConfig.model_validate(test_config, strict=False)
+                        # Use the validated (type-converted) value from pydantic
+                        kwargs_dict[key] = getattr(validated, key)
                     except ValidationError as e:
                         # Extract user-friendly error message
                         error_msg = e.errors()[0]['msg'] if e.errors() else str(e)
@@ -284,13 +285,62 @@ def parser(action_lookup=ACTION_LOOKUP):
     )
 
 
+def _add_default_completion_if_needed(template: str) -> str:
+    """
+    Add [[response]] to final segment if it doesn't end with a completion placeholder.
+
+    This allows the final segment to omit the completion placeholder while maintaining
+    backward compatibility. Non-final segments are validated to ensure they have completions.
+
+    Args:
+        template: Raw template string
+
+    Returns:
+        Template with [[response]] appended to final segment if needed
+
+    Raises:
+        ValueError: If a non-final segment is missing a completion placeholder
+    """
+    SEGMENT_DELIMITER = "¡OBLIVIATE"
+
+    # Helper to check if text ends with a completion placeholder
+    def ends_with_completion(text: str) -> bool:
+        stripped = text.rstrip()
+        return stripped.endswith("]]") and "[[" in stripped
+
+    # Check if we have multiple segments
+    if SEGMENT_DELIMITER in template:
+        segments = template.split(SEGMENT_DELIMITER)
+
+        # Validate all non-final segments have completions
+        for i, segment in enumerate(segments[:-1]):
+            if not ends_with_completion(segment):
+                raise ValueError(
+                    f"Non-final segment {i+1} must end with a completion placeholder like [[variable]]. "
+                    f"Only the final segment can omit the completion placeholder."
+                )
+
+        # Add default completion to final segment if needed
+        final_segment = segments[-1]
+        if not ends_with_completion(final_segment):
+            segments[-1] = final_segment.rstrip() + "\n\n[[response]]"
+
+        return SEGMENT_DELIMITER.join(segments)
+    else:
+        # Single segment - add completion if needed
+        if not ends_with_completion(template):
+            return template.rstrip() + "\n\n[[response]]"
+        return template
+
+
 def parse_syntax(syntax):
     """
-    parse_syntax("hewllo {{cruel}} [[world]]")
+    parse_syntax("hello {{cruel}} [[world]]")
 
-    extract_all_placeholders("hewllo {{cruel}} [[world]]")
+    extract_all_placeholders("hello {{cruel}} [[world]]")
     """
-    return parser().parse(syntax.strip())
+    preprocessed = _add_default_completion_if_needed(syntax)
+    return parser().parse(preprocessed.strip())
 
 
 def _format_parse_error(error_str, template_text):
@@ -316,11 +366,6 @@ def _format_parse_error(error_str, template_text):
                 context += f"\n{pointer}"
 
     # detect common error patterns and provide helpful messages
-
-    # check if template doesn't end with a completion
-    template_stripped = template_text.strip()
-    if not template_stripped.endswith("]]"):
-        return f"Template must end with a completion.{context}\n\nHint: All Mindframe templates must end with a completion block like [[variable]] or [[type:variable]]."
 
     # check for completion not at the very end
     if "[[" in template_text and template_text.strip().endswith("]]"):

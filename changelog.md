@@ -2,6 +2,11 @@
 # Changelog
 
 
+### 0.1.8 (in progress)
+
+
+
+
 ### 0.1.7
 
 - Remove chatter CLI tool (use `sd chat` instead)

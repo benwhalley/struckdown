@@ -52,7 +52,7 @@ class ExtractedResponse(ResponseModel):
 
     response: str = Field(
         ...,
-        description="Text extracted from the context verbatim. Copy text exactly as it appears in the context. Never paraphrase or summarize. Never include any additional information.",
+        description="Text extracted verbatim. Copy text exactly as it appears in the context. Never paraphrase or summarize. Never include any additional information.",
     )
 
 ExtractedResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # deterministic extraction

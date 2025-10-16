@@ -40,8 +40,9 @@ python test_examples.py
 - `[[variable]]` - Basic text completion
 - `[[type:variable]]` - Typed completion (bool, int, json)
 - `3*[[item]]` - Fixed count list
-- `2:4*[[item]]` - Range count list  
+- `2:4*[[item]]` - Range count list
 - `*[[item]]` - Unlimited list
+- **Optional in final segment** - The final segment can omit `[[placeholder]]` and it will automatically become `[[response]]`. Example: `Tell me a joke` (no placeholder needed!)
 
 ### Control Flow
 - `¡OBLIVIATE` - Memory boundary between sections

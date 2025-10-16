@@ -39,7 +39,7 @@ def main(
     version: Optional[bool] = typer.Option(
         None,
         "--version",
-        "-v",
+        "-V",
         help="Show version and exit",
         callback=version_callback,
         is_eager=True,
@@ -82,27 +82,56 @@ def auto_prepend_input(prompt: str) -> str:
 
 @app.command()
 def chat(
-    prompt: List[str] = typer.Argument(
-        ..., help="Prompt with slots, e.g. tell a joke [[joke]]"
+    prompt: Optional[List[str]] = typer.Argument(
+        None, help="Prompt with slots, e.g. tell a joke [[joke]]"
+    ),
+    prompt_file: Optional[Path] = typer.Option(
+        None,
+        "-p",
+        "--prompt-file",
+        help="Path to file containing the prompt"
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
-    verbose: bool = typer.Option(False, help="Print the full ChatterResult object"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Print the full ChatterResult object"),
 ):
     """
     Run a single chatter prompt (interactive mode).
 
-    Example:
+    Examples:
         sd chat "tell a joke [[joke]]"
+        cat prompt.sd | sd chat
+        sd chat -p prompt.sd
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
 
-    prompt_str = " ".join(prompt)
+    # Determine prompt source
+    prompt_str = None
+
+    if prompt_file:
+        # Read from prompt file
+        if not prompt_file.exists():
+            typer.echo(f"Error: Prompt file not found: {prompt_file}", err=True)
+            raise typer.Exit(1)
+        prompt_str = prompt_file.read_text(encoding="utf-8")
+    elif prompt:
+        # Use positional arguments
+        prompt_str = " ".join(prompt)
+    elif not sys.stdin.isatty():
+        # Read from stdin
+        stdin_content = sys.stdin.read()
+        if not stdin_content.strip():
+            typer.echo("Error: stdin is empty", err=True)
+            raise typer.Exit(1)
+        prompt_str = stdin_content.strip()
+    else:
+        typer.echo("Error: No prompt provided. Use a positional argument, -p/--prompt-file, or pipe to stdin.", err=True)
+        raise typer.Exit(1)
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
 
@@ -153,7 +182,7 @@ def batch(
         env_config("DEFAULT_LLM", default=None, cast=str),
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
-    verbose: bool = typer.Option(False, help="Enable debug logging"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable debug logging"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
 ):
     """

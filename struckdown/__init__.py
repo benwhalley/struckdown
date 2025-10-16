@@ -12,13 +12,13 @@ import litellm
 import openai
 from box import Box
 from decouple import config as env_config
-from instructor import from_provider
+from instructor import from_openai, Mode
 from jinja2 import StrictUndefined, Template, Undefined
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
 
 from struckdown.cache import clear_cache, memory
-from struckdown.parsing import parser
+from struckdown.parsing import parser, _add_default_completion_if_needed
 from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
 from struckdown.number_validation import parse_number_options, validate_number_constraints
@@ -86,11 +86,11 @@ class LLM(BaseModel):
         if not credentials.api_key or not credentials.base_url:
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
 
-        # reate the instructor client with credentials already set
-        client = instructor.from_provider(
-            self.model_name, api_key=credentials.api_key, base_url=credentials.base_url
-        )
-
+        # Create OpenAI-compatible instructor client (works with litellm proxies)
+        litellm.api_key=credentials.api_key
+        litellm.api_base=credentials.base_url
+        litellm.drop_params=True
+        client = instructor.from_litellm(litellm.completion)
         return client
 
 
@@ -113,11 +113,9 @@ def _call_llm_cached(
     logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
-            model="".join(model_name.split("/")[1:]),
+            model=model_name,
             response_model=return_type,
             messages=[{"role": "user", "content": prompt}],
-            # this is important! watch out though... dropping params silently, so things like temperature aren't set on GPT-5-mini
-            drop_params=True,
             **(eval(extra_kwargs_str) if extra_kwargs_str else {}),
         )
     except Exception as e:
@@ -563,9 +561,10 @@ async def chatter_async(
         undefined=KeepUndefined,
     ).render(**context)
 
-    segments = parser(action_lookup=action_lookup).parse(
-        multipart_prompt_prefilled.strip()
-    )
+    # Add default completion to final segment if needed
+    preprocessed = _add_default_completion_if_needed(multipart_prompt_prefilled)
+
+    segments = parser(action_lookup=action_lookup).parse(preprocessed.strip())
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
     if max([len(i) for i in plan]) > 1:
