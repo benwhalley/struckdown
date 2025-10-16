@@ -6,7 +6,11 @@ This validates that all example syntax is correct and demonstrates the library f
 
 import glob
 import os
+import warnings
 from pathlib import Path
+
+# Suppress Pydantic serialization warnings from OpenAI/Anthropic SDK completion objects
+warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 from struckdown import chatter
 from struckdown.parsing import extract_all_placeholders, parse_syntax

@@ -1,6 +1,7 @@
 import logging
 import re
 import traceback
+import warnings
 from collections import OrderedDict
 from types import FunctionType
 from typing import Any, Dict, List, Optional
@@ -18,9 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from struckdown.cache import clear_cache, memory
 from struckdown.parsing import parser
-from struckdown.return_type_models import ACTION_LOOKUP
+from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
 from struckdown.number_validation import parse_number_options, validate_number_constraints
+
+# Suppress Pydantic serialization warnings from OpenAI/Anthropic SDK completion objects
+# These occur when serializing completion metadata and are benign
+warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 logger = logging.getLogger(__name__)
 
@@ -307,24 +312,64 @@ async def process_single_segment_(
 
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
+            # Get required_prefix flag if available (for ! prefix support)
+            required_prefix = getattr(prompt_part, 'required_prefix', False)
+
             # Factory functions: all now support both options and quantifier
             if prompt_part.action_type in ["date", "datetime", "time", "duration", "number"]:
                 # Temporal and numeric types use both options (for constraints/flags) and quantifier (for lists)
-                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
+                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier, required_prefix)
             else:
-                # Other factory functions like pick also use both
-                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier)
+                # Other factory functions like pick also use both + required_prefix
+                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier, required_prefix)
         else:
             rt = prompt_part.return_type
+
+        # Build LLM kwargs: start with model defaults, then apply slot-specific overrides
+        # Start with the response model's LLM config defaults
+        if hasattr(rt, '_llm_config') and isinstance(rt._llm_config, LLMConfig):
+            llm_config = rt._llm_config.model_copy()
+        else:
+            llm_config = LLMConfig()  # Fall back to base defaults
+
+        # Apply slot-specific overrides from [[type:var|temperature=X,model=Y]]
+        if hasattr(prompt_part, 'llm_kwargs') and prompt_part.llm_kwargs:
+            try:
+                # Use Pydantic to validate and convert types automatically
+                llm_config = llm_config.model_copy(update=prompt_part.llm_kwargs)
+            except Exception as e:
+                logger.warning(f"Invalid LLM parameters in prompt: {e}")
+
+        # Merge with any global extra_kwargs (global kwargs take lowest priority)
+        # Only add global kwargs that aren't already set
+        if kwargs:
+            current_config = llm_config.model_dump(exclude_none=True)
+            for k, v in kwargs.items():
+                if k not in current_config:
+                    try:
+                        llm_config = llm_config.model_copy(update={k: v})
+                    except Exception:
+                        # If it's not a valid LLM config param, ignore it
+                        pass
+
+        # Convert to dict for API call, excluding None values
+        llm_kwargs = llm_config.model_dump(exclude_none=True)
+
+        # Handle model override by creating a new LLM instance if needed
+        slot_model = llm_kwargs.pop('model', None)
+        if slot_model:
+            slot_llm = LLM(model_name=slot_model)
+        else:
+            slot_llm = llm
 
         # Call the LLM via structured_chat.
         res, completion_obj = await anyio.to_thread.run_sync(
             lambda: structured_chat(
                 rendered_prompt,
                 return_type=rt,
-                llm=llm,
+                llm=slot_llm,
                 credentials=credentials,
-                extra_kwargs=kwargs,
+                extra_kwargs=llm_kwargs,
             ),
             abandon_on_cancel=True,
         )

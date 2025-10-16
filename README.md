@@ -4,81 +4,187 @@
 This project provides a markdown-based language for templated, multi-part LLM calls.
 
 
-# SETUP
+# TLDR;
 
-On OS X or linux:
+Imagine you have some product data:
+
+```
+% ls *.txt
+butter_robot.txt
+meeseeks_box.txt
+microverse_battery.txt
+plumbus.txt
+portal_gun.txt
+```
+
+They don't make much sense, but you see if the LLM knows:
+
+```
+% sd batch *.txt "Purpose, <5 words: [[purpose]]"
+[
+  {
+    "filename": "butter_robot.txt",
+    "purpose": "Pass butter, question existence."
+  },
+  {
+    "filename": "meeseeks_box.txt",
+    "purpose": "Instant help for simple tasks."
+  },
+  {
+    "filename": "microverse_battery.txt",
+    "purpose": "Infinite spaceship power source"
+  },
+  {
+    "filename": "plumbus.txt",
+    "purpose": "Purpose, <5 words: Household universal utility device."
+  },
+  {
+    "filename": "portal_gun.txt",
+    "purpose": "Purpose: Interdimensional travel device."
+  }
+]
+```
+
+
+Or 
+
+```
+% sd batch *.txt "Price: [[number:price]] Currency? [[pick:currency|schmeckles,brapples,flurbos]]"
+[
+  {
+    "filename": "butter_robot.txt",
+    "price": 18,
+    "currency": "schmeckles"
+  },
+  {
+    "filename": "meeseeks_box.txt",
+    "price": 45,
+    "currency": "schmeckles"
+  },
+  {
+    "filename": "microverse_battery.txt",
+    "price": 850,
+    "currency": "flurbos"
+  },
+  {
+    "filename": "plumbus.txt",
+    "price": 6.5,
+    "currency": "brapples"
+  },
+  {
+    "filename": "portal_gun.txt",
+    "price": 10000000,
+    "currency": "flurbos"
+  }
+]
+```
+
+
+`batch` accepts json as input, so you can even chain commands. 
+If you want to work out the next best thing to buy on Amazon, you can do this:
+
+```
+% sd batch *.txt \
+  "Purpose, <5 words: [[purpose]] Name [[name]]" | \
+  sd batch \
+    "{{name}} {{purpose}}. Most similar on amazon? Best guess, < 10 words [[product]]" -k
+[
+  {
+    "filename": "butter_robot.txt",
+    "purpose": "Pass butter, question existence.",
+    "name": "Butter-Passing Robot",
+    "product": "Rick and Morty \"Pass the Butter\" Robot Figure—Amazon search."
+  },
+  {
+    "filename": "meeseeks_box.txt",
+    "purpose": "Instant help for simple tasks.",
+    "name": "Name: Mr. Meeseeks Box\nPurpose: Instant help for simple tasks.",
+    "product": "Most similar on Amazon: \"Meeseeks Box Replica Toy\"."
+  },
+  {
+    "filename": "microverse_battery.txt",
+    "purpose": "Infinite spaceship power source",
+    "name": "MICROVERSE BATTERY",
+    "product": "Amazon closest match: \"Portable Solar Generator Power Station\"."
+  },
+  {
+    "filename": "plumbus.txt",
+    "purpose": "Purpose, <5 words: Household universal utility device.",
+    "name": "Name: Plumbus",
+    "product": "Most similar on Amazon: Multi-purpose cleaning gadget, 8-in-1 tool."
+  },
+  {
+    "filename": "portal_gun.txt",
+    "purpose": "Purpose: Interdimensional travel device.",
+    "name": "Portal Gun",
+    "product": "Rick and Morty Portal Gun Toy Replica"
+  }
+]
+```
+
+
+You can test prompts with the chat command:
+
+```
+% sd chat "Tell me a joke: [[joke]]"
+```
+
+
+# SETUP
 
 Install UV: https://docs.astral.sh/uv/getting-started/installation
 
-
-
 ```
-uv pip install llemma
-```
+uv tool install struckdown
 
-Or
-
-```
-uv pip install git+https://github.com/benwhalley/llemma/  
-uv pip install -e .
+# or 
+uv pip install git+https://github.com/benwhalley/struckdown/  
 ```
 
 
 Set environment variables:
 
 ```
-export LLM_API_KEY=...
-export LLM_API_BASE=...
+export LLM_API_KEY=... # e.g. from openai.com
+export LLM_API_BASE=... # e.g. https://api.openai.com/v1
 export DEFAULT_LLM="litellm/gpt-4.1-mini"
 ```
 
-## Cache Configuration
 
-Struckdown caches LLM responses to disk to save costs and improve performance. The cache can be configured via environment variables:
+## Cacheing
 
-### `STRUCKDOWN_CACHE`
+Struckdown caches LLM responses to disk to save costs and improve performance. 
+The cache can be configured via environment variables:
+
+
+`STRUCKDOWN_CACHE`
+
 Controls the cache directory location:
-- **Default**: `~/.struckdown/cache`
+
+- **Default**: `~/.struckdown/cache` or ~/$cwd/.struckdown/cache if that dir can't be created
 - **Disable caching**: Set to `"0"`, `"false"`, or empty string
 - **Custom location**: Set to any valid directory path
 
-Example:
-```bash
-export STRUCKDOWN_CACHE="~/my-project/.cache"  # Use custom location
-export STRUCKDOWN_CACHE="0"                     # Disable caching
-```
 
-### `STRUCKDOWN_CACHE_SIZE`
+
+`STRUCKDOWN_CACHE_SIZE`
+
 Controls the maximum cache size in **megabytes**:
 - **Default**: `10240` (10 GB)
 - **Unlimited**: Set to `0` (not recommended for production)
 - When the limit is exceeded, the oldest cached items are automatically evicted (LRU policy)
 
-Example:
-```bash
-export STRUCKDOWN_CACHE_SIZE=20480  # 20 GB limit
-export STRUCKDOWN_CACHE_SIZE=1024   # 1 GB limit
-export STRUCKDOWN_CACHE_SIZE=0      # Unlimited (use with caution)
-```
 
-**Note**: The cache is shared across all processes that use struckdown. If you're running multiple applications (e.g., Celery workers, web servers), they will all use the same cache directory and size limit.
+Note: The cache is shared across all processes that use struckdown. 
 
-Test the setup by running a struckdown prompt:
-
-```
-uv run chatter "Tell me a joke: [[joke]]. Was it funny? [[bool:funny]]"
-```
 
 
 
 # Detailed syntax guide
 
-Prompts for steps and judgements are written in a simple markdown format with extensions to specify completion types.
+Prompts for steps and judgements are written in a "markdownish" format with extensions to specify completion types.
 
 As part of a single prompt template, we can ask the AI to respond multiple times. Each new response forms part of the context for subsequent prompts.
-
----
-
 
 Each response is specifed by a `[[RESPONSE]]` tag:
 
@@ -92,7 +198,7 @@ Presently `think` and `speak` are supported, but more may be added:
 
 A `think` response will be more reflective, longer, and can include notes/plans.
 
-The `speak` response will be more direct, and the AI is requested to use spoken idioms. (These different styles of responses are achieved by adding hints to the call to the AI model.)
+The `speak` response will be more direct, and the AI is requested to use spoken idioms. These different styles of responses are achieved by adding hints to the call to the AI model, and changing parameters like temperature.
 
 
 #### Classifications
@@ -106,15 +212,12 @@ Two prefixes are supported to allow for classifications:
 And
 
 ```
-[[pick:response|option1, option2, option3, default=null]]
+choose an option [[pick:color|red,green,blue]]
 ```
 
 
 - `pick` guarantees that the response is one of the options provided, after the `|` character, separated by commas.
 - `boolean` guarantees that the response is either True or False.
-
-These are useful when making classifications, or for Judgements that determine whether a
-step transition should take place.
 
 
 A multiline version of `pick` is also allowed:
@@ -126,20 +229,6 @@ A multiline version of `pick` is also allowed:
     option3
     default=null]]
 ```
-
-
-
-<!---
-TODO: Implement this
-
-Finally, advanced users can pass extra parameters to `[[response]]` slots, using the following syntax:
-
-```
-[[think:planning]]{max_tokens=50}
-
-[[bool:is_upset]]{allow_null=true}
-```
---->
 
 
 #### Splitting prompts and saving tokens with `OBLIVIATE!`

@@ -18,8 +18,10 @@ obliviate: "¡OBLIVIATE" -> obliviate
 // Single: [[type:var|opt1,opt2]]
 single_completion: "[[" WS? completion_body WS? "]]"
 
-completion_body: CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion
+completion_body: BANG? CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion
     | CNAME ("|" option_list)? -> untyped_completion
+
+BANG: "!"
 
 quantifier: "*"                           -> zero_or_more
           | "+"                           -> one_or_more

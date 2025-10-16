@@ -3,8 +3,9 @@ from importlib.resources import files
 from pathlib import Path
 
 from lark import Lark, Transformer
+from pydantic import ValidationError
 
-from .return_type_models import ACTION_LOOKUP
+from .return_type_models import ACTION_LOOKUP, LLMConfig
 
 try:
     mindframe_grammar = (files(__package__) / "grammar.lark").read_text(
@@ -21,7 +22,7 @@ DEFAULT_RETURN_TYPE = "respond"
 
 PromptPart = namedtuple(
     "PromptPart",
-    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type"],
+    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type", "llm_kwargs", "required_prefix"],
 )
 
 
@@ -96,18 +97,68 @@ class MindframeTransformer(Transformer):
 
     def _record_completion(self, body):
         prompt = self._collapse_prompt_text()
+
+        # Parse options into plain options and LLM kwargs
+        options_list = body.get("options", [])
+        plain_options, llm_kwargs = self._parse_options(options_list)
+
         part = PromptPart(
             key=body["key"],
             return_type=body["return_type"],
-            options=body.get("options", []),
+            options=plain_options,  # Store only non-key=value options
             text=prompt,
             shared_header=self.shared_header,  # Store shared_header separately
             quantifier=body.get("quantifier", None),
             action_type=body.get("action_type"),
+            llm_kwargs=llm_kwargs,  # Store parsed LLM parameters
+            required_prefix=body.get("required_prefix", False),  # Store ! prefix flag
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []  # reset prompt buffer
         # Don't auto-flush - let sections build up naturally within OBLIVIATE blocks
+
+    def _parse_options(self, options_list):
+        """Parse options list into separate plain options and key=value kwargs.
+
+        Args:
+            options_list: List of option strings that may contain key=value pairs
+
+        Returns:
+            tuple: (plain_options, kwargs_dict)
+                plain_options: List of strings without '=' OR model-specific key=value like min=0
+                kwargs_dict: Dict of LLM parameter key=value pairs (temperature, model)
+        """
+        # Get LLM parameter keys from LLMConfig schema
+        LLM_PARAM_KEYS = set(LLMConfig.model_fields.keys())
+
+        plain_options = []
+        kwargs_dict = {}
+
+        for opt in options_list:
+            if '=' in opt:
+                key, value = opt.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+
+                # If it's an LLM parameter, validate and add to kwargs_dict
+                if key in LLM_PARAM_KEYS:
+                    # Build a partial config to validate just this parameter
+                    try:
+                        # Create a minimal config with just this parameter to validate it
+                        test_config = {key: value}
+                        LLMConfig.model_validate(test_config, strict=False)
+                        kwargs_dict[key] = value
+                    except ValidationError as e:
+                        # Extract user-friendly error message
+                        error_msg = e.errors()[0]['msg'] if e.errors() else str(e)
+                        raise ValueError(f"Invalid value for '{key}': {error_msg}")
+                else:
+                    # Model-specific options like min=0, max=100, required stay as plain options
+                    plain_options.append(opt)
+            else:
+                plain_options.append(opt)
+
+        return plain_options, kwargs_dict
 
     def _collapse_prompt_text(self):
         lines = []
@@ -128,20 +179,38 @@ class MindframeTransformer(Transformer):
 
     # All other methods: passthrough or reused from your original
     def typed_completion(self, items):
-        # items can be: [type, key, options] or [type, quantifier, key, options]
-        type_name = str(items[0])
+        # items can now start with optional "!" for required fields
+        # Possible patterns:
+        # [type, key, options]
+        # [type, quantifier, key, options]
+        # ["!", type, key, options]
+        # ["!", type, quantifier, key, options]
 
-        # Check if second item is a quantifier (tuple) or key (string)
-        if len(items) > 1 and isinstance(items[1], tuple):
+        idx = 0
+        required_prefix = False
+
+        # Check if first item is "!" (required prefix)
+        if items and str(items[0]) == "!":
+            required_prefix = True
+            idx = 1
+
+        type_name = str(items[idx])
+        idx += 1
+
+        # Check if next item is a quantifier (tuple) or key (string)
+        if idx < len(items) and isinstance(items[idx], tuple):
             # Has quantifier: [type, quantifier, key, ...]
-            quantifier = items[1]
-            key = str(items[2])
-            options = items[3] if len(items) > 3 else []
+            quantifier = items[idx]
+            idx += 1
+            key = str(items[idx]) if idx < len(items) else "response"
+            idx += 1
+            options = items[idx] if idx < len(items) else []
         else:
             # No quantifier: [type, key, ...]
             quantifier = None
-            key = str(items[1]) if len(items) > 1 else "response"
-            options = items[2] if len(items) > 2 else []
+            key = str(items[idx]) if idx < len(items) else "response"
+            idx += 1
+            options = items[idx] if idx < len(items) else []
 
         return {
             "return_type": self._lookup_rt(type_name),
@@ -149,6 +218,7 @@ class MindframeTransformer(Transformer):
             "options": options,
             "quantifier": quantifier,
             "action_type": type_name,
+            "required_prefix": required_prefix,
         }
 
     def untyped_completion(self, items):
@@ -163,7 +233,7 @@ class MindframeTransformer(Transformer):
         return list(map(str, items))
 
     def option(self, item):
-        return str(item[0])
+        return str(item[0]).strip()
 
     def var_path(self, items):
         return list(map(str, items))
