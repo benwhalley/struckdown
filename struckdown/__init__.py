@@ -100,7 +100,7 @@ def _call_llm_cached(
     model_name: str,
     max_retries: int,
     max_tokens: Optional[int],
-    extra_kwargs_str: str,
+    extra_kwargs: Optional[dict],
     return_type,
     llm,
     credentials,
@@ -116,7 +116,7 @@ def _call_llm_cached(
             model=model_name,
             response_model=return_type,
             messages=[{"role": "user", "content": prompt}],
-            **(eval(extra_kwargs_str) if extra_kwargs_str else {}),
+            **(extra_kwargs if extra_kwargs else {}),
         )
     except Exception as e:
         full_traceback = traceback.format_exc()
@@ -147,13 +147,12 @@ def structured_chat(
     - Disable: Set to "0", "false", or empty string
     - Custom location: Set to any valid directory path
 
-    Cache key includes: prompt, model_name, max_retries, max_tokens, extra_kwargs_str
+    Cache key includes: prompt, model_name, max_retries, max_tokens, extra_kwargs
     Credentials are NOT included in the cache key (same prompt + model will hit cache regardless of API key).
     """
     logger.debug(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
-    extra_kwargs_str = str(extra_kwargs) if extra_kwargs else ""
     logger.debug(f"LLM kwargs: {extra_kwargs}")
     try:
         res_dict, com_dict = _call_llm_cached(
@@ -161,7 +160,7 @@ def structured_chat(
             model_name=llm.model_name,
             max_retries=max_retries,
             max_tokens=max_tokens,
-            extra_kwargs_str=extra_kwargs_str,
+            extra_kwargs=extra_kwargs or {},
             return_type=return_type,
             llm=llm,
             credentials=credentials,
