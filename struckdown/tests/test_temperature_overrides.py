@@ -57,7 +57,7 @@ class OptionParsingTestCase(unittest.TestCase):
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
 
-        self.assertEqual(prompt_part.llm_kwargs, {"temperature": "0.5"})
+        self.assertEqual(prompt_part.llm_kwargs, {"temperature": 0.5})
         self.assertEqual(prompt_part.options, [])  # No plain options
 
     def test_parse_model_override(self):
@@ -76,7 +76,7 @@ class OptionParsingTestCase(unittest.TestCase):
         prompt_part = list(sections[0].values())[0]
 
         self.assertEqual(
-            prompt_part.llm_kwargs, {"temperature": "0.5", "model": "gpt-4o-mini"}
+            prompt_part.llm_kwargs, {"temperature": 0.5, "model": "gpt-4o-mini"}
         )
         self.assertEqual(prompt_part.options, [])
 
@@ -86,7 +86,7 @@ class OptionParsingTestCase(unittest.TestCase):
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
 
-        self.assertEqual(prompt_part.llm_kwargs, {"temperature": "0.2"})
+        self.assertEqual(prompt_part.llm_kwargs, {"temperature": 0.2})
         self.assertEqual(prompt_part.options, ["required"])  # Plain option preserved
 
     def test_parse_number_with_constraints_and_temp(self):
@@ -97,7 +97,7 @@ class OptionParsingTestCase(unittest.TestCase):
 
         # min/max should be in options (used by number_response_model)
         # temperature should be in llm_kwargs
-        self.assertEqual(prompt_part.llm_kwargs, {"temperature": "0.0"})
+        self.assertEqual(prompt_part.llm_kwargs, {"temperature": 0.0})
         self.assertIn("min=0", prompt_part.options)
         self.assertIn("max=100", prompt_part.options)
 
