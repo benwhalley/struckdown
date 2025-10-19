@@ -1,0 +1,94 @@
+{
+  "name": "struckdown",
+  "displayName": "Struckdown",
+  "description": "Syntax highlighting for Struckdown prompt files (.sd)",
+  "version": "0.1.0",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Themes"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "Struckdown Dark (Atom One Style)",
+        "uiTheme": "vs-dark",
+        "path": "./themes/struckdown-dark.json"
+      },
+      {
+        "label": "Struckdown Light (Atom One Style)",
+        "uiTheme": "vs",
+        "path": "./themes/struckdown-light.json"
+      }
+    ],
+    "languages": [
+      {
+        "id": "struckdown",
+        "aliases": [
+          "Struckdown",
+          "struckdown"
+        ],
+        "extensions": [
+          ".sd"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icon.png",
+          "dark": "./icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "struckdown",
+        "scopeName": "source.struckdown",
+        "path": "./syntaxes/struckdown.tmLanguage.json",
+        "injectTo": ["text.html.markdown"],
+        "embeddedLanguages": {
+          "meta.embedded.block.frontmatter": "yaml",
+          "meta.embedded.block.html": "html",
+          "source.js": "javascript",
+          "source.css": "css",
+          "meta.embedded.block.ini": "ini",
+          "source.java": "java",
+          "source.makefile": "makefile",
+          "source.perl": "perl",
+          "source.r": "r",
+          "source.ruby": "ruby",
+          "source.php": "php",
+          "source.sql": "sql",
+          "source.vs_net": "vs_net",
+          "source.xml": "xml",
+          "source.xsl": "xsl",
+          "source.yaml": "yaml",
+          "source.dosbatch": "dosbatch",
+          "source.clojure": "clojure",
+          "source.coffee": "coffee",
+          "source.c": "c",
+          "source.cpp": "cpp",
+          "source.diff": "diff",
+          "source.dockerfile": "dockerfile",
+          "source.go": "go",
+          "source.groovy": "groovy",
+          "source.pug": "jade",
+          "source.lua": "lua",
+          "source.objc": "objective-c",
+          "source.python": "python",
+          "source.rust": "rust",
+          "source.scala": "scala",
+          "source.shell": "shellscript",
+          "source.swift": "swift",
+          "source.ts": "typescript",
+          "text.html.basic": "html"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benwhalley/struckdown"
+  }
+}

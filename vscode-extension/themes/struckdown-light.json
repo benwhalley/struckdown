@@ -1,0 +1,59 @@
+{
+  "name": "Struckdown Light",
+  "type": "light",
+  "colors": {
+    "editor.background": "#fafafa",
+    "editor.foreground": "#383a42"
+  },
+  "tokenColors": [
+    {
+      "scope": [
+        "variable.other.placeholder.struckdown",
+        "punctuation.definition.placeholder.begin.struckdown",
+        "punctuation.definition.placeholder.end.struckdown",
+        "storage.type.struckdown",
+        "punctuation.separator.type.struckdown",
+        "keyword.operator.multiplier.struckdown",
+        "meta.placeholder.struckdown"
+      ],
+      "settings": {
+        "background": "#FFFF00",
+        "foreground": "#000000",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": [
+        "variable.other.template.struckdown",
+        "punctuation.definition.template.begin.struckdown",
+        "punctuation.definition.template.end.struckdown"
+      ],
+      "settings": {
+        "background": "#00FF00",
+        "foreground": "#000000",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "keyword.control.obliviate.struckdown",
+      "settings": {
+        "foreground": "#E45649",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "keyword.control.begin.struckdown",
+      "settings": {
+        "foreground": "#0184BC",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "meta.tag.django.struckdown",
+      "settings": {
+        "foreground": "#50A14F",
+        "fontStyle": "italic"
+      }
+    }
+  ]
+}

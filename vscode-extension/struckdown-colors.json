@@ -1,0 +1,49 @@
+{
+  "// Note: Copy this entire object and paste it into your VSCode settings.json": "",
+  "// Open settings: Cmd/Ctrl+Shift+P -> 'Preferences: Open User Settings (JSON)'": "",
+  "editor.tokenColorCustomizations": {
+    "textMateRules": [
+      {
+        "scope": [
+          "variable.other.placeholder.struckdown",
+          "punctuation.definition.placeholder.begin.struckdown",
+          "punctuation.definition.placeholder.end.struckdown",
+          "storage.type.struckdown",
+          "punctuation.separator.type.struckdown",
+          "keyword.operator.multiplier.struckdown"
+        ],
+        "settings": {
+          "background": "#FFFF00",
+          "foreground": "#000000",
+          "fontStyle": "bold"
+        }
+      },
+      {
+        "scope": [
+          "variable.other.template.struckdown",
+          "punctuation.definition.template.begin.struckdown",
+          "punctuation.definition.template.end.struckdown"
+        ],
+        "settings": {
+          "background": "#00FF00",
+          "foreground": "#000000",
+          "fontStyle": "bold"
+        }
+      },
+      {
+        "scope": "keyword.control.obliviate.struckdown",
+        "settings": {
+          "foreground": "#FF6B6B",
+          "fontStyle": "bold"
+        }
+      },
+      {
+        "scope": "keyword.control.begin.struckdown",
+        "settings": {
+          "foreground": "#4ECDC4",
+          "fontStyle": "bold"
+        }
+      }
+    ]
+  }
+}

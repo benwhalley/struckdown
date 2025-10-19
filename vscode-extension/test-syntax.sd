@@ -1,0 +1,102 @@
+# Struckdown Syntax Test File
+
+
+
+This file demonstrates all the syntax highlighting features.
+
+## Control Keywords
+
+¡BEGIN
+
+This is the beginning of the template.
+
+## Placeholders (Square Brackets)
+
+Basic placeholder: [[response]]
+
+Typed placeholders:
+- Integer: [[int:count]]
+- Boolean: [[bool:is_valid]]
+- JSON: [[json:data]]
+- Number: [[number:price]]
+
+Response styles:
+- Think: [[think:analysis]]
+- Speak: [[speak:greeting]]
+
+Pick syntax:
+- Inline: [[pick:color|red,green,blue,yellow]]
+- With variable: [[pick:choice|option1,option2,option3]]
+
+List multipliers:
+- Fixed count: 3*[[item]]
+- Range: 2:4*[[question]]
+- Unlimited: *[[bullet_point]]
+
+## Template Variables (Double Curly Braces)
+
+Use previous values: {{response}}
+Interpolate data: {{count}} items found
+Complex: The color is {{color}} and choice is {{choice}}
+
+## Django Tags (Optional)
+
+{% csrf_token %}
+{% if condition %}
+{% endif %}
+
+## Memory Boundary
+
+Here's some context that will be forgotten...
+
+¡OBLIVIATE
+
+Now we're in a new context, using previous results like {{response}}.
+
+## Markdown Features
+
+All markdown works normally:
+
+- **Bold text**
+- *Italic text*
+- `inline code`
+- [links](https://example.com)
+
+```python
+# Code blocks work too
+def example():
+    return "Hello"
+```
+
+### Lists and more
+
+1. Numbered list
+2. Second item
+   - Nested bullet
+   - Another one
+
+> Blockquotes work
+> Multiple lines
+
+---
+
+## Complete Workflow Example
+
+You are an AI assistant.
+
+¡BEGIN
+
+Analyze this data: {{input_data}}
+
+Key findings: 3*[[finding]]
+
+¡OBLIVIATE
+
+Based on these findings:
+{{findings}}
+
+Is the data valid? [[bool:is_valid]]
+
+¡OBLIVIATE
+
+Final summary: {{is_valid}} - [[speak:summary]]

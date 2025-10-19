@@ -255,10 +255,23 @@ Install UV: https://docs.astral.sh/uv/getting-started/installation
 ```
 uv tool install https://github.com/benwhalley/struckdown/
 
-# or 
-uv pip install git+https://github.com/benwhalley/struckdown/  
+# or
+uv pip install git+https://github.com/benwhalley/struckdown/
 ```
 
+## VSCode Extension
+
+Syntax highlighting for `.sd` files with built-in Atom One themes.
+
+```bash
+cd vscode-extension && ./install.sh
+```
+
+Reload VSCode, then select theme: **Cmd/Ctrl+Shift+P** → "Color Theme" → "Struckdown Dark (Atom One Style)"
+
+Features yellow/green backgrounds for `[[slots]]` and `{{vars}}`. See [vscode-extension/](vscode-extension/) for details.
+
+## Configuration
 
 Set environment variables:
 

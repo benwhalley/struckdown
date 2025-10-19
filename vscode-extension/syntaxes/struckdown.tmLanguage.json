@@ -1,0 +1,152 @@
+{
+  "name": "Struckdown",
+  "scopeName": "source.struckdown",
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    {
+      "include": "#struckdown-keywords"
+    },
+    {
+      "include": "#struckdown-placeholders"
+    },
+    {
+      "include": "#struckdown-template-variables"
+    },
+    {
+      "include": "#struckdown-django-tags"
+    }
+  ],
+  "repository": {
+    "struckdown-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.obliviate.struckdown",
+          "match": "¡OBLIVIATE"
+        },
+        {
+          "name": "keyword.control.begin.struckdown",
+          "match": "¡BEGIN"
+        }
+      ]
+    },
+    "struckdown-placeholders": {
+      "patterns": [
+        {
+          "name": "meta.placeholder.struckdown",
+          "begin": "\\[\\[",
+          "end": "\\]\\]",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.placeholder.begin.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.placeholder.end.struckdown"
+            }
+          },
+          "patterns": [
+            {
+              "name": "meta.placeholder.typed.struckdown",
+              "match": "(?x)\n                (\\d+:\\d+\\*|\\d+\\*|\\*)?      # Optional multiplier: 2:4*, 3*, or *\n                (?:\n                  (think|speak|boolean|bool|int|json|number|pick)  # Type prefix\n                  (:)\n                )?",
+              "captures": {
+                "1": {
+                  "name": "keyword.operator.multiplier.struckdown"
+                },
+                "2": {
+                  "name": "storage.type.struckdown"
+                },
+                "3": {
+                  "name": "punctuation.separator.type.struckdown"
+                }
+              }
+            },
+            {
+              "name": "meta.placeholder.pick.struckdown",
+              "begin": "(pick)(\\:)([^|\\]]+)(\\|)",
+              "end": "(?=\\]\\])",
+              "beginCaptures": {
+                "1": {
+                  "name": "storage.type.pick.struckdown"
+                },
+                "2": {
+                  "name": "punctuation.separator.type.struckdown"
+                },
+                "3": {
+                  "name": "variable.other.placeholder.name.struckdown"
+                },
+                "4": {
+                  "name": "punctuation.separator.options.struckdown"
+                }
+              },
+              "patterns": [
+                {
+                  "name": "constant.language.option.struckdown",
+                  "match": "[^,\\]\\[]+"
+                },
+                {
+                  "name": "punctuation.separator.option.struckdown",
+                  "match": ","
+                }
+              ]
+            },
+            {
+              "name": "variable.other.placeholder.struckdown",
+              "match": "[^\\[\\]:]+"
+            }
+          ]
+        }
+      ]
+    },
+    "struckdown-template-variables": {
+      "patterns": [
+        {
+          "name": "variable.other.template.struckdown",
+          "begin": "\\{\\{",
+          "end": "\\}\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.template.begin.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.template.end.struckdown"
+            }
+          },
+          "patterns": [
+            {
+              "name": "variable.other.readwrite.struckdown",
+              "match": "[^\\{\\}]+"
+            }
+          ]
+        }
+      ]
+    },
+    "struckdown-django-tags": {
+      "patterns": [
+        {
+          "name": "meta.tag.django.struckdown",
+          "begin": "\\{%",
+          "end": "%\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.tag.begin.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.tag.end.struckdown"
+            }
+          },
+          "patterns": [
+            {
+              "name": "keyword.control.django.struckdown",
+              "match": "[^\\{%}]+"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
