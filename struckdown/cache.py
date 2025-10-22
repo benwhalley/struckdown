@@ -88,11 +88,37 @@ cache_dir = get_cache_dir()
 cache_size_limit = get_cache_size_limit()
 memory = None
 
+def _get_cache_size(cache_path: Path) -> int:
+    """Calculate total size of cache directory in bytes."""
+    total_size = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(cache_path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                # Skip if file doesn't exist (race condition)
+                if os.path.exists(filepath):
+                    total_size += os.path.getsize(filepath)
+    except Exception as e:
+        logger.debug(f"Error calculating cache size: {e}")
+    return total_size
+
+
 def _reduce_cache_size_async(memory_obj, size_limit):
     """Reduce cache size in a background thread to avoid blocking module import."""
     try:
-        memory_obj.reduce_size(bytes_limit=size_limit)
-        logger.info(f"Cache size reduced to {size_limit / (1024**3):.1f} GB limit")
+        # Get current cache size
+        cache_path = Path(memory_obj.location)
+        current_size = _get_cache_size(cache_path)
+
+        # Only cleanup if cache has reached the limit
+        if current_size >= size_limit:
+            memory_obj.reduce_size(bytes_limit=size_limit)
+            logger.info(f"Cache size reduced to {size_limit / (1024**3):.1f} GB limit")
+        else:
+            logger.debug(
+                f"Cache size {current_size / (1024**3):.1f} GB within "
+                f"{size_limit / (1024**3):.1f} GB limit, cleanup not needed"
+            )
     except Exception as e:
         logger.warning(f"Failed to reduce cache size: {e}")
 
@@ -109,7 +135,7 @@ if cache_dir is not None:
                 daemon=True
             )
             thread.start()
-            logger.info(f"Cache initialized at {cache_dir} with {cache_size_limit / (1024**3):.1f} GB limit (cleanup in progress)")
+            logger.info(f"Cache initialized at {cache_dir} with {cache_size_limit / (1024**3):.1f} GB limit")
         else:
             logger.info(f"Cache initialized at {cache_dir} with no size limit")
     except (PermissionError, OSError) as e:

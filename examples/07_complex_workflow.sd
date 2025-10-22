@@ -1,5 +1,7 @@
-# Complex Workflow Example
-# Shows a multi-step analysis workflow with dependencies
+<!--
+Complex Workflow Example
+Shows a multi-step analysis workflow with dependencies
+-->
 
 You are a data analyst. Be precise and analytical.
 
@@ -7,7 +9,7 @@ You are a data analyst. Be precise and analytical.
 
 Given this dataset description: {{dataset_description}}
 
-Identify the key research questions we should investigate: 3*[[research_question]]
+Identify the key research questions we should investigate: [[default{3}:research_question]]
 
 ¡OBLIVIATE
 

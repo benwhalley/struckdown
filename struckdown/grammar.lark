@@ -1,8 +1,18 @@
-?start: (single_completion | list_completion | placeholder | templatetag | begin_delimiter | obliviate | markdown)* completion
+?start: (block_comment | single_completion | placeholder | templatetag | begin_delimiter | obliviate | markdown)* completion
+
+// Block comments are dropped entirely from the template
+// They can contain any content including completions, actions, etc.
+block_comment: BLOCK_COMMENT_START BLOCK_COMMENT_CONTENT? BLOCK_COMMENT_END
+
+BLOCK_COMMENT_CONTENT: /(.|\n)+?(?=-->)/
+
+BLOCK_COMMENT_START: "<!--"
+BLOCK_COMMENT_END: "-->"
 
 // markdown: /[^{{\[\¡]+/ -> markdown_text
-// using negative lookahead to avoid matching single { or [
-markdown: /(?:(?!{{|\[\[|¡).)+/s  -> markdown_text
+// using negative lookahead to avoid matching single { or [ or @ (for @@)
+// note: <!-- is handled by BLOCK_COMMENT_START terminal which has higher priority
+markdown: /(?:(?!{{|\[\[|¡|@|<!--).)+/s  -> markdown_text
 
 placeholder: "{{" WS? var_path WS? "}}"
 var_path: CNAME ("." CNAME)*
@@ -13,14 +23,20 @@ obliviate: "¡OBLIVIATE" -> obliviate
 
 ?templatetag: /{%\s.*?%}/s        -> templatetag
 
-?completion: list_completion | single_completion
+?completion: single_completion
 
-// Single: [[type:var|opt1,opt2]]
+// Completion syntax: [[type:var|opt1,opt2]] or [[@action:var|opt1,opt2]]
+// @ prefix distinguishes actions from LLM completions
 single_completion: "[[" WS? completion_body WS? "]]"
 
-completion_body: BANG? CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion
-    | CNAME ("|" option_list)? -> untyped_completion
+completion_body: ACTION_PREFIX CNAME ":" CNAME ("|" option_list)? -> action_call_with_var
+    | ACTION_PREFIX CNAME ":" ("|" option_list)? -> action_call_auto_var
+    | ACTION_PREFIX CNAME ("|" option_list)? -> action_call_no_var
+    | BANG? CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion_with_var
+    | BANG? CNAME quantifier? ":" ("|" option_list)? -> typed_completion_auto_var
+    | BANG? CNAME quantifier? ("|" option_list)? -> typed_completion_no_var
 
+ACTION_PREFIX: "@"
 BANG: "!"
 
 quantifier: "*"                           -> zero_or_more
@@ -32,17 +48,9 @@ quantifier: "*"                           -> zero_or_more
 
 option_list: option ("," option)*
 // allow quoted strings in options
+// exclude: comma, ], |
 option: STRING | /[^,\]\|]+/
 // option: CNAME
-
-// List: *[[...]], 5*[[...]], 2:5*[[...]]
-list_completion: "*" single_completion -> wildcard_list
-               | NUMBER single_completion -> fixed_list
-               | NUMBER ":" NUMBER single_completion -> ranged_list
-
-list_prefix: "*"              -> wildcard
-           | NUMBER           -> fixed
-           | NUMBER ":" NUMBER -> ranged
 
 %import common.CNAME
 %import common.INT -> NUMBER

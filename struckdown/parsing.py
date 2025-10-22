@@ -5,7 +5,9 @@ from pathlib import Path
 from lark import Lark, Transformer
 from pydantic import ValidationError
 
-from .return_type_models import ACTION_LOOKUP, LLMConfig
+from .actions import Actions
+from .response_types import ResponseTypes
+from .return_type_models import LLMConfig
 
 try:
     mindframe_grammar = (files(__package__) / "grammar.lark").read_text(
@@ -22,17 +24,18 @@ DEFAULT_RETURN_TYPE = "respond"
 
 PromptPart = namedtuple(
     "PromptPart",
-    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type", "llm_kwargs", "required_prefix"],
+    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type", "llm_kwargs", "required_prefix", "is_function", "has_explicit_var"],
 )
 
 
 class MindframeTransformer(Transformer):
-    def __init__(self, action_lookup=ACTION_LOOKUP):
-        self.action_lookup = action_lookup
+    def __init__(self):
         self.sections = []
         self.current_buf = []  # holds text/vars/etc
         self.current_parts = []  # list of (key, PromptPart)
         self.shared_header = ""  # holds shared header text
+        self.completion_counters = {}  # Track auto-variable generation per completion type
+        self.action_counters = {}  # Track auto-variable generation per action name
 
     def _flush_section(self):
         if self.current_parts:
@@ -43,6 +46,10 @@ class MindframeTransformer(Transformer):
     def markdown_text(self, items):
         text = str(items[0]).strip()
         self.current_buf.append({"type": "text", "text": text})
+        return None
+
+    def block_comment(self, items):
+        # drop block comments entirely -- they are not included in the parsed output
         return None
 
     def placeholder(self, items):
@@ -85,17 +92,12 @@ class MindframeTransformer(Transformer):
 
     def single_completion(self, items):
         body = items[0]
-        self._record_completion(body)
+        # Check if body dict contains is_function flag (set by typed_completion)
+        is_function = body.get('is_function', False)
+        self._record_completion(body, is_function=is_function)
         return None
 
-    def list_completion(self, items):
-        repeat = items[0]
-        body = items[1]
-        body["repeat"] = repeat
-        self._record_completion(body)
-        return None
-
-    def _record_completion(self, body):
+    def _record_completion(self, body, is_function=False):
         prompt = self._collapse_prompt_text()
 
         # Parse options into plain options and LLM kwargs
@@ -112,6 +114,8 @@ class MindframeTransformer(Transformer):
             action_type=body.get("action_type"),
             llm_kwargs=llm_kwargs,  # Store parsed LLM parameters
             required_prefix=body.get("required_prefix", False),  # Store ! prefix flag
+            is_function=is_function,  # Mark if this is a function call (no LLM)
+            has_explicit_var=body.get("has_explicit_var", True),  # Default to True for LLM completions
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []  # reset prompt buffer
@@ -175,18 +179,42 @@ class MindframeTransformer(Transformer):
 
         return prompt_text
 
-    def _lookup_rt(self, key):
-        return self.action_lookup[key]
+    def _lookup_rt(self, key, options=None, quantifier=None, required_prefix=False):
+        """Lookup return type, checking Actions registry first, then ResponseTypes.
+
+        Args:
+            key: Action type name (e.g., 'evidence', 'memory', 'pick', 'respond')
+            options: Options from template (for Actions registry)
+            quantifier: Quantifier from template (for Actions registry)
+            required_prefix: Required prefix flag (for Actions registry)
+
+        Returns:
+            ResponseModel class or factory function
+
+        Note:
+            Actions registry is checked first to ensure custom actions take priority
+            over built-in types. This enables disambiguation in [[...]] syntax.
+        """
+        # first check Actions registry (custom actions take priority)
+        action_model = Actions.create_action_model(key, options, quantifier, required_prefix)
+        if action_model is not None:
+            return action_model
+
+        # then check ResponseTypes registry (built-in types like bool, str, etc.)
+        rt = ResponseTypes.get(key)
+        if rt is not None:
+            return rt
+
+        # not found - return default response type
+        return ResponseTypes.get('default')
 
     # All other methods: passthrough or reused from your original
-    def typed_completion(self, items):
-        # items can now start with optional "!" for required fields
-        # Possible patterns:
-        # [type, key, options]
-        # [type, quantifier, key, options]
-        # ["!", type, key, options]
-        # ["!", type, quantifier, key, options]
+    def typed_completion_with_var(self, items):
+        """Handle [[type:var]] or [[!type:var]] or [[type+:var|options]]
 
+        Grammar: BANG? CNAME quantifier? ":" CNAME ("|" option_list)?
+        Possible items: [type, var, options] or [!, type, var, options] or [type, quantifier, var, options]
+        """
         idx = 0
         required_prefix = False
 
@@ -198,28 +226,188 @@ class MindframeTransformer(Transformer):
         type_name = str(items[idx])
         idx += 1
 
-        # Check if next item is a quantifier (tuple) or key (string)
+        # Check if next item is a quantifier (tuple) or the variable name
         if idx < len(items) and isinstance(items[idx], tuple):
-            # Has quantifier: [type, quantifier, key, ...]
             quantifier = items[idx]
             idx += 1
-            key = str(items[idx]) if idx < len(items) else "response"
-            idx += 1
-            options = items[idx] if idx < len(items) else []
         else:
-            # No quantifier: [type, key, ...]
             quantifier = None
-            key = str(items[idx]) if idx < len(items) else "response"
-            idx += 1
-            options = items[idx] if idx < len(items) else []
+
+        # Next item is the variable name
+        var_name = str(items[idx])
+        idx += 1
+
+        # Last item (if present) is options
+        options = items[idx] if idx < len(items) else []
+
+        # Check if type_name is a registered action (for disambiguation)
+        is_function = Actions.is_registered(type_name)
 
         return {
-            "return_type": self._lookup_rt(type_name),
-            "key": key,
+            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "key": var_name,
             "options": options,
             "quantifier": quantifier,
             "action_type": type_name,
             "required_prefix": required_prefix,
+            "is_function": is_function,
+            "has_explicit_var": True,
+        }
+
+    def typed_completion_auto_var(self, items):
+        """Handle [[type:]] or [[type+:]] - auto-generate variable
+
+        Grammar: BANG? CNAME quantifier? ":" ("|" option_list)?
+        """
+        idx = 0
+        required_prefix = False
+
+        # Check if first item is "!" (required prefix)
+        if items and str(items[0]) == "!":
+            required_prefix = True
+            idx = 1
+
+        type_name = str(items[idx])
+        idx += 1
+
+        # Check if next item is a quantifier (tuple) or options (list)
+        if idx < len(items) and isinstance(items[idx], tuple):
+            quantifier = items[idx]
+            idx += 1
+        else:
+            quantifier = None
+
+        # Last item (if present) is options
+        options = items[idx] if idx < len(items) else []
+
+        # Auto-generate variable name
+        if type_name not in self.completion_counters:
+            self.completion_counters[type_name] = 0
+        self.completion_counters[type_name] += 1
+        var_name = f"_{type_name}_{self.completion_counters[type_name]:02d}"
+
+        # Check if type_name is a registered action (for disambiguation)
+        is_function = Actions.is_registered(type_name)
+
+        return {
+            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "key": var_name,
+            "options": options,
+            "quantifier": quantifier,
+            "action_type": type_name,
+            "required_prefix": required_prefix,
+            "is_function": is_function,
+            "has_explicit_var": True,
+        }
+
+    def typed_completion_no_var(self, items):
+        """Handle [[type]] or [[!type]] or [[type+|options]] - no variable specified
+
+        Grammar: BANG? CNAME quantifier? ("|" option_list)?
+        """
+        idx = 0
+        required_prefix = False
+
+        # Check if first item is "!" (required prefix)
+        if items and str(items[0]) == "!":
+            required_prefix = True
+            idx = 1
+
+        type_name = str(items[idx])
+        idx += 1
+
+        # Check if next item is a quantifier (tuple) or options (list)
+        if idx < len(items) and isinstance(items[idx], tuple):
+            quantifier = items[idx]
+            idx += 1
+        else:
+            quantifier = None
+
+        # Last item (if present) is options
+        options = items[idx] if idx < len(items) else []
+
+        # Use 'response' as default variable name when not specified
+        var_name = "response"
+
+        # Check if type_name is a registered action (for disambiguation)
+        is_function = Actions.is_registered(type_name)
+
+        return {
+            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "key": var_name,
+            "options": options,
+            "quantifier": quantifier,
+            "action_type": type_name,
+            "required_prefix": required_prefix,
+            "is_function": is_function,
+            "has_explicit_var": False,  # No explicit var provided
+        }
+
+    def action_call_with_var(self, items):
+        """Handle [[@action:myvar]] or [[@action:myvar|options]]
+
+        items: [ACTION_PREFIX, action_name, var_name, options?]
+        """
+        # Skip ACTION_PREFIX token (items[0] is '@')
+        action_name = str(items[1])
+        var_name = str(items[2])
+        options = items[3] if len(items) > 3 else []
+
+        return {
+            "return_type": self._lookup_rt(action_name, options, None, False),
+            "key": var_name,
+            "options": options,
+            "quantifier": None,
+            "action_type": action_name,
+            "required_prefix": False,
+            "is_function": True,
+            "has_explicit_var": True,
+        }
+
+    def action_call_auto_var(self, items):
+        """Handle [[@action:]] or [[@action:|options]] - auto-generate variable
+
+        items: [ACTION_PREFIX, action_name, options?]
+        """
+        # Skip ACTION_PREFIX token (items[0] is '@')
+        action_name = str(items[1])
+        options = items[2] if len(items) > 2 else []
+
+        # Auto-generate variable name
+        if action_name not in self.action_counters:
+            self.action_counters[action_name] = 0
+        self.action_counters[action_name] += 1
+        var_name = f"_{action_name}_{self.action_counters[action_name]:02d}"
+
+        return {
+            "return_type": self._lookup_rt(action_name, options, None, False),
+            "key": var_name,
+            "options": options,
+            "quantifier": None,
+            "action_type": action_name,
+            "required_prefix": False,
+            "is_function": True,
+            "has_explicit_var": True,
+        }
+
+    def action_call_no_var(self, items):
+        """Handle [[@action]] or [[@action|options]] - no variable specified
+
+        items: [ACTION_PREFIX, action_name, options?]
+        """
+        # Skip ACTION_PREFIX token (items[0] is '@')
+        action_name = str(items[1])
+        options = items[2] if len(items) > 2 else []
+
+        return {
+            "return_type": self._lookup_rt(action_name, options, None, False),
+            "key": action_name,
+            "options": options,
+            "quantifier": None,
+            "action_type": action_name,
+            "required_prefix": False,
+            "is_function": True,
+            "has_explicit_var": False,  # No explicit var - check default_save
         }
 
     def untyped_completion(self, items):
@@ -238,15 +426,6 @@ class MindframeTransformer(Transformer):
 
     def var_path(self, items):
         return list(map(str, items))
-
-    def wildcard(self, _):
-        return (1, MAX_LIST_LENGTH)
-
-    def fixed(self, items):
-        return int(str(items[0]))
-
-    def ranged(self, items):
-        return (int(str(items[0])), int(str(items[1])))
 
     # Quantifier transformer methods
     def zero_or_more(self, items):
@@ -277,11 +456,11 @@ class MindframeTransformer(Transformer):
         return self.sections
 
 
-def parser(action_lookup=ACTION_LOOKUP):
+def parser():
     return Lark(
         mindframe_grammar,
         parser="lalr",
-        transformer=MindframeTransformer(action_lookup=action_lookup),
+        transformer=MindframeTransformer(),
     )
 
 
@@ -306,7 +485,10 @@ def _add_default_completion_if_needed(template: str) -> str:
     # Helper to check if text ends with a completion placeholder
     def ends_with_completion(text: str) -> bool:
         stripped = text.rstrip()
-        return stripped.endswith("]]") and "[[" in stripped
+        # Check for completion [[...]] (both LLM completions and actions use same syntax)
+        if stripped.endswith("]]") and "[[" in stripped:
+            return True
+        return False
 
     # Check if we have multiple segments
     if SEGMENT_DELIMITER in template:

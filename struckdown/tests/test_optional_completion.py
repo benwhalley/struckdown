@@ -172,13 +172,17 @@ With multiple lines"""
         self.assertIn("response", sections3[0])
         self.assertIn("With multiple lines", sections3[0]["response"].text)
 
-    def test_list_completion_backward_compatibility(self):
-        """Test that list completions still work as before"""
-        template = "Generate 5 ideas *[[idea]]"
+    def test_list_completion_with_quantifier(self):
+        """Test that list completions work with quantifier syntax"""
+        template = "Generate 5 ideas [[default{5}:idea]]"
         sections = parse_syntax(template)
 
         self.assertEqual(len(sections), 1)
         self.assertIn("idea", sections[0])
+
+        part = sections[0]["idea"]
+        # Should have quantifier (5, 5) for exactly 5 items
+        self.assertEqual(part.quantifier, (5, 5))
 
     def test_options_backward_compatibility(self):
         """Test that completion options still work"""

@@ -139,7 +139,6 @@ def chat(
         multipart_prompt=prompt_str,
         model=model,
         credentials=credentials,
-        action_lookup=ACTION_LOOKUP,
     )
 
     for k, v in result.results.items():
@@ -294,7 +293,6 @@ def batch(
                 model=model,
                 credentials=credentials,
                 context=input_item,
-                action_lookup=ACTION_LOOKUP,
             )
 
             # Merge input data with extracted results

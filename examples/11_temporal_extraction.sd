@@ -1,0 +1,32 @@
+<!--
+
+Temporal Extraction Examples
+
+Struckdown can extract a number of date/time and duration patterns from text.
+
+-->
+
+¡OBLIVIATE
+
+The meeting is scheduled for next Tuesday [[date:meeting_date]]
+
+¡OBLIVIATE
+
+The event starts at 3:30 PM [[time:event_time]]
+
+¡OBLIVIATE
+
+The conference begins on January 15, 2024 at 2:00 PM [[datetime:conference_start]]
+
+¡OBLIVIATE
+We flew for half an hour. What is the flight duration: [[duration:flight_duration]]
+
+¡OBLIVIATE
+
+Important dates: January 1, February 15, and March 30. 14 Dec=not important
+Extract all the important dates: [[date*:important_dates]]
+
+¡OBLIVIATE
+
+<!-- finds the date relative to the current date -->
+The deadline is in 5 days [[date:deadline]]

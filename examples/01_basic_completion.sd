@@ -1,0 +1,17 @@
+<!-- 
+Basic Completion Examples
+
+This is the simplest form of LLM completion.
+The result is a string.
+-->
+
+Tell me a joke: 
+
+
+<!--  
+If we want to name and save the text returned by the LLM, 
+we can use a 'slot' with a name. This is equivalent to the 
+example above:
+-->
+
+Tell me a joke: [[funny_joke]]

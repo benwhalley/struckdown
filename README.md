@@ -1,33 +1,32 @@
+# struckdown
 
-# struckdown:  markdown-like syntax for structured conversations with language models
+Markdown-like syntax for structured conversations with language models.
 
-Markdown-based syntax for structured LLM use.
-
-# TLDR;
-
-Imagine you have some product data:
+## QuickStart
 
 ```bash
-% ls *.txt
-butter_robot.txt
-meeseeks_box.txt
-microverse_battery.txt
-plumbus.txt
-portal_gun.txt
+# Install
+uv tool install git+https://github.com/benwhalley/struckdown
 
-% tail *.txt
-==> plumbus.txt <==
-First, they take the dinglebop and smooth it out with a bunch of schleem. The schleem is then repurposed for later batches. They take the dinglebop and push it through the grumbo, where the fleeb is rubbed against it. It's important that the fleeb is rubbed, because the fleeb has all of the fleeb juice. Then a Shlami shows up and he rubs it and spits on it. They cut the fleeb. There are several hizzards in the way.
-The blamfs rub against the chumbles. And the ploobis and grumbo are shaved away. That leaves you with a regular old Plumbus!
-Price: 6½ brapples
-Dimensions: Standard Plumbus sizing
-Weight: 2.3 greebles
-Made in: Dimension C-137
+# Configure
+export LLM_API_KEY="sk-..."
+export LLM_API_BASE="https://api.openai.com/v1"
+
+# Try it
+sd chat "Tell me a joke: [[joke]]"
 ```
 
-The texts don't make much sense, but you check if the LLM knows better:
+**[→ Full QuickStart Guide](docs/QUICKSTART.md)**
 
-```
+## What is Struckdown?
+
+Struckdown makes it easy to extract structured data from text using LLMs with a simple, markdown-inspired syntax.
+
+### Example: Batch Processing
+
+Imagine you have product descriptions:
+
+```bash
 % sd batch *.txt "Purpose, <5 words: [[purpose]]"
 [
   {
@@ -35,28 +34,21 @@ The texts don't make much sense, but you check if the LLM knows better:
     "purpose": "Pass butter, question existence."
   },
   {
-    "filename": "meeseeks_box.txt",
-    "purpose": "Instant help for simple tasks."
-  },
-  {
-    "filename": "microverse_battery.txt",
-    "purpose": "Infinite spaceship power source"
-  },
-  {
     "filename": "plumbus.txt",
-    "purpose": "Purpose, <5 words: Household universal utility device."
+    "purpose": "Household universal utility device."
   },
   {
     "filename": "portal_gun.txt",
-    "purpose": "Purpose: Interdimensional travel device."
+    "purpose": "Interdimensional travel device."
   }
 ]
 ```
 
+### Example: Type Extraction
 
-Or 
+Extract structured data with type constraints:
 
-```
+```bash
 % sd batch *.txt "Price: [[number:price]] Currency? [[pick:currency|schmeckles,brapples,flurbos]]"
 [
   {
@@ -65,353 +57,291 @@ Or
     "currency": "schmeckles"
   },
   {
-    "filename": "meeseeks_box.txt",
-    "price": 45,
-    "currency": "schmeckles"
-  },
-  {
-    "filename": "microverse_battery.txt",
-    "price": 850,
-    "currency": "flurbos"
-  },
-  {
     "filename": "plumbus.txt",
     "price": 6.5,
     "currency": "brapples"
-  },
-  {
-    "filename": "portal_gun.txt",
-    "price": 10000000,
-    "currency": "flurbos"
   }
 ]
 ```
 
+### Example: Chaining Operations
 
-`batch` accepts json as input, so you can even chain commands. 
-If you want to work out the next best thing to buy on Amazon, you can do this:
-
-```
-% sd batch *.txt \
-  "Purpose, <5 words: [[purpose]] Name [[name]]" | \
-  sd batch \
-    "{{name}} {{purpose}}. Most similar on amazon? Best guess, < 10 words [[product]]" -k
-[
-  {
-    "filename": "butter_robot.txt",
-    "purpose": "Pass butter, question existence.",
-    "name": "Butter-Passing Robot",
-    "product": "Rick and Morty \"Pass the Butter\" Robot Figure—Amazon search."
-  },
-  {
-    "filename": "meeseeks_box.txt",
-    "purpose": "Instant help for simple tasks.",
-    "name": "Name: Mr. Meeseeks Box\nPurpose: Instant help for simple tasks.",
-    "product": "Most similar on Amazon: \"Meeseeks Box Replica Toy\"."
-  },
-  {
-    "filename": "microverse_battery.txt",
-    "purpose": "Infinite spaceship power source",
-    "name": "MICROVERSE BATTERY",
-    "product": "Amazon closest match: \"Portable Solar Generator Power Station\"."
-  },
-  {
-    "filename": "plumbus.txt",
-    "purpose": "Purpose, <5 words: Household universal utility device.",
-    "name": "Name: Plumbus",
-    "product": "Most similar on Amazon: Multi-purpose cleaning gadget, 8-in-1 tool."
-  },
-  {
-    "filename": "portal_gun.txt",
-    "purpose": "Purpose: Interdimensional travel device.",
-    "name": "Portal Gun",
-    "product": "Rick and Morty Portal Gun Toy Replica"
-  }
-]
-```
-
-
-You can test prompts with the chat command:
-
-```
-% sd chat "Tell me a joke: [[joke]]"
-```
-
-
-# CLI Usage
-
-## Commands
-
-**`sd chat`** - Run a single prompt interactively:
-```bash
-sd chat "Tell me a joke: [[joke]]"
-```
-
-**`sd batch`** - Process multiple inputs in batch mode:
-```bash
-# From files
-sd batch inputs/*.txt "Extract [[name]]" -o results.json
-
-# From stdin
-cat data.txt | sd batch "Summarize: [[summary]]"
-
-# Chain commands
-sd batch *.txt "Purpose: [[purpose]]" | sd batch "Similar on Amazon: [[product]]" -k
-```
-
-## Global Options
-
-**`--version`** / **`-v`** - Show version and exit:
-```bash
-sd --version
-# Output: 0.1.6
-```
-
-**`--help`** - Show help for any command:
-```bash
-sd --help
-sd batch --help
-```
-
-## Batch Options
-
-**`-o` / `--output`** - Output file (format auto-detected from extension):
-```bash
-sd batch *.txt "[[name]]" -o results.json   # JSON
-sd batch *.txt "[[name]]" -o results.csv    # CSV
-sd batch *.txt "[[name]]" -o results.xlsx   # Excel
-```
-
-**`-p` / `--prompt`** - Load prompt from file:
-```bash
-sd batch *.txt -p prompt.sd -o results.json
-```
-
-**`-k` / `--keep-inputs`** - Include input fields in output:
-```bash
-sd batch *.txt "[[summary]]" -k
-# Output includes: filename, input, content, basename + extracted fields
-```
-
-**`-q` / `--quiet`** - Suppress progress output:
-```bash
-sd batch *.txt "[[name]]" -o results.json --quiet
-```
-
-**`--verbose`** - Enable debug logging:
-```bash
-sd batch *.txt "[[name]]" --verbose
-```
-
-## Progress Bars
-
-By default, `sd batch` shows a progress bar with ETA during processing:
+Batch operations accept JSON, so you can chain commands:
 
 ```bash
-$ sd batch inputs/*.txt "[[summary]]" -o results.json
-Processing ⠋ ━━━━━━━━━━━━━━━━━━━━━━ 47/100 47% 0:00:23
+% sd batch *.txt "Purpose: [[purpose]] Name: [[name]]" | \
+  sd batch "Most similar on Amazon: [[product]]" -k
 ```
 
-**Progress bar behavior:**
-- **Shown by default** when stderr is a TTY (terminal)
-- **Auto-disabled** when piping or redirecting stderr
-- **Suppressed with `--quiet`** flag
+## Key Features
+
+- **Simple syntax** -- `[[variable]]` for completions, `{{variable}}` for references
+- **Type safety** -- Extract booleans, numbers, dates, or pick from options
+- **Memory management** -- Use `¡OBLIVIATE` to save tokens between steps
+- **Batch processing** -- Process hundreds of files with progress bars
+- **Caching** -- Automatic disk caching saves money and time
+- **Custom actions** -- Extend with Python functions (RAG, APIs, databases)
+- **Multiple outputs** -- JSON, CSV, Excel, or stdout
+
+## Documentation
+
+### Getting Started
+- **[QuickStart](docs/QUICKSTART.md)** -- Get started in 5 minutes
+- **[CLI Usage](docs/CLI_USAGE.md)** -- Complete command reference
+
+### Tutorials
+- **[Building a RAG System](docs/TUTORIAL_RAG.md)** -- Extract → Search → Generate pattern
+- **[Custom Actions](docs/CUSTOM_ACTIONS.md)** -- Extend with Python plugins
+
+### Reference
+- **[Examples](examples/)** -- Real-world examples and test cases
+- **[Security](SECURITY.md)** -- Security guidelines and best practices
+
+## Installation
+
+Requires [UV](https://docs.astral.sh/uv/):
 
 ```bash
-# Progress shown (terminal)
-sd batch *.txt "[[name]]" -o out.json
+# Install as a tool (recommended)
+uv tool install git+https://github.com/benwhalley/struckdown
 
-# Progress auto-hidden (piped)
-sd batch *.txt "[[name]]" | jq .
-
-# Progress suppressed (explicit)
-sd batch *.txt "[[name]]" -o out.json --quiet
+# Or install in current environment
+uv pip install git+https://github.com/benwhalley/struckdown
 ```
 
-## Output Streams
+## Configuration
 
-Following CLI best practices:
+Set these environment variables:
 
-- **stdout** = Primary output (results, `--version`, `--help`)
-- **stderr** = Diagnostics (errors, progress bars, verbose logs)
-
-This ensures clean piping and redirection:
 ```bash
-# Capture results, ignore progress
-sd batch *.txt "[[name]]" > results.json
-
-# Capture results, save errors separately
-sd batch *.txt "[[name]]" > results.json 2> errors.log
-
-# Process with jq (progress won't pollute output)
-sd batch *.txt "[[name]]" | jq '.[] | .name'
+export LLM_API_KEY="sk-..."              # Your API key
+export LLM_API_BASE="https://api.openai.com/v1"  # API endpoint
+export DEFAULT_LLM="gpt-4o-mini"         # Model name
 ```
 
+### VSCode Extension
 
-# SETUP
-
-Install UV: https://docs.astral.sh/uv/getting-started/installation
-
-```
-uv tool install https://github.com/benwhalley/struckdown/
-
-# or
-uv pip install git+https://github.com/benwhalley/struckdown/
-```
-
-## VSCode Extension
-
-Syntax highlighting for `.sd` files with built-in Atom One themes.
+Syntax highlighting for `.sd` files:
 
 ```bash
 cd vscode-extension && ./install.sh
 ```
 
-Reload VSCode, then select theme: **Cmd/Ctrl+Shift+P** → "Color Theme" → "Struckdown Dark (Atom One Style)"
+Select theme: **Cmd/Ctrl+Shift+P** → "Color Theme" → "Struckdown Dark"
 
-Features yellow/green backgrounds for `[[slots]]` and `{{vars}}`. See [vscode-extension/](vscode-extension/) for details.
+## Basic Syntax
 
-## Configuration
+### Completions (Slots)
 
-Set environment variables:
+Use `[[slot]]` to mark where the LLM should respond:
 
-```
-export LLM_API_KEY=... # e.g. from openai.com
-export LLM_API_BASE=... # e.g. https://api.openai.com/v1
-export DEFAULT_LLM="litellm/gpt-4.1-mini"
+```bash
+sd chat "Explain quantum physics: [[explanation]]"
 ```
 
+### Typed Completions
 
-## Cacheing
+Specify the type of response:
 
-Struckdown caches LLM responses to disk to save costs and improve performance. 
-The cache can be configured via environment variables:
+```bash
+# Boolean
+sd chat "Is the sky blue? [[bool:answer]]"
 
+# Pick from options
+sd chat "Choose [[pick:color|red,green,blue]]"
 
-`STRUCKDOWN_CACHE`
+# Numbers
+sd chat "Price: $19.99 [[number:price]]"
 
-Controls the cache directory location:
-
-- **Default**: `~/.struckdown/cache` or ~/$cwd/.struckdown/cache if that dir can't be created
-- **Disable caching**: Set to `"0"`, `"false"`, or empty string
-- **Custom location**: Set to any valid directory path
-
-
-
-`STRUCKDOWN_CACHE_SIZE`
-
-Controls the maximum cache size in **megabytes**:
-- **Default**: `10240` (10 GB)
-- **Unlimited**: Set to `0` (not recommended for production)
-- When the limit is exceeded, the oldest cached items are automatically evicted (LRU policy)
-
-
-Note: The cache is shared across all processes that use struckdown. 
-
-
-
-
-# Detailed syntax guide
-
-Prompts for steps and judgements are written in a "markdownish" format with extensions to specify completion types.
-
-As part of a single prompt template, we can ask the AI to respond multiple times. Each new response forms part of the context for subsequent prompts.
-
-Each response is specifed by a `[[RESPONSE]]` tag:
-
-Optionally, a prefix can be used to guide the style of the AI response.
-Presently `think` and `speak` are supported, but more may be added:
-
-```
-[[think:response]]
-[[speak:response]]
+# Dates
+sd chat "Meeting on Jan 15, 2024 [[date:meeting]]"
 ```
 
-A `think` response will be more reflective, longer, and can include notes/plans.
+### Variables
 
-The `speak` response will be more direct, and the AI is requested to use spoken idioms. These different styles of responses are achieved by adding hints to the call to the AI model, and changing parameters like temperature.
-
-
-#### Classifications
-
-Two prefixes are supported to allow for classifications:
+Reference previous extractions with `{{variable}}`:
 
 ```
-[[boolean:response]]
-```
-
-And
-
-```
-choose an option [[pick:color|red,green,blue]]
-```
-
-
-- `pick` guarantees that the response is one of the options provided, after the `|` character, separated by commas.
-- `boolean` guarantees that the response is either True or False.
-
-
-A multiline version of `pick` is also allowed:
-
-```
-[[pick:response
-    option1
-    option2
-    option3
-    default=null]]
-```
-
-
-#### Splitting prompts and saving tokens with `OBLIVIATE!`
-
-Sometimes, we want to:
-
-A. use an initial prompt to create a response
-B. refine the response, using secondary instructions
-
-In part A, we provide the LLM a lot of context.
-In part B, we may not need all this context.
-
-To save tokens, we can take the response from part A, and use it as input for part B.
-This is done with the `¡OBLIVIATE` tag.
-
-Example:
-
-```
-Long context about the history of vampires
-Tell me a joke
-[[speak:joke]]
+Extract name: [[name]]
 
 ¡OBLIVIATE
 
-This is a joke:
-{{joke}}
-
-Tell me, is it funny:
-
-[[boolean:funny]]
+Hello {{name}}, how are you? [[response]]
 ```
 
-The key here is that when we are deciding if the joke is funny, we don't need the original context, so it's hidden. This speeds up generation and saves cost.
+### Memory Boundaries
 
-
-
-
-### Minimal example
-
+Use `¡OBLIVIATE` to create memory boundaries and save tokens:
 
 ```
-Pick a fruit
+Long expensive context...
 
-[[pick|apple,orange,banana]]
-
-Tell me a joke about your fruit
-
-[[joke]]
+Summary: [[summary]]
 
 ¡OBLIVIATE
 
-Tell me a joke about your job
-
-[[joke2]]
+Translate {{summary}} to Spanish: [[translation]]
 ```
+
+Everything before `¡OBLIVIATE` is forgotten -- only extracted variables carry forward.
+
+## CLI Commands
+
+### `sd chat` - Interactive Mode
+
+```bash
+sd chat "Tell me a joke: [[joke]]"
+sd chat -p prompt.sd
+echo "Process this" | sd chat
+```
+
+### `sd batch` - Batch Processing
+
+```bash
+# Basic usage
+sd batch *.txt "Extract [[name]]" -o results.json
+
+# With prompt file
+sd batch *.txt -p prompt.sd -o results.csv
+
+# Keep input fields
+sd batch *.txt "[[summary]]" -k
+
+# Chain operations
+sd batch *.txt "[[purpose]]" | sd batch "Similar: [[product]]" -k
+```
+
+**Output formats** (auto-detected from extension):
+- `.json` -- JSON array
+- `.csv` -- CSV file
+- `.xlsx` -- Excel spreadsheet
+- None -- Pretty-printed to stdout
+
+## Caching
+
+Struckdown automatically caches LLM responses to disk:
+
+```bash
+# Default cache location
+~/.struckdown/cache  # 10 GB limit (LRU eviction)
+
+# Disable caching
+export STRUCKDOWN_CACHE=0
+
+# Custom cache directory
+export STRUCKDOWN_CACHE=/path/to/cache
+
+# Custom size limit (MB)
+export STRUCKDOWN_CACHE_SIZE=5120  # 5 GB
+```
+
+## Advanced Features
+
+### List Completions
+
+Extract multiple items:
+
+```bash
+# Exactly 3 items
+sd chat "Name 3 fruits: [[3*pick:fruit|apple,banana,orange]]"
+
+# Between 2 and 4 items
+sd chat "Name 2-4 animals: [[2:4*extract:animals]]"
+
+# Any number
+sd chat "List all mentioned: [[*extract:items]]"
+```
+
+### Date/Time Extraction
+
+```bash
+# Single date
+sd chat "Meeting Jan 15 [[date:when]]"
+
+# Date range with pattern expansion
+sd chat "Every Tuesday in October [[date*:dates]]"
+
+# With validation
+sd chat "Deadline [[!date:deadline]]"  # ! makes it required
+```
+
+### Number Extraction
+
+```bash
+# With constraints
+sd chat "Age (0-120): [[number:age|min=0,max=120]]"
+
+# Required numbers
+sd chat "Price: [[!number:price]]"
+
+# Multiple numbers
+sd chat "Extract all prices: [[number*:prices]]"
+```
+
+### Custom Actions
+
+Extend Struckdown with Python functions:
+
+```python
+from struckdown import Actions, chatter
+
+@Actions.register('uppercase')
+def uppercase_text(context, text: str):
+    return text.upper()
+
+# Use in template
+result = chatter("[[uppercase:loud|text={{input}}]]")
+```
+
+See **[Custom Actions Guide](docs/CUSTOM_ACTIONS.md)** for details.
+
+### Shared Headers
+
+Use `¡BEGIN` to define a shared header for all segments:
+
+```
+You are an expert analyst.
+
+¡BEGIN
+
+First analysis: [[analysis1]]
+
+¡OBLIVIATE
+
+Second analysis: [[analysis2]]
+```
+
+The header is prepended to every segment after `¡OBLIVIATE`.
+
+### Model/Temperature Overrides
+
+Override per-slot settings:
+
+```
+# Different temperature
+[[think:reasoning|temperature=0.3]]
+
+# Different model
+[[pick:choice|red,blue|model=gpt-4]]
+
+# Combine
+[[extract:data|model=gpt-4,temperature=0.0]]
+```
+
+## Examples
+
+See **[examples/](examples/)** for:
+- Basic completions
+- Multi-step workflows
+- RAG with custom actions
+- Batch processing patterns
+- Date/time extraction
+- Number validation
+
+## Contributing
+
+Issues and pull requests welcome at [github.com/benwhalley/struckdown](https://github.com/benwhalley/struckdown)
+
+## License
+
+MIT

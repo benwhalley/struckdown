@@ -1,5 +1,7 @@
-# Return Types Example
-# Shows different LLM return types: text, bool, int, json
+<!--
+Return Types Example
+Shows different LLM return types: text, bool, int, json
+-->
 
 Generate a random number between 1 and 100: [[int:number]]
 

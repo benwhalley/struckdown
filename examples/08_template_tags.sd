@@ -1,7 +1,10 @@
-# Template Tags Example
-# Shows using Django template tags for dynamic content
+<!--
+Template Tags Example
+Shows using Django template tags for dynamic content
+Note: Quantifiers must be literal numbers (not template variables)
+-->
 
-Generate a list of {{count}} {{item_type}} items: {{count}}*[[item]]
+Generate a list of 5 {{item_type}} items: [[default{5}:item]]
 
 ¡OBLIVIATE
 

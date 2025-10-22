@@ -1,6 +1,8 @@
-# Temporal Extraction Examples
+<!--
+Temporal Extraction Examples
+-->
 
-This example demonstrates the new temporal response types in Struckdown.
+Struckdown can extract a number of date/time and duration patterns from text.
 
 ## Example 1: Extract a date
 The meeting is scheduled for next Tuesday [[date:meeting_date]]
@@ -15,7 +17,9 @@ The conference begins on January 15, 2024 at 2:00 PM [[datetime:conference_start
 The flight takes 2 hours and 30 minutes [[duration:flight_duration]]
 
 ## Example 5: Extract multiple dates with quantifiers
-Important dates: January 1, February 15, and March 30 [[date*:important_dates]]
+Important dates: January 1, February 15, and March 30 
+14 Dec=not important
+[[date*:important_dates]]
 
 ## Example 6: Relative dates
 The deadline is in 5 days [[date:deadline]]

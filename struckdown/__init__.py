@@ -17,11 +17,16 @@ from jinja2 import StrictUndefined, Template, Undefined
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field
 
+from struckdown.actions import Actions
+from struckdown.response_types import ResponseTypes
 from struckdown.cache import clear_cache, memory
 from struckdown.parsing import parser, _add_default_completion_if_needed
 from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
 from struckdown.number_validation import parse_number_options, validate_number_constraints
+
+
+# litellm._turn_on_debug()
 
 # Version - reads from package metadata (set in pyproject.toml)
 try:
@@ -110,7 +115,7 @@ def _call_llm_cached(
     This is the expensive API call we want to cache.
     Returns dicts (not Pydantic models) so they pickle safely.
     """
-    logger.debug(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
+    logger.info(f"\n\n{LC.BLUE}Prompt: {prompt}{LC.RESET}\n\n")
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=model_name,
@@ -123,7 +128,7 @@ def _call_llm_cached(
         logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
         raise e
 
-    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+    logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
 
     # Serialize to dicts for safe pickling (instructor always returns Pydantic models)
     return res.model_dump(), com.model_dump()
@@ -367,17 +372,29 @@ async def process_single_segment_(
         else:
             slot_llm = llm
 
-        # Call the LLM via structured_chat.
-        res, completion_obj = await anyio.to_thread.run_sync(
-            lambda: structured_chat(
+        # Check if this is a function call (no LLM) or a completion (LLM)
+        is_function_call = getattr(prompt_part, 'is_function', False)
+
+        if is_function_call and hasattr(rt, '_executor'):
+            # Execute custom function instead of calling LLM
+            logger.debug(f"{LC.CYAN}Function call: {key} (action: {prompt_part.action_type}){LC.RESET}")
+            res, completion_obj = rt._executor(
+                accumulated_context,
                 rendered_prompt,
-                return_type=rt,
-                llm=slot_llm,
-                credentials=credentials,
-                extra_kwargs=llm_kwargs,
-            ),
-            abandon_on_cancel=True,
-        )
+                **llm_kwargs
+            )
+        else:
+            # Call the LLM via structured_chat.
+            res, completion_obj = await anyio.to_thread.run_sync(
+                lambda: structured_chat(
+                    rendered_prompt,
+                    return_type=rt,
+                    llm=slot_llm,
+                    credentials=credentials,
+                    extra_kwargs=llm_kwargs,
+                ),
+                abandon_on_cancel=True,
+            )
 
         # Extract .response field if it exists (even if None)
         # For temporal types, we need to check the actual response value
@@ -545,7 +562,6 @@ async def chatter_async(
     model: LLM = LLM(),
     credentials: Optional[LLMCredentials] = None,
     context={},
-    action_lookup=ACTION_LOOKUP,
     extra_kwargs=None,
 ):
     """
@@ -563,7 +579,7 @@ async def chatter_async(
     # Add default completion to final segment if needed
     preprocessed = _add_default_completion_if_needed(multipart_prompt_prefilled)
 
-    segments = parser(action_lookup=action_lookup).parse(preprocessed.strip())
+    segments = parser().parse(preprocessed.strip())
     dependency_graph = SegmentDependencyGraph(segments)
     plan = dependency_graph.get_execution_plan()
     if max([len(i) for i in plan]) > 1:
@@ -626,7 +642,6 @@ def chatter(
     model: LLM = LLM(),
     credentials: Optional[LLMCredentials] = None,
     context={},
-    action_lookup=ACTION_LOOKUP,
     extra_kwargs=None,
 ):
     return anyio.run(
@@ -635,7 +650,6 @@ def chatter(
         model,
         credentials,
         context,
-        action_lookup,
         extra_kwargs,
     )
 
@@ -659,14 +673,17 @@ def get_embedding(
     embeddings = []
     for batch in chunked(texts, batch_size):
         logger.debug(f"Getting batch of embeddings:\n{texts}")
-        response = litellm.embedding(
-            model=llm.model_name,
-            input=batch,
-            dimensions=dimensions,
-            api_key=api_key,
-            api_base=base_url,
-        )
-
+        try:
+            response = litellm.embedding(
+                model=llm.model_name,
+                input=str(batch),
+                dimensions=dimensions,
+                api_key=api_key,
+                api_base=base_url,
+            )
+        except Exception as e:
+            raise Exception(f"Error getting embeddings: {e}")
+            
         embeddings.extend(item["embedding"] for item in response["data"])
 
     return embeddings

@@ -1,0 +1,17 @@
+<!--
+Template Variables Example
+
+Shows using template variables for dynamic content.
+When calling `chatter` to execute the prompt, variables
+are interpolated into the prompt text.
+-->
+
+Write a {{style}} poem about {{topic}}: [[poem]]
+
+¡OBLIVIATE  
+
+Translate this poem into {{language}}.
+
+{{poem}}
+
+Translation:  [[translation]]
