@@ -4,6 +4,9 @@
   "injectionSelector": "L:text.html.markdown",
   "patterns": [
     {
+      "include": "#struckdown-comments"
+    },
+    {
       "include": "#struckdown-keywords"
     },
     {
@@ -17,6 +20,25 @@
     }
   ],
   "repository": {
+    "struckdown-comments": {
+      "patterns": [
+        {
+          "name": "comment.block.html.struckdown",
+          "begin": "<!--",
+          "end": "-->",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.begin.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.end.struckdown"
+            }
+          }
+        }
+      ]
+    },
     "struckdown-keywords": {
       "patterns": [
         {

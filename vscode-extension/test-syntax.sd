@@ -4,6 +4,15 @@
 
 This file demonstrates all the syntax highlighting features.
 
+## Comments
+
+<!-- This is a block comment -->
+
+<!--
+Multi-line comment
+can span multiple lines
+-->
+
 ## Control Keywords
 
 ¡BEGIN
@@ -28,10 +37,10 @@ Pick syntax:
 - Inline: [[pick:color|red,green,blue,yellow]]
 - With variable: [[pick:choice|option1,option2,option3]]
 
-List multipliers:
-- Fixed count: 3*[[item]]
-- Range: 2:4*[[question]]
-- Unlimited: *[[bullet_point]]
+List quantifiers (in type):
+- Fixed count: [[default{3}:item]]
+- Range: [[default{2,4}:question]]
+- Unlimited: [[default*:bullet_point]]
 
 ## Template Variables (Double Curly Braces)
 
@@ -88,7 +97,7 @@ You are an AI assistant.
 
 Analyze this data: {{input_data}}
 
-Key findings: 3*[[finding]]
+Key findings: [[default{3}:finding]]
 
 ¡OBLIVIATE
 
