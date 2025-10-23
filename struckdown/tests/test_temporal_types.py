@@ -354,14 +354,16 @@ Extract time [[time:time1]]"""
         self.assertIn("time1", sections[0])
 
     def test_temporal_type_as_untyped_completion(self):
-        """Test that untyped completion doesn't accidentally match temporal types"""
-        # [[date]] should NOT be interpreted as a date type, but as default type with key "date"
+        """Test that ambiguous completions raise errors"""
+        # [[date]] is ambiguous because 'date' is a registered type
+        # User must be explicit: [[date:myvar]] or [[date:]]
         template = "Extract [[date]]"
-        sections = parse_syntax(template)
 
-        part = sections[0]["date"]
-        # This should be default type, not date type (no colon means untyped)
-        self.assertEqual(part.action_type, "default")
+        with self.assertRaises(ValueError) as cm:
+            sections = parse_syntax(template)
+
+        self.assertIn("Ambiguous completion", str(cm.exception))
+        self.assertIn("date", str(cm.exception))
 
 
 class TemporalOptionalRequiredTestCase(unittest.TestCase):

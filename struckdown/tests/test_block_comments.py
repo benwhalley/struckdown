@@ -45,7 +45,7 @@ def test_block_comment_with_special_syntax():
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['response'].text
+    prompt_text = section['actual_completion'].text
 
     # block comment content should not leak
     assert 'ignored' not in prompt_text
@@ -93,7 +93,7 @@ Write a joke about {{topic}}
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['response'].text
+    prompt_text = section['joke'].text
 
     assert 'Simple Chain Example' not in prompt_text
     assert '{{topic}}' in prompt_text
@@ -122,8 +122,8 @@ def test_block_comment_with_obliviate():
 
     # both sections should be clean
     # completions use variable names 'first' and 'second' as specified
-    first_prompt = result[0]['response'].text
-    second_prompt = result[1]['response'].text
+    first_prompt = result[0]['first'].text
+    second_prompt = result[1]['second'].text
 
     assert 'First section docs' not in first_prompt
     assert 'Second section docs' not in second_prompt

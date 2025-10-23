@@ -326,11 +326,22 @@ class MindframeTransformer(Transformer):
         # Last item (if present) is options
         options = items[idx] if idx < len(items) else []
 
-        # Use 'response' as default variable name when not specified
-        var_name = "response"
-
-        # Check if type_name is a registered action (for disambiguation)
+        # Check if type_name is a registered action or response type
         is_function = Actions.is_registered(type_name)
+        is_registered_type = is_function or ResponseTypes.get(type_name) is not None
+
+        # If type_name matches a registered type, raise an error - user must be explicit
+        if is_registered_type:
+            raise ValueError(
+                f"Ambiguous completion [[{type_name}]]: '{type_name}' is a registered completion type. "
+                f"Please be explicit:\n"
+                f"  - For a variable named '{type_name}': Not recommended, choose a different name\n"
+                f"  - For type '{type_name}' with explicit variable: [[{type_name}:myvar]]\n"
+                f"  - For type '{type_name}' with auto-generated variable: [[{type_name}:]]"
+            )
+
+        # It's an unregistered name like [[x]] - use as variable name
+        var_name = type_name
 
         return {
             "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),

@@ -203,7 +203,7 @@ class ChatterResult(BaseModel):
         default_factory=dict,
         description="Intermediate LLM calls and processing steps for multi-stage extractions (e.g., pattern expansion)"
     )
-
+    
     def __str__(self):
         return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
 
