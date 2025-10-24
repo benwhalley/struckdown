@@ -158,6 +158,22 @@ def logged_action(context, query: str):
     return database.search(query)
 ```
 
+### Return Types
+
+Specify a Pydantic model type for automatic deserialization from JSON:
+
+```python
+from pydantic import BaseModel
+
+class SearchResults(BaseModel):
+    items: list[str]
+    count: int
+
+@Actions.register('search', return_type=SearchResults)
+def search(context, query: str):
+    return SearchResults(items=['a', 'b'], count=2)
+```
+
 ## Real-World Examples
 
 ### RAG with Vector Search
@@ -476,6 +492,9 @@ print(Actions.list_registered())
 # Check if specific action exists
 if Actions.is_registered('search_docs'):
     print("Search action is available")
+
+# Get return type for an action
+return_type = Actions.get_return_type('search_docs')
 ```
 
 ## Advanced: Stateful Actions

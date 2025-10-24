@@ -13,9 +13,9 @@ import openai
 from box import Box
 from decouple import config as env_config
 from instructor import from_openai, Mode
-from jinja2 import StrictUndefined, Template, Undefined
+from jinja2 import Environment, StrictUndefined, Template, Undefined, meta
 from more_itertools import chunked
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from struckdown.actions import Actions
 from struckdown.response_types import ResponseTypes
@@ -190,8 +190,37 @@ class SegmentResult(BaseModel):
     prompt: str
     output: Any
     completion: Optional[Any] = Field(default=None, exclude=False)
-    action: Optional[str] = Field(default=None, description="Action type (e.g., 'pick', 'bool', 'int')")
-    options: Optional[List[str]] = Field(default=None, description="Valid options for pick-type actions")
+    action: Optional[str] = Field(default=None, description="Action type (e.g., 'pick', 'bool', 'int', 'evidence', 'memory')")
+    options: Optional[List[str]] = Field(default=None, description="Raw template options before variable resolution")
+    params: Optional[Dict[str, Any]] = Field(default=None, description="Resolved action parameters (with variables interpolated)")
+
+    @model_validator(mode='before')
+    @classmethod
+    def reconstruct_typed_output(cls, data: Any) -> Any:
+        """Reconstruct registered Pydantic models from dict during deserialization.
+
+        When SegmentResult is loaded from JSON, action outputs (like FoundEvidenceSet)
+        are plain dicts. This validator checks if the action has a registered return_type
+        and reconstructs the Pydantic model, preserving computed fields and methods.
+        """
+        if isinstance(data, dict) and 'action' in data and 'output' in data:
+            action_name = data.get('action')
+            output = data.get('output')
+
+            # check if this action has a registered return type
+            if action_name and isinstance(output, dict):
+                return_type = Actions.get_return_type(action_name)
+                if return_type is not None:
+                    try:
+                        # reconstruct the Pydantic model from the dict
+                        data['output'] = return_type.model_validate(output)
+                    except Exception as e:
+                        # if reconstruction fails, log warning but keep the dict
+                        logger.warning(
+                            f"Failed to reconstruct {return_type.__name__} for action '{action_name}': {e}"
+                        )
+
+        return data
 
 
 class ChatterResult(BaseModel):
@@ -256,6 +285,7 @@ async def process_single_segment_(
     results = ChatterResult()
     prompt_parts = []
     accumulated_context = context.copy()
+    logger.debug(f"Initial context keys at segment start: {list(accumulated_context.keys())}")
 
     # Inject temporal context for date/time extractions
     # Check if any prompt parts use temporal response types
@@ -378,11 +408,15 @@ async def process_single_segment_(
         if is_function_call and hasattr(rt, '_executor'):
             # Execute custom function instead of calling LLM
             logger.debug(f"{LC.CYAN}Function call: {key} (action: {prompt_part.action_type}){LC.RESET}")
+            logger.debug(f"accumulated_context keys before executor: {list(accumulated_context.keys())}")
+            logger.debug(f"accumulated_context types: {[(k, type(v).__name__) for k, v in list(accumulated_context.items())[:10]]}")
             res, completion_obj = rt._executor(
                 accumulated_context,
                 rendered_prompt,
                 **llm_kwargs
             )
+            # Extract resolved params if available (attached by action executor)
+            resolved_params = getattr(res, '_resolved_params', None)
         else:
             # Call the LLM via structured_chat.
             res, completion_obj = await anyio.to_thread.run_sync(
@@ -395,6 +429,7 @@ async def process_single_segment_(
                 ),
                 abandon_on_cancel=True,
             )
+            resolved_params = None
 
         # Extract .response field if it exists (even if None)
         # For temporal types, we need to check the actual response value
@@ -466,14 +501,37 @@ async def process_single_segment_(
             prompt=rendered_prompt,
             action=prompt_part.action_type,
             options=prompt_part.options if prompt_part.options else None,
+            params=resolved_params,  # resolved action parameters (None for LLM completions)
         )
 
         accumulated_context[key] = extracted_value
+        logger.debug(f"Added '{key}' to accumulated_context. Keys now: {list(accumulated_context.keys())}")
 
         # For this segment, include the result in the prompt parts.
         prompt_parts.append(extracted_value)
 
     return results
+
+
+def extract_jinja_variables(text: str) -> set:
+    """Extract all Jinja2 variable references from text using Jinja2's parser.
+
+    Args:
+        text: String that may contain {{variable}} references
+
+    Returns:
+        Set of variable names referenced in the text
+    """
+    if not text:
+        return set()
+
+    try:
+        env = Environment()
+        ast = env.parse(text)
+        return meta.find_undeclared_variables(ast)
+    except Exception:
+        # fallback to empty set if parsing fails
+        return set()
 
 
 class SegmentDependencyGraph:
@@ -498,12 +556,16 @@ class SegmentDependencyGraph:
         # Second pass: identify dependencies between segments
         for i, segment in enumerate(self.segments):
             segment_id = f"segment_{i}"
-            # Find all template variables {{ VAR}} in the segment by examining the text of each prompt part
+            # Find all template variables {{VAR}} in the segment
             template_vars = set()
             for prompt_part in segment.values():
-                template_vars.update(
-                    re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt_part.text)
-                )
+                # Extract variables from prompt text
+                template_vars.update(extract_jinja_variables(prompt_part.text))
+
+                # Also extract variables from action options (e.g., query={{summary}})
+                if prompt_part.options and isinstance(prompt_part.options, (list, tuple)):
+                    for option in prompt_part.options:
+                        template_vars.update(extract_jinja_variables(option))
 
             # For each template variable, find which earlier segment defines it
             for var in template_vars:

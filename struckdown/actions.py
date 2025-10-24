@@ -36,10 +36,10 @@ class Actions:
         # [[expertise:guidance|query="insomnia",n=5]]
     """
 
-    _registry: dict[str, tuple[Callable, ErrorStrategy, bool]] = {}
+    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None]] = {}
 
     @classmethod
-    def register(cls, action_name: str, on_error: ErrorStrategy = "propagate", default_save: bool = True):
+    def register(cls, action_name: str, on_error: ErrorStrategy = "propagate", default_save: bool = True, return_type: type | None = None):
         """Decorator to register a function as a custom action.
 
         Args:
@@ -52,12 +52,15 @@ class Actions:
                 - True: [[@action]] saves result to context with key 'action' (default)
                 - False: [[@action]] doesn't save result, only includes in prompt
                 - Note: [[@action:var]] always saves regardless of this setting
+            return_type: Pydantic model type returned by this action.
+                - Enables automatic deserialization when loading from JSON
+                - Example: return_type=FoundEvidenceSet for evidence search
 
         Returns:
             Decorator function
 
         Example:
-            @Actions.register('memory', on_error='return_empty', default_save=True)
+            @Actions.register('memory', on_error='return_empty', default_save=True, return_type=MemoryResult)
             def search_memory(context, query, n=3):
                 return results
 
@@ -67,8 +70,8 @@ class Actions:
         """
 
         def decorator(func: Callable) -> Callable:
-            cls._registry[action_name] = (func, on_error, default_save)
-            logger.debug(f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}")
+            cls._registry[action_name] = (func, on_error, default_save, return_type)
+            logger.debug(f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}")
             return func
 
         return decorator
@@ -99,13 +102,13 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save = cls._registry[action_name]
+        func, on_error, default_save, return_type = cls._registry[action_name]
 
         # create response model
         class ActionResult(ResponseModel):
             """Result from custom action"""
 
-            response: str = Field(default="", description=f"Result from {action_name} action")
+            response: Any = Field(default="", description=f"Result from {action_name} action")
 
         def executor(context: dict, rendered_prompt: str, **kwargs):
             """Generic executor that calls the registered function.
@@ -175,8 +178,13 @@ class Actions:
                     rendered_params[k] = rendered_value
                 except Exception as e:
                     # fallback: try variable lookup, or use literal value
-                    logger.debug(f"Jinja2 rendering failed for '{k}={v}': {e}. Using fallback.")
-                    rendered_params[k] = context.get(v, v)
+                    logger.warning(
+                        f"Jinja2 rendering failed for action '{action_name}' parameter '{k}={v}': {e}. "
+                        f"Available context keys: {list(context.keys())}. "
+                        f"Keeping unresolved value."
+                    )
+                    # Keep the original value (with template syntax) so it's visible that it failed
+                    rendered_params[k] = v
 
             # automatic type coercion based on function signature
             try:
@@ -230,7 +238,11 @@ class Actions:
             # call the registered function
             try:
                 result_text = func(context=context, **coerced_params)
-                return ActionResult(response=result_text), None
+
+                # Create action result and attach resolved params for display
+                action_result = ActionResult(response=result_text)
+                action_result._resolved_params = coerced_params
+                return action_result, None
 
             except Exception as e:
                 if on_error == "propagate":
@@ -288,3 +300,30 @@ class Actions:
         if action_name not in cls._registry:
             return True  # default to saving if action not found
         return cls._registry[action_name][2]  # third element is default_save
+
+    @classmethod
+    def get_return_type(cls, action_name: str) -> type | None:
+        """Get the return type for a registered action.
+
+        Args:
+            action_name: Action name to check
+
+        Returns:
+            Return type (Pydantic model class) or None if not specified
+        """
+        if action_name not in cls._registry:
+            return None
+        return cls._registry[action_name][3]  # fourth element is return_type
+
+    @classmethod
+    def get_registered_types(cls) -> list[type]:
+        """Get all unique return types registered across all actions.
+
+        Returns:
+            List of Pydantic model classes registered as return types
+        """
+        types = []
+        for func, on_error, default_save, return_type in cls._registry.values():
+            if return_type is not None and return_type not in types:
+                types.append(return_type)
+        return types
