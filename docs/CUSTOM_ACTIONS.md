@@ -146,16 +146,22 @@ def safe_action(context, url: str):
 # If fetch fails, continues with empty string
 ```
 
-### Log and Continue
+### Return Default
 
-Logs error and returns empty string:
+Returns custom default value on error:
 
 ```python
-@Actions.register('logged_action', on_error='log_and_continue')
-def logged_action(context, query: str):
-    """Search database"""
-    # If this fails, error is logged but execution continues
+@Actions.register('search_docs', on_error='return_default', default='No documentation found')
+def search_docs(context, query: str):
+    """Search documentation database"""
+    # If this fails, returns "No documentation found"
     return database.search(query)
+
+@Actions.register('get_count', on_error='return_default', default='0')
+def get_count(context, category: str):
+    """Get item count from database"""
+    # If this fails, returns "0"
+    return str(len(database.query(category)))
 ```
 
 ### Return Types

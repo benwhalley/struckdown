@@ -17,7 +17,7 @@ from struckdown.return_type_models import LLMConfig, ResponseModel
 
 logger = logging.getLogger(__name__)
 
-ErrorStrategy = Literal["propagate", "return_empty", "log_and_continue"]
+ErrorStrategy = Literal["propagate", "return_empty", "return_default"]
 
 
 class Actions:
@@ -36,10 +36,10 @@ class Actions:
         # [[expertise:guidance|query="insomnia",n=5]]
     """
 
-    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None]] = {}
+    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any]] = {}
 
     @classmethod
-    def register(cls, action_name: str, on_error: ErrorStrategy = "propagate", default_save: bool = True, return_type: type | None = None):
+    def register(cls, action_name: str, on_error: ErrorStrategy = "propagate", default_save: bool = True, return_type: type | None = None, default: Any = ""):
         """Decorator to register a function as a custom action.
 
         Args:
@@ -47,7 +47,7 @@ class Actions:
             on_error: How to handle exceptions:
                 - 'propagate': Re-raise exception (default)
                 - 'return_empty': Return empty string on error
-                - 'log_and_continue': Log error and return empty string
+                - 'return_default': Return custom default value on error
             default_save: Whether to save result to context when no variable name specified.
                 - True: [[@action]] saves result to context with key 'action' (default)
                 - False: [[@action]] doesn't save result, only includes in prompt
@@ -55,6 +55,9 @@ class Actions:
             return_type: Pydantic model type returned by this action.
                 - Enables automatic deserialization when loading from JSON
                 - Example: return_type=FoundEvidenceSet for evidence search
+            default: Default value to return when on_error='return_default' (default: "")
+                - Only used when on_error='return_default'
+                - Can be any type, but should be serializable to string
 
         Returns:
             Decorator function
@@ -64,14 +67,18 @@ class Actions:
             def search_memory(context, query, n=3):
                 return results
 
+            @Actions.register('search', on_error='return_default', default='No results found')
+            def search_db(context, query):
+                return database.search(query)
+
             @Actions.register('turns', on_error='return_empty', default_save=False)
             def get_turns(context, filter_type='all'):
                 return formatted_turns  # Output to prompt but don't save
         """
 
         def decorator(func: Callable) -> Callable:
-            cls._registry[action_name] = (func, on_error, default_save, return_type)
-            logger.debug(f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}")
+            cls._registry[action_name] = (func, on_error, default_save, return_type, default)
+            logger.debug(f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}")
             return func
 
         return decorator
@@ -102,7 +109,7 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save, return_type = cls._registry[action_name]
+        func, on_error, default_save, return_type, default_value = cls._registry[action_name]
 
         # create response model
         class ActionResult(ResponseModel):
@@ -252,12 +259,11 @@ class Actions:
                         f"Action '{action_name}' failed with error: {e}. Returning empty string."
                     )
                     return ActionResult(response=""), None
-                elif on_error == "log_and_continue":
-                    logger.error(
-                        f"Action '{action_name}' failed with error: {e}. Continuing with empty result.",
-                        exc_info=True,
+                elif on_error == "return_default":
+                    logger.warning(
+                        f"Action '{action_name}' failed with error: {e}. Returning default value: {default_value!r}"
                     )
-                    return ActionResult(response=""), None
+                    return ActionResult(response=default_value), None
 
         # attach executor and metadata to response model
         ActionResult._executor = executor
@@ -323,7 +329,7 @@ class Actions:
             List of Pydantic model classes registered as return types
         """
         types = []
-        for func, on_error, default_save, return_type in cls._registry.values():
+        for func, on_error, default_save, return_type, default_value in cls._registry.values():
             if return_type is not None and return_type not in types:
                 types.append(return_type)
         return types

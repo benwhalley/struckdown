@@ -303,9 +303,9 @@ class ErrorHandlingTestCase(unittest.TestCase):
         result, _ = executor(context={}, rendered_prompt="")
         self.assertEqual(result.response, "")
 
-    def test_error_log_and_continue_strategy(self):
-        """Test log_and_continue error strategy"""
-        @Actions.register('failing', on_error='log_and_continue')
+    def test_error_return_default_strategy(self):
+        """Test return_default error strategy with custom default"""
+        @Actions.register('failing', on_error='return_default', default='fallback value')
         def failing_action(context):
             raise ValueError("Intentional error")
 
@@ -313,7 +313,31 @@ class ErrorHandlingTestCase(unittest.TestCase):
         executor = model._executor
 
         result, _ = executor(context={}, rendered_prompt="")
+        self.assertEqual(result.response, "fallback value")
+
+    def test_error_return_default_with_empty_string(self):
+        """Test return_default error strategy with empty string default"""
+        @Actions.register('failing2', on_error='return_default', default='')
+        def failing_action(context):
+            raise ValueError("Intentional error")
+
+        model = Actions.create_action_model('failing2', None, None, False)
+        executor = model._executor
+
+        result, _ = executor(context={}, rendered_prompt="")
         self.assertEqual(result.response, "")
+
+    def test_error_return_default_with_numeric_string(self):
+        """Test return_default error strategy with numeric default"""
+        @Actions.register('failing3', on_error='return_default', default='0')
+        def failing_action(context):
+            raise ValueError("Intentional error")
+
+        model = Actions.create_action_model('failing3', None, None, False)
+        executor = model._executor
+
+        result, _ = executor(context={}, rendered_prompt="")
+        self.assertEqual(result.response, "0")
 
 
 class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
