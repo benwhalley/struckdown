@@ -738,7 +738,7 @@ def get_embedding(
         try:
             response = litellm.embedding(
                 model=llm.model_name,
-                input=str(batch),
+                input=list(map(str, batch)),
                 dimensions=dimensions,
                 api_key=api_key,
                 api_base=base_url,
