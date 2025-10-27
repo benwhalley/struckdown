@@ -406,78 +406,6 @@ def search_products(context, query: str, limit: int = 10):
     # implementation
 ```
 
-## Security Considerations
-
-⚠️ **Important**: Custom actions execute arbitrary Python code. See [SECURITY.md](../SECURITY.md) for guidelines.
-
-**Never do this**:
-
-```python
-# DANGEROUS -- arbitrary code execution
-@Actions.register('eval_code')
-def eval_code(context, code: str):
-    return str(eval(code))  # NEVER USE eval()!
-
-# DANGEROUS -- command injection
-@Actions.register('run_command')
-def run_command(context, cmd: str):
-    import subprocess
-    return subprocess.run(cmd, shell=True, capture_output=True).stdout  # NEVER use shell=True!
-```
-
-**Do this instead**:
-
-```python
-# Safe -- limited operations only
-@Actions.register('calculate')
-def calculate(context, expression: str):
-    """Safe arithmetic calculator"""
-    import ast
-    import operator
-
-    allowed_ops = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-    }
-
-    node = ast.parse(expression, mode='eval')
-
-    # Validate only safe operations
-    for n in ast.walk(node):
-        if isinstance(n, ast.operator) and type(n) not in allowed_ops:
-            raise ValueError(f"Unsafe operation: {type(n)}")
-
-    return str(eval(compile(node, '<string>', 'eval')))
-```
-
-## Testing Actions
-
-Test your actions before using them in production:
-
-```python
-import unittest
-from struckdown import Actions, chatter
-
-class TestMyActions(unittest.TestCase):
-    def setUp(self):
-        # Register actions
-        @Actions.register('double')
-        def double(context, value: int):
-            return str(value * 2)
-
-    def test_double_action(self):
-        """Test double action with direct execution"""
-        model = Actions.create_action_model('double', ['value=5'], None, False)
-        result, _ = model._executor(context={}, rendered_prompt="")
-        self.assertEqual(result.response, "10")
-
-    def test_double_in_template(self):
-        """Test double action in template"""
-        result = chatter("[[double:result|value=7]]")
-        self.assertEqual(result['result'], "14")
-```
 
 ## Listing Registered Actions
 
@@ -497,34 +425,9 @@ if Actions.is_registered('search_docs'):
 return_type = Actions.get_return_type('search_docs')
 ```
 
-## Advanced: Stateful Actions
-
-Actions can maintain state across invocations:
-
-```python
-class SearchCache:
-    def __init__(self):
-        self.cache = {}
-
-    def search(self, context, query: str):
-        """Cached search"""
-        if query in self.cache:
-            return self.cache[query]
-
-        result = expensive_search(query)
-        self.cache[query] = result
-        return result
-
-# Create instance
-search_cache = SearchCache()
-
-# Register the bound method
-Actions.register('cached_search')(search_cache.search)
-```
 
 ## See Also
 
 - **[Tutorial](TUTORIAL.md)** -- Learn Struckdown basics
 - **[Reference](REFERENCE.md)** -- Complete syntax reference
 - **[Examples](../examples/)** -- More examples
-- **[Security](../SECURITY.md)** -- Security guidelines
