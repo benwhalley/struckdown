@@ -83,8 +83,8 @@ Complete documentation for Struckdown.
 ### Custom Actions
 
 ```
-[[action:var|param=value]]      # Call Python function
-[[search:results|query={{q}}]]  # Use template variables
+[[@action:var|param=value]]      # Call Python function
+[[@search:results|query={{q}}]]  # Use template variables
 ```
 
 ### CLI
@@ -183,7 +183,7 @@ def add(context, a: int, b: int):
     return str(a + b)
 
 # "10" and "5" are converted to int automatically
-[[add:result|a=10,b=5]]
+[[@add:result|a=10,b=5]]
 ```
 
 ## Troubleshooting

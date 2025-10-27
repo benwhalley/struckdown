@@ -4,7 +4,7 @@ Extend Struckdown with custom Python functions that bypass the LLM.
 
 ## Overview
 
-Actions allow you to register Python functions that can be called from templates using `[[action:var|params]]` syntax. This is useful for:
+Actions allow you to register Python functions that can be called from templates using `[[@action:var|params]]` syntax. This is useful for:
 
 - **RAG (Retrieval-Augmented Generation)** -- Search databases, vector stores, or APIs
 - **Data transformations** -- Format, validate, or process extracted data
@@ -24,20 +24,20 @@ def uppercase_text(context, text: str):
     return text.upper()
 
 # Use in template
-result = chatter("[[uppercase:loud|text=hello world]]")
+result = chatter("[[@uppercase:loud|text=hello world]]")
 print(result['loud'])  # "HELLO WORLD"
 ```
 
 ### Template Syntax
 
-Actions use `[[action:var|params]]` instead of `[[type:var]]`:
+Actions use `[[@action:var|params]]` instead of `[[type:var]]`:
 
 ```python
 # LLM completion (calls AI)
 [[pick:color|red,blue,green]]
 
 # Custom action (calls Python function)
-[[uppercase:result|text=hello]]
+[[@uppercase:result|text=hello]]
 ```
 
 ## Action Parameters
@@ -53,7 +53,7 @@ def greet(context, name: str, greeting: str = "Hello"):
     return f"{greeting}, {name}!"
 
 # Use it
-chatter("[[greet:message|name=Alice,greeting=Hi]]")
+chatter("[[@greet:message|name=Alice,greeting=Hi]]")
 # Output: "Hi, Alice!"
 ```
 
@@ -67,7 +67,7 @@ Extract name: [[name]]
 
 ¡OBLIVIATE
 
-Greet them: [[greet:greeting|name={{name}}]]
+Greet them: [[@greet:greeting|name={{name}}]]
 """
 
 result = chatter(template, context={"input": "My name is Bob"})
@@ -85,7 +85,7 @@ def multiply(context, value: int, factor: int = 2):
     return str(value * factor)
 
 # String "10" is automatically converted to int 10
-chatter("[[multiply:result|value=10,factor=5]]")
+chatter("[[@multiply:result|value=10,factor=5]]")
 # Output: "50"
 ```
 
@@ -111,7 +111,7 @@ Age: [[int:age]]
 
 ¡OBLIVIATE
 
-Summary: [[count_extractions:summary]]
+Summary: [[@count_extractions:summary]]
 """
 ```
 
@@ -209,7 +209,7 @@ template = """
 User question: {{question}}
 
 Relevant docs:
-[[search_docs:context|query={{question}},n=5]]
+[[@search_docs:context|query={{question}},n=5]]
 
 ¡OBLIVIATE
 
@@ -250,7 +250,7 @@ Email from logs: [[extract:email]]
 
 ¡OBLIVIATE
 
-User info: [[query_users:user|email={{email}}]]
+User info: [[@query_users:user|email={{email}}]]
 
 Personalized response for {{user}}: [[response]]
 """
@@ -284,7 +284,7 @@ Extract city: [[city]]
 
 ¡OBLIVIATE
 
-Weather: [[weather:conditions|city={{city}}]]
+Weather: [[@weather:conditions|city={{city}}]]
 
 Travel advice for {{city}} given {{conditions}}: [[advice]]
 """
@@ -317,8 +317,8 @@ Extract birth date (ISO format): [[date:birth]]
 
 ¡OBLIVIATE
 
-Birth date: [[format_date:formatted|iso_date={{birth}},format=%d/%m/%Y]]
-Age: [[calculate_age:age|birth_date={{birth}}]]
+Birth date: [[@format_date:formatted|iso_date={{birth}},format=%d/%m/%Y]]
+Age: [[@calculate_age:age|birth_date={{birth}}]]
 
 Birthday message for someone aged {{age}}: [[message]]
 """
