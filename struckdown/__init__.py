@@ -17,6 +17,26 @@ from jinja2 import Environment, StrictUndefined, Template, Undefined, meta
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# import specific litellm exceptions for error handling
+from litellm.exceptions import (
+    ContentPolicyViolationError,
+    ContextWindowExceededError,
+    AuthenticationError,
+    PermissionDeniedError,
+    NotFoundError,
+    BadRequestError,
+    UnsupportedParamsError,
+    APIResponseValidationError,
+    BudgetExceededError,
+    RateLimitError,
+    Timeout,
+    UnprocessableEntityError,
+    APIConnectionError,
+    APIError,
+    ServiceUnavailableError,
+    InternalServerError,
+)
+
 from struckdown.actions import Actions
 from struckdown.response_types import ResponseTypes
 from struckdown.cache import clear_cache, memory
@@ -41,6 +61,39 @@ except PackageNotFoundError:
 warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 logger = logging.getLogger(__name__)
+
+
+class StruckdownLLMError(Exception):
+    """Wrapper for LLM API errors with rich context.
+
+    Preserves the original exception while adding prompt, model, and additional context
+    to help consumers make informed decisions about error handling.
+    """
+    def __init__(
+        self,
+        original_error: Exception,
+        prompt: str,
+        model_name: str,
+        extra_context: Optional[Dict[str, Any]] = None
+    ):
+        self.original_error = original_error
+        self.error_type = type(original_error).__name__
+        self.prompt = prompt
+        self.model_name = model_name
+        self.extra_context = extra_context or {}
+
+        # preserve original error message
+        super().__init__(str(original_error))
+
+    def __str__(self):
+        return (
+            f"[{self.error_type}] Model: {self.model_name}\n"
+            f"Error: {self.original_error}\n"
+            f"Prompt length: {len(self.prompt)} chars"
+        )
+
+    def __repr__(self):
+        return f"StruckdownLLMError({self.error_type}, model={self.model_name})"
 
 
 class KeepUndefined(Undefined):
@@ -123,10 +176,30 @@ def _call_llm_cached(
             messages=[{"role": "user", "content": prompt}],
             **(extra_kwargs if extra_kwargs else {}),
         )
+    except ContentPolicyViolationError as e:
+        logger.warning(f"Content policy violation for model {model_name}: {e}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
+    except ContextWindowExceededError as e:
+        logger.warning(f"Context window exceeded for model {model_name}: {e}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
+    except (AuthenticationError, PermissionDeniedError, NotFoundError) as e:
+        # fatal authentication/authorization/model errors
+        logger.error(f"Fatal API error for model {model_name}: {e}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
+    except (BadRequestError, UnsupportedParamsError, APIResponseValidationError, BudgetExceededError) as e:
+        # fatal request errors
+        logger.error(f"Bad request error for model {model_name}: {e}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
+    except (RateLimitError, Timeout, UnprocessableEntityError, APIConnectionError, APIError, ServiceUnavailableError, InternalServerError) as e:
+        # retryable errors -- let instructor handle these with its retry logic
+        # we still log and wrap for context preservation
+        logger.warning(f"Retryable API error for model {model_name}: {e}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
     except Exception as e:
+        # catch-all for unknown errors -- wrap with context
         full_traceback = traceback.format_exc()
-        logger.warning(f"Error calling LLM: {e}\n{full_traceback}")
-        raise e
+        logger.warning(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
+        raise StruckdownLLMError(e, prompt, model_name) from e
 
     logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
 
