@@ -18,7 +18,7 @@ from rich.progress import (
 from rich.console import Console
 
 from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, __version__
-from .output_formatters import write_output
+from .output_formatters import write_output, render_template
 
 from jinja2 import Environment, meta
 
@@ -151,13 +151,15 @@ def chat(
 
 @app.command()
 def batch(
-    inputs: List[str] = typer.Argument(
-        None,
-        help="Input files or glob patterns (e.g., inputs/*.txt). If omitted, reads from stdin."
-    ),
     prompt: Optional[str] = typer.Argument(
         None,
-        help="Prompt with slots, e.g. 'extract name [[name]]'"
+        help="Prompt with slots, e.g. 'extract name [[name]]'. Omit if using --prompt/-p flag."
+    ),
+    input_files: Optional[List[str]] = typer.Option(
+        None,
+        "-i",
+        "--input",
+        help="Input files or glob patterns (e.g., -i '*.txt' -i 'data/*.json'). Can be specified multiple times."
     ),
     prompt_file: Optional[Path] = typer.Option(
         None,
@@ -165,17 +167,23 @@ def batch(
         "--prompt",
         help="Path to file containing the prompt"
     ),
-    output: Optional[Path] = typer.Option(
+    output: Optional[List[Path]] = typer.Option(
         None,
         "-o",
         "--output",
-        help="Output file (format inferred from extension: .json, .csv, .xlsx, .md, .txt)"
+        help="Output file (format inferred from extension: .json, .csv, .xlsx, .md, .txt). Can be specified multiple times."
     ),
     keep_inputs: bool = typer.Option(
         False,
         "-k",
         "--keep-inputs",
-        help="Include input fields (input, content, filename, basename) in output"
+        help="Include input fields (input, content, source, filename, basename) in output"
+    ),
+    template: Optional[Path] = typer.Option(
+        None,
+        "-t",
+        "--template",
+        help="Jinja2 template file to apply to non-JSON outputs"
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
@@ -188,14 +196,37 @@ def batch(
     Process multiple inputs in batch mode.
 
     Examples:
-        sd batch inputs/*.txt "extract [[name]]" -o results.json
-        sd batch data.json "welcome for {name} [[msg]]"
+        sd batch -i '*.txt' -p prompt.sd -o results.json
+        sd batch -i 'data.json' "welcome for {{name}} [[msg]]"
         cat file.txt | sd batch "extract [[name]]"
-        sd batch inputs/*.txt -p prompt.sd -o results.csv
+        sd batch -i '*.txt' -p prompt.sd -o results.json -o report.html -t template.j2
+
+    Multiple outputs: Use -t flag to apply a Jinja2 template to all non-JSON outputs.
+    JSON outputs always use standard JSON format. Without -t, output format is inferred from extension.
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
+
+    # Validate template usage
+    if template:
+        if not output:
+            typer.echo("Error: -t/--template requires at least one -o/--output", err=True)
+            raise typer.Exit(1)
+
+        # Check if there's at least one non-JSON output
+        has_non_json = any(
+            not str(out_path).lower().endswith('.json')
+            for out_path in output
+        )
+        if not has_non_json:
+            typer.echo("Error: -t/--template requires at least one non-JSON output file", err=True)
+            raise typer.Exit(1)
+
+        # Validate template file exists
+        if not template.exists():
+            typer.echo(f"Error: Template file not found: {template}", err=True)
+            raise typer.Exit(1)
 
     # Validate prompt arguments
     if prompt_file and prompt:
@@ -219,10 +250,10 @@ def batch(
     # Determine input source
     input_data = []
 
-    if inputs:
+    if input_files:
         # Process file arguments (may include globs)
         file_paths = []
-        for pattern in inputs:
+        for pattern in input_files:
             # Check if it's a glob pattern or regular file
             matches = glob(pattern, recursive=True)
             if matches:
@@ -352,12 +383,26 @@ def batch(
         for error in errors:
             typer.echo(f"  - {error}", err=True)
 
-    # Write output
-    if results:
-        write_output(results, output)
-    else:
+    # Write output(s)
+    if not results:
         typer.echo("Error: No results produced", err=True)
         raise typer.Exit(1)
+
+    if output:
+        # Write to multiple outputs
+        for output_path in output:
+            # Check if this is a JSON file
+            is_json = str(output_path).lower().endswith('.json')
+
+            if is_json or not template:
+                # Use format auto-detection for JSON or when no template specified
+                write_output(results, output_path)
+            else:
+                # Use template rendering for non-JSON outputs when template is specified
+                render_template(results, output_path, template)
+    else:
+        # No outputs specified, write to stdout
+        write_output(results, None)
 
 
 def _read_input_file(path: Path) -> List[dict]:
@@ -396,6 +441,7 @@ def _read_input_file(path: Path) -> List[dict]:
         return [{
             "input": content,
             "content": content,
+            "source": content,  # alias for compatibility
             "filename": str(path),
             "basename": path.stem
         }]

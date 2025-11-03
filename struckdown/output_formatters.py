@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
+from jinja2 import Environment, FileSystemLoader, Template
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,6 +120,40 @@ def write_markdown(data: List[Dict[str, Any]], output_path: Path) -> None:
         f.write("\n".join(lines))
 
     logger.info(f"Wrote {len(data)} results to {output_path}")
+
+
+def render_template(
+    data: List[Dict[str, Any]],
+    output_path: Path,
+    template_path: Path
+) -> None:
+    """
+    Render data through Jinja2 template.
+
+    Template is rendered once per result item with all fields available directly
+    (e.g., {{summary}}, {{filename}}). All rendered strings are concatenated.
+    """
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template file not found: {template_path}")
+
+    # Load template
+    env = Environment(loader=FileSystemLoader(template_path.parent))
+    template = env.get_template(template_path.name)
+
+    # Render template once per result and concatenate
+    rendered_parts = []
+    for item in data:
+        rendered = template.render(**item)
+        rendered_parts.append(rendered)
+
+    # Concatenate all rendered parts
+    final_output = "".join(rendered_parts)
+
+    # Write output
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(final_output)
+
+    logger.info(f"Rendered {len(data)} results using template {template_path.name} to {output_path}")
 
 
 def write_output(
