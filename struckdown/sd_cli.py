@@ -5,6 +5,7 @@ from glob import glob
 from pathlib import Path
 from typing import List, Optional
 
+import anyio
 import typer
 from decouple import config as env_config
 from rich.progress import (
@@ -17,7 +18,7 @@ from rich.progress import (
 )
 from rich.console import Console
 
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, __version__
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, chatter_async, __version__
 from .output_formatters import write_output, render_template
 
 from jinja2 import Environment, meta
@@ -25,6 +26,10 @@ from jinja2 import Environment, meta
 app = typer.Typer(help="struckdown: structured conversations with language models")
 
 logger = logging.getLogger(__name__)
+
+# Concurrency settings
+MAX_CONCURRENCY = env_config("SD_MAX_CONCURRENCY", default=20, cast=int)
+semaphore = anyio.Semaphore(MAX_CONCURRENCY)
 
 
 def version_callback(value: bool):
@@ -149,6 +154,168 @@ def chat(
         typer.echo(result.outputs)
 
 
+async def batch_async(
+    prompt: str,
+    input_data: List[dict],
+    output: Optional[List[Path]],
+    keep_inputs: bool,
+    template: Optional[Path],
+    model_name: Optional[str],
+    max_concurrent: int,
+    verbose: bool,
+    quiet: bool,
+):
+    """
+    Async implementation of batch processing with concurrent execution.
+    """
+    # Process each input
+    credentials = LLMCredentials()
+    model = LLM(model_name=model_name)
+    results = [None] * len(input_data)
+    errors = []
+
+    # Determine if we should show progress bar
+    show_progress = not quiet and sys.stderr.isatty()
+
+    # Create console for progress output (always to stderr)
+    console = Console(stderr=True)
+
+    # Create semaphore for concurrency control
+    sem = anyio.Semaphore(max_concurrent)
+
+    # Process with or without progress bar
+    if show_progress:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Processing", total=len(input_data))
+
+            async with anyio.create_task_group() as tg:
+                for idx, input_item in enumerate(input_data):
+
+                    async def run_and_store(index=idx, item=input_item, progress_bar=progress, progress_task=task):
+                        async with sem:
+                            try:
+                                # Execute chatter_async with the input context
+                                result = await chatter_async(
+                                    multipart_prompt=prompt,
+                                    model=model,
+                                    credentials=credentials,
+                                    context=item,
+                                )
+
+                                # Merge input data with extracted results
+                                if keep_inputs:
+                                    output_item = item.copy()
+                                else:
+                                    # Start with empty dict, only include extracted results
+                                    output_item = {}
+                                    # Keep filename for traceability
+                                    if 'filename' in item:
+                                        output_item['filename'] = item['filename']
+
+                                for key, segment_result in result.results.items():
+                                    output_item[key] = segment_result.output
+
+                                results[index] = output_item
+
+                                if verbose:
+                                    console.print(f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}")
+
+                            except Exception as e:
+                                error_msg = f"Error processing item {index+1}: {e}"
+                                logger.error(error_msg)
+                                errors.append(error_msg)
+                                if verbose:
+                                    import traceback
+                                    console.print(traceback.format_exc())
+
+                            finally:
+                                # Update progress bar on completion
+                                if progress_bar is not None:
+                                    progress_bar.update(progress_task, advance=1)
+
+                    tg.start_soon(run_and_store)
+    else:
+        # No progress bar, just process concurrently
+        async with anyio.create_task_group() as tg:
+            for idx, input_item in enumerate(input_data):
+
+                async def run_and_store(index=idx, item=input_item):
+                    async with sem:
+                        try:
+                            # Execute chatter_async with the input context
+                            result = await chatter_async(
+                                multipart_prompt=prompt,
+                                model=model,
+                                credentials=credentials,
+                                context=item,
+                            )
+
+                            # Merge input data with extracted results
+                            if keep_inputs:
+                                output_item = item.copy()
+                            else:
+                                # Start with empty dict, only include extracted results
+                                output_item = {}
+                                # Keep filename for traceability
+                                if 'filename' in item:
+                                    output_item['filename'] = item['filename']
+
+                            for key, segment_result in result.results.items():
+                                output_item[key] = segment_result.output
+
+                            results[index] = output_item
+
+                            if verbose:
+                                console.print(f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}")
+
+                        except Exception as e:
+                            error_msg = f"Error processing item {index+1}: {e}"
+                            logger.error(error_msg)
+                            errors.append(error_msg)
+                            if verbose:
+                                import traceback
+                                console.print(traceback.format_exc())
+
+                tg.start_soon(run_and_store)
+
+    # Report errors if any
+    if errors:
+        typer.echo(f"\nCompleted with {len(errors)} error(s):", err=True)
+        for error in errors:
+            typer.echo(f"  - {error}", err=True)
+
+    # Write output(s)
+    if not results or all(r is None for r in results):
+        typer.echo("Error: No results produced", err=True)
+        raise typer.Exit(1)
+
+    # Filter out None results from errors
+    results = [r for r in results if r is not None]
+
+    if output:
+        # Write to multiple outputs
+        for output_path in output:
+            # Check if this is a JSON file
+            is_json = str(output_path).lower().endswith('.json')
+
+            if is_json or not template:
+                # Use format auto-detection for JSON or when no template specified
+                write_output(results, output_path)
+            else:
+                # Use template rendering for non-JSON outputs when template is specified
+                render_template(results, output_path, template)
+    else:
+        # No outputs specified, write to stdout
+        write_output(results, None)
+
+
 @app.command()
 def batch(
     prompt: Optional[str] = typer.Argument(
@@ -187,7 +354,14 @@ def batch(
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
+        "-m", "--model",
         help="LLM model name (overrides DEFAULT_LLM env var)",
+    ),
+    max_concurrent: int = typer.Option(
+        20,
+        "-c",
+        "--concurrency",
+        help="Maximum number of concurrent API requests"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable debug logging"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
@@ -302,107 +476,19 @@ def batch(
         typer.echo("Error: No input provided (specify files or pipe to stdin)", err=True)
         raise typer.Exit(1)
 
-    # Process each input
-    credentials = LLMCredentials()
-    model = LLM(model_name=model_name)
-    results = []
-    errors = []
-
-    # Determine if we should show progress bar
-    # Show progress if: not quiet AND stderr is a TTY (not redirected)
-    show_progress = not quiet and sys.stderr.isatty()
-
-    # Create console for progress output (always to stderr)
-    console = Console(stderr=True)
-
-    # Define the processing function to avoid code duplication
-    def process_item(i, input_item, progress_task=None, progress_obj=None):
-        try:
-            # Execute chatter with the input context
-            result = chatter(
-                multipart_prompt=prompt,
-                model=model,
-                credentials=credentials,
-                context=input_item,
-            )
-
-            # Merge input data with extracted results
-            if keep_inputs:
-                output_item = input_item.copy()
-            else:
-                # Start with empty dict, only include extracted results
-                output_item = {}
-                # Keep filename for traceability
-                if 'filename' in input_item:
-                    output_item['filename'] = input_item['filename']
-
-            for key, segment_result in result.results.items():
-                output_item[key] = segment_result.output
-
-            results.append(output_item)
-
-            if verbose:
-                # Use console for verbose output to ensure it doesn't conflict with progress bar
-                console.print(f"Processed item {i+1}/{len(input_data)}: {output_item.get('filename', f'item_{i}')}")
-
-            if progress_obj and progress_task is not None:
-                progress_obj.update(progress_task, advance=1)
-
-        except Exception as e:
-            error_msg = f"Error processing item {i+1}: {e}"
-            logger.error(error_msg)
-            errors.append(error_msg)
-            if verbose:
-                import traceback
-                console.print(traceback.format_exc())
-
-            if progress_obj and progress_task is not None:
-                progress_obj.update(progress_task, advance=1)
-
-    # Process with or without progress bar
-    if show_progress:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Processing", total=len(input_data))
-            for i, input_item in enumerate(input_data):
-                process_item(i, input_item, task, progress)
-    else:
-        # No progress bar, just process silently
-        for i, input_item in enumerate(input_data):
-            process_item(i, input_item)
-
-    # Report errors if any
-    if errors:
-        typer.echo(f"\nCompleted with {len(errors)} error(s):", err=True)
-        for error in errors:
-            typer.echo(f"  - {error}", err=True)
-
-    # Write output(s)
-    if not results:
-        typer.echo("Error: No results produced", err=True)
-        raise typer.Exit(1)
-
-    if output:
-        # Write to multiple outputs
-        for output_path in output:
-            # Check if this is a JSON file
-            is_json = str(output_path).lower().endswith('.json')
-
-            if is_json or not template:
-                # Use format auto-detection for JSON or when no template specified
-                write_output(results, output_path)
-            else:
-                # Use template rendering for non-JSON outputs when template is specified
-                render_template(results, output_path, template)
-    else:
-        # No outputs specified, write to stdout
-        write_output(results, None)
+    # Call async batch processing
+    anyio.run(
+        batch_async,
+        prompt,
+        input_data,
+        output,
+        keep_inputs,
+        template,
+        model_name,
+        max_concurrent,
+        verbose,
+        quiet,
+    )
 
 
 def _read_input_file(path: Path) -> List[dict]:

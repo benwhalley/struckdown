@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, Template
 
 logger = logging.getLogger(__name__)
 
@@ -130,24 +130,21 @@ def render_template(
     """
     Render data through Jinja2 template.
 
-    Template is rendered once per result item with all fields available directly
-    (e.g., {{summary}}, {{filename}}). All rendered strings are concatenated.
+    The template receives the entire results list as 'results' variable.
+    Templates can iterate over results: {% for r in results %}...{% endfor %}
     """
     if not template_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_path}")
 
-    # Load template
-    env = Environment(loader=FileSystemLoader(template_path.parent))
+    # Load template with strict undefined checking
+    env = Environment(
+        loader=FileSystemLoader(template_path.parent),
+        undefined=StrictUndefined
+    )
     template = env.get_template(template_path.name)
 
-    # Render template once per result and concatenate
-    rendered_parts = []
-    for item in data:
-        rendered = template.render(**item)
-        rendered_parts.append(rendered)
-
-    # Concatenate all rendered parts
-    final_output = "".join(rendered_parts)
+    # Render template once with all results
+    final_output = template.render(results=data)
 
     # Write output
     with open(output_path, "w", encoding="utf-8") as f:
