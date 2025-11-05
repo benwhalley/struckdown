@@ -18,7 +18,7 @@ from rich.progress import (
 )
 from rich.console import Console
 
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, chatter_async, __version__
+from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, chatter_async, CostSummary, __version__
 from .output_formatters import write_output, render_template
 
 from jinja2 import Environment, meta
@@ -111,6 +111,10 @@ def chat(
         cat prompt.sd | sd chat
         sd chat -p prompt.sd
     """
+    # start new run for cache detection
+    from struckdown import new_run
+    new_run()
+
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
@@ -153,6 +157,10 @@ def chat(
         typer.echo("\nFinal context:")
         typer.echo(result.outputs)
 
+    # print cost summary to stderr (always visible)
+    summary = CostSummary.from_results([result])
+    typer.echo(summary.format_summary(), err=True)
+
 
 async def batch_async(
     prompt: str,
@@ -173,6 +181,10 @@ async def batch_async(
     model = LLM(model_name=model_name)
     results = [None] * len(input_data)
     errors = []
+
+    # cost tracking - collect all ChatterResults for CostSummary
+    chatter_results = []
+    cost_lock = anyio.Lock()
 
     # Determine if we should show progress bar
     show_progress = not quiet and sys.stderr.isatty()
@@ -208,6 +220,10 @@ async def batch_async(
                                     credentials=credentials,
                                     context=item,
                                 )
+
+                                # collect result for cost tracking
+                                async with cost_lock:
+                                    chatter_results.append(result)
 
                                 # Merge input data with extracted results
                                 if keep_inputs:
@@ -257,6 +273,10 @@ async def batch_async(
                                 context=item,
                             )
 
+                            # collect result for cost tracking
+                            async with cost_lock:
+                                chatter_results.append(result)
+
                             # Merge input data with extracted results
                             if keep_inputs:
                                 output_item = item.copy()
@@ -284,6 +304,10 @@ async def batch_async(
                                 console.print(traceback.format_exc())
 
                 tg.start_soon(run_and_store)
+
+    # print cost summary to stderr (always visible)
+    summary = CostSummary.from_results(chatter_results)
+    typer.echo(summary.format_summary(), err=True)
 
     # Report errors if any
     if errors:
@@ -378,6 +402,10 @@ def batch(
     Multiple outputs: Use -t flag to apply a Jinja2 template to all non-JSON outputs.
     JSON outputs always use standard JSON format. Without -t, output format is inferred from extension.
     """
+    # start new run for cache detection
+    from struckdown import new_run
+    new_run()
+
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)

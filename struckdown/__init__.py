@@ -1,14 +1,17 @@
 import logging
 import re
 import traceback
+import uuid
 import warnings
 from collections import OrderedDict
+from contextvars import ContextVar
 from types import FunctionType
 from typing import Any, Dict, List, Optional
 
 import anyio
 import instructor
-import litellm
+import litellm  # REQUIRED: Cost tracking via _hidden_params["response_cost"] requires litellm
+                # Generalizing to non-litellm providers would require alternative cost calculation
 import openai
 from box import Box
 from decouple import config as env_config
@@ -61,6 +64,46 @@ except PackageNotFoundError:
 warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 logger = logging.getLogger(__name__)
+
+# Run ID for cache detection - uses contextvars for thread/async safety
+# Works correctly in long-running processes (Django, Jupyter) by scoping to logical runs
+# Fresh API calls will have current run ID, cached calls will have old/missing IDs
+_run_id_var: ContextVar[Optional[str]] = ContextVar('run_id', default=None)
+
+
+def get_run_id() -> str:
+    """Get current run ID, auto-initializing if needed.
+
+    Returns:
+        Current run ID (auto-generated if not set)
+    """
+    run_id = _run_id_var.get()
+    if run_id is None:
+        run_id = str(uuid.uuid4())
+        _run_id_var.set(run_id)
+    return run_id
+
+
+def new_run() -> str:
+    """Start a new logical run with a fresh ID.
+
+    Call this at the start of CLI commands or Django views to ensure
+    cache detection works correctly in long-running processes.
+
+    Returns:
+        New run ID
+
+    Example:
+        # In Django view:
+        from struckdown import new_run
+        def my_view(request):
+            new_run()  # Fresh run ID for this request
+            result = chatter(...)
+            ...
+    """
+    run_id = str(uuid.uuid4())
+    _run_id_var.set(run_id)
+    return run_id
 
 
 class StruckdownLLMError(Exception):
@@ -204,7 +247,25 @@ def _call_llm_cached(
     logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
 
     # Serialize to dicts for safe pickling (instructor always returns Pydantic models)
-    return res.model_dump(), com.model_dump()
+    com_dict = com.model_dump()
+
+    # preserve _hidden_params from litellm if it exists (contains response_cost)
+    # NOTE: This is litellm-specific. _hidden_params contains metadata not in OpenAI schema:
+    #   - response_cost: USD cost calculated by litellm
+    #   - model_id: Internal model identifier
+    #   - additional_headers: Extra metadata
+    # Non-litellm providers would need alternative cost tracking (e.g., token count × pricing)
+    if hasattr(com, '_hidden_params'):
+        com_dict['_hidden_params'] = com._hidden_params
+        logger.debug(f"Preserved _hidden_params with response_cost: {com._hidden_params.get('response_cost') if com._hidden_params else None}")
+    else:
+        logger.debug("No _hidden_params attribute on completion object")
+
+    # mark with current run ID for cache detection
+    # cached results will have different/missing _run_id
+    com_dict['_run_id'] = get_run_id()
+
+    return res.model_dump(), com_dict
 
 
 def structured_chat(
@@ -339,9 +400,203 @@ class ChatterResult(BaseModel):
     def outputs(self):
         return Box({k: v.output for k, v in self.results.items()})
 
+    @property
+    def total_cost(self) -> float:
+        """Total USD cost from all segments (0.0 for cached/unavailable)"""
+        return sum(
+            (seg.completion._hidden_params.get("response_cost", 0.0) or 0.0)
+            for seg in self.results.values()
+            if seg.completion and hasattr(seg.completion, "_hidden_params")
+        )
+
+    @property
+    def prompt_tokens(self) -> int:
+        """Total input tokens across all segments"""
+        return sum(
+            (seg.completion.usage.prompt_tokens or 0)
+            for seg in self.results.values()
+            if seg.completion and hasattr(seg.completion, "usage") and seg.completion.usage
+        )
+
+    @property
+    def completion_tokens(self) -> int:
+        """Total output tokens across all segments"""
+        return sum(
+            (seg.completion.usage.completion_tokens or 0)
+            for seg in self.results.values()
+            if seg.completion and hasattr(seg.completion, "usage") and seg.completion.usage
+        )
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens (prompt + completion)"""
+        return self.prompt_tokens + self.completion_tokens
+
+    @property
+    def has_unknown_costs(self) -> bool:
+        """True if ANY segment has unknown/missing cost data"""
+        for seg in self.results.values():
+            if not seg.completion:
+                continue  # function executor, no cost
+            if not hasattr(seg.completion, "_hidden_params"):
+                return True  # missing cost data
+            cost = seg.completion._hidden_params.get("response_cost")
+            if cost is None:
+                return True  # explicit None = unknown
+        return False
+
+    @property
+    def all_costs_unknown(self) -> bool:
+        """True if ALL segments with completions have unknown costs"""
+        segments_with_completion = [
+            seg for seg in self.results.values()
+            if seg.completion and hasattr(seg.completion, "_hidden_params")
+        ]
+        if not segments_with_completion:
+            return True  # no completions = unknown
+
+        for seg in segments_with_completion:
+            cost = seg.completion._hidden_params.get("response_cost")
+            if cost is not None:
+                return False  # found at least one known cost
+        return True
+
+    @property
+    def fresh_call_count(self) -> int:
+        """Count of segments from fresh API calls (not cached)"""
+        current_run_id = get_run_id()
+        return sum(
+            1 for seg in self.results.values()
+            if seg.completion and seg.completion.get('_run_id') == current_run_id
+        )
+
+    @property
+    def cached_call_count(self) -> int:
+        """Count of segments from cache"""
+        current_run_id = get_run_id()
+        return sum(
+            1 for seg in self.results.values()
+            if seg.completion and seg.completion.get('_run_id') != current_run_id
+        )
+
+    @property
+    def fresh_cost(self) -> float:
+        """Total USD cost from fresh API calls only (excludes cached)"""
+        current_run_id = get_run_id()
+        return sum(
+            (seg.completion._hidden_params.get("response_cost", 0.0) or 0.0)
+            for seg in self.results.values()
+            if (seg.completion
+                and hasattr(seg.completion, "_hidden_params")
+                and seg.completion.get('_run_id') == current_run_id)
+        )
+
+    @property
+    def cached_cost(self) -> float:
+        """Total USD cost from cached calls (original cost when first made)"""
+        return self.total_cost - self.fresh_cost
+
     model_config = ConfigDict(
         arbitrary_types_allowed=True,  # treat unknown sub‑types as Any
     )
+
+
+class CostSummary(BaseModel):
+    """Aggregated cost summary from multiple ChatterResult objects.
+
+    Consolidates cost tracking logic for display in CLIs.
+    """
+    total_cost: float = 0.0
+    fresh_cost: float = 0.0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    fresh_count: int = 0
+    cached_count: int = 0
+    has_unknown_costs: bool = False
+    all_costs_unknown: bool = False
+
+    @classmethod
+    def from_results(cls, results: List[ChatterResult]) -> 'CostSummary':
+        """Aggregate cost data from multiple ChatterResult objects.
+
+        Args:
+            results: List of ChatterResult objects to aggregate
+
+        Returns:
+            CostSummary with aggregated data
+        """
+        total_cost = 0.0
+        fresh_cost = 0.0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        fresh_count = 0
+        cached_count = 0
+        has_unknown_costs = False
+        all_costs_unknown = True
+
+        for result in results:
+            if result is None:
+                continue
+
+            total_cost += result.total_cost
+            fresh_cost += result.fresh_cost
+            total_prompt_tokens += result.prompt_tokens
+            total_completion_tokens += result.completion_tokens
+            fresh_count += result.fresh_call_count
+            cached_count += result.cached_call_count
+
+            if result.has_unknown_costs:
+                has_unknown_costs = True
+            if not result.all_costs_unknown:
+                all_costs_unknown = False
+
+        return cls(
+            total_cost=total_cost,
+            fresh_cost=fresh_cost,
+            total_prompt_tokens=total_prompt_tokens,
+            total_completion_tokens=total_completion_tokens,
+            fresh_count=fresh_count,
+            cached_count=cached_count,
+            has_unknown_costs=has_unknown_costs,
+            all_costs_unknown=all_costs_unknown,
+        )
+
+    def format_summary(self, include_breakdown: bool = True) -> str:
+        """Format cost summary for display.
+
+        Args:
+            include_breakdown: Include cache breakdown if available
+
+        Returns:
+            Formatted string ready for stderr output
+        """
+        lines = []
+
+        # main line - handle unknown costs
+        if self.all_costs_unknown:
+            lines.append(
+                f"Total cost: unknown "
+                f"({self.total_prompt_tokens:,} in / {self.total_completion_tokens:,} out)"
+            )
+        elif self.has_unknown_costs:
+            lines.append(
+                f"Total cost: ≥${self.total_cost:.4f} "
+                f"({self.total_prompt_tokens:,} in / {self.total_completion_tokens:,} out, some costs unknown)"
+            )
+        else:
+            lines.append(
+                f"Total cost: ${self.total_cost:.4f} "
+                f"({self.total_prompt_tokens:,} in / {self.total_completion_tokens:,} out)"
+            )
+
+            # cache breakdown (only if not unknown and has cached calls)
+            if include_breakdown and self.cached_count > 0:
+                lines.append(
+                    f"  This run: ${self.fresh_cost:.4f} "
+                    f"({self.fresh_count} fresh, {self.cached_count} cached)"
+                )
+
+        return '\n'.join(lines)
 
 
 async def process_single_segment_(
