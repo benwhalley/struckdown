@@ -30,11 +30,40 @@ class ResponseModel(BaseModel):
     """Base class for all Struckdown response models with LLM parameter defaults.
 
     Subclasses should set llm_config to customize LLM call parameters.
+    Subclasses can set _capture_from_context to auto-inject context values.
     """
 
     # Class-level config for LLM parameters (not part of response schema)
     # Subclasses override this to set their own defaults
     llm_config: LLMConfig = LLMConfig(model=None)
+
+    # Class-level list of field names to auto-populate from context
+    # Example: _capture_from_context = ["source_id", "item_index"]
+    _capture_from_context: List[str] = []
+
+    def post_process(self, context: Dict[str, Any]) -> None:
+        """Override in subclasses for model-specific post-processing.
+
+        Called automatically after LLM extraction with accumulated context.
+        Default implementation does nothing.
+        """
+        pass
+
+    @classmethod
+    def customize_schema_for_context(cls, schema: dict, context: Dict[str, Any]) -> dict:
+        """Override to customize schema based on context.
+
+        Called by struckdown before passing schema to LLM.
+        Subclasses can inspect context and modify schema accordingly.
+
+        Args:
+            schema: Base JSON schema for this model
+            context: Accumulated template context
+
+        Returns:
+            Modified schema (or original if no changes needed)
+        """
+        return schema
 
 
 

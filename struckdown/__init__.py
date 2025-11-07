@@ -766,6 +766,54 @@ async def process_single_segment_(
         else:
             extracted_value = res
 
+        # Auto-inject context values into ResponseModel instances
+        # Handle single models, lists, and nested models (e.g., CodeList.codes)
+        def inject_context_recursively(obj):
+            """Recursively inject context into ResponseModel instances."""
+            # Access class-level _capture_from_context, avoiding Pydantic's private attr handling
+            capture_fields = getattr(type(obj), '_capture_from_context', [])
+            # Handle case where it might be a Pydantic ModelPrivateAttr
+            if hasattr(capture_fields, 'default'):
+                capture_fields = capture_fields.default or []
+
+            if capture_fields:
+                for field_name in capture_fields:
+                    if field_name in accumulated_context and hasattr(obj, field_name):
+                        setattr(obj, field_name, accumulated_context[field_name])
+
+            # Recursively check list fields (e.g., CodeList.codes)
+            if hasattr(obj, '__dict__'):
+                for attr_name, attr_value in obj.__dict__.items():
+                    if isinstance(attr_value, list):
+                        for item in attr_value:
+                            inject_context_recursively(item)
+
+        if isinstance(extracted_value, list):
+            for item in extracted_value:
+                inject_context_recursively(item)
+        else:
+            inject_context_recursively(extracted_value)
+
+        # Call post_process hook on ResponseModel instances
+        def call_post_process(obj):
+            """Call post_process on ResponseModel instances."""
+            if hasattr(obj, 'post_process') and callable(obj.post_process):
+                obj.post_process(accumulated_context)
+
+            # Recursively call on list fields
+            if hasattr(obj, '__dict__'):
+                for attr_value in obj.__dict__.values():
+                    if isinstance(attr_value, list):
+                        for item in attr_value:
+                            if hasattr(item, 'post_process'):
+                                call_post_process(item)
+
+        if isinstance(extracted_value, list):
+            for item in extracted_value:
+                call_post_process(item)
+        else:
+            call_post_process(extracted_value)
+
         # Handle date/datetime pattern expansion via RRULE
         if prompt_part.action_type in ["date", "datetime"]:
             pattern_string = None

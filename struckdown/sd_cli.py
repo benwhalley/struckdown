@@ -100,6 +100,11 @@ def chat(
         env_config("DEFAULT_LLM", default=None, cast=str),
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        help="Random seed for reproducible outputs (if supported by model)",
+    ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Print the full ChatterResult object"),
 ):
@@ -144,10 +149,16 @@ def chat(
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
 
+    # build extra_kwargs for API parameters
+    extra_kwargs = {}
+    if seed is not None:
+        extra_kwargs["seed"] = seed
+
     result = chatter(
         multipart_prompt=prompt_str,
         model=model,
         credentials=credentials,
+        extra_kwargs=extra_kwargs if extra_kwargs else None,
     )
 
     for k, v in result.results.items():
@@ -169,6 +180,7 @@ async def batch_async(
     keep_inputs: bool,
     template: Optional[Path],
     model_name: Optional[str],
+    extra_kwargs: Optional[dict],
     max_concurrent: int,
     verbose: bool,
     quiet: bool,
@@ -219,6 +231,7 @@ async def batch_async(
                                     model=model,
                                     credentials=credentials,
                                     context=item,
+                                    extra_kwargs=extra_kwargs,
                                 )
 
                                 # collect result for cost tracking
@@ -271,6 +284,7 @@ async def batch_async(
                                 model=model,
                                 credentials=credentials,
                                 context=item,
+                                extra_kwargs=extra_kwargs,
                             )
 
                             # collect result for cost tracking
@@ -380,6 +394,11 @@ def batch(
         env_config("DEFAULT_LLM", default=None, cast=str),
         "-m", "--model",
         help="LLM model name (overrides DEFAULT_LLM env var)",
+    ),
+    seed: Optional[int] = typer.Option(
+        None,
+        "--seed",
+        help="Random seed for reproducible outputs (if supported by model)",
     ),
     max_concurrent: int = typer.Option(
         20,
@@ -504,6 +523,11 @@ def batch(
         typer.echo("Error: No input provided (specify files or pipe to stdin)", err=True)
         raise typer.Exit(1)
 
+    # build extra_kwargs for API parameters
+    extra_kwargs = {}
+    if seed is not None:
+        extra_kwargs["seed"] = seed
+
     # Call async batch processing
     anyio.run(
         batch_async,
@@ -513,6 +537,7 @@ def batch(
         keep_inputs,
         template,
         model_name,
+        extra_kwargs,
         max_concurrent,
         verbose,
         quiet,
