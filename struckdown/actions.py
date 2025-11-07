@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Any, Callable, Literal, Optional, get_type_hints
 
-from jinja2 import Template, StrictUndefined
+from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from struckdown.return_type_models import LLMConfig, ResponseModel
@@ -39,7 +39,14 @@ class Actions:
     _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any]] = {}
 
     @classmethod
-    def register(cls, action_name: str, on_error: ErrorStrategy = "propagate", default_save: bool = True, return_type: type | None = None, default: Any = ""):
+    def register(
+        cls,
+        action_name: str,
+        on_error: ErrorStrategy = "propagate",
+        default_save: bool = True,
+        return_type: type | None = None,
+        default: Any = "",
+    ):
         """Decorator to register a function as a custom action.
 
         Args:
@@ -77,8 +84,16 @@ class Actions:
         """
 
         def decorator(func: Callable) -> Callable:
-            cls._registry[action_name] = (func, on_error, default_save, return_type, default)
-            logger.debug(f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}")
+            cls._registry[action_name] = (
+                func,
+                on_error,
+                default_save,
+                return_type,
+                default,
+            )
+            logger.debug(
+                f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}"
+            )
             return func
 
         return decorator
@@ -109,13 +124,17 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save, return_type, default_value = cls._registry[action_name]
+        func, on_error, default_save, return_type, default_value = cls._registry[
+            action_name
+        ]
 
         # create response model
         class ActionResult(ResponseModel):
             """Result from custom action"""
 
-            response: Any = Field(default="", description=f"Result from {action_name} action")
+            response: Any = Field(
+                default="", description=f"Result from {action_name} action"
+            )
 
         def executor(context: dict, rendered_prompt: str, **kwargs):
             """Generic executor that calls the registered function.
@@ -148,8 +167,9 @@ class Actions:
             # get function signature to map positional args to parameter names
             sig = inspect.signature(func)
             param_names = [
-                name for name in sig.parameters.keys()
-                if name != 'context'  # skip context parameter
+                name
+                for name in sig.parameters.keys()
+                if name != "context"  # skip context parameter
             ]
 
             # map positional args to parameter names
@@ -170,7 +190,9 @@ class Actions:
             # debug logging to understand context state
             logger.debug(f"Executor called for action '{action_name}'")
             logger.debug(f"Context keys available: {list(context.keys())}")
-            logger.debug(f"Positional args: {positional_args}, Keyword args: {keyword_args}")
+            logger.debug(
+                f"Positional args: {positional_args}, Keyword args: {keyword_args}"
+            )
             logger.debug(f"Mapped params to render: {params}")
 
             # render Jinja2 variables in parameter values
@@ -180,7 +202,9 @@ class Actions:
                 try:
                     # try rendering as Jinja2 template with StrictUndefined
                     # this will error if variables are missing instead of silently rendering to ''
-                    rendered_value = Template(str(v), undefined=StrictUndefined).render(**context)
+                    rendered_value = Template(str(v), undefined=StrictUndefined).render(
+                        **context
+                    )
                     logger.debug(f"Rendered '{k}': '{v}' → '{rendered_value}'")
                     rendered_params[k] = rendered_value
                 except Exception as e:
@@ -203,11 +227,13 @@ class Actions:
                 field_defs = {}
 
                 for param_name, param in sig.parameters.items():
-                    if param_name == 'context':
+                    if param_name == "context":
                         continue  # context is always dict, passed separately
 
                     # get type hint for this parameter
-                    param_type = type_hints.get(param_name, str)  # default to str if no hint
+                    param_type = type_hints.get(
+                        param_name, str
+                    )  # default to str if no hint
 
                     # get default value if specified
                     if param.default is inspect.Parameter.empty:
@@ -220,8 +246,7 @@ class Actions:
                 # create temporary Pydantic model for validation/coercion
                 if field_defs:
                     CoercionModel = create_model(
-                        f'{action_name.title()}Params',
-                        **field_defs
+                        f"{action_name.title()}Params", **field_defs
                     )
 
                     # validate and coerce the parameters
@@ -239,7 +264,9 @@ class Actions:
 
             except Exception as e:
                 # if type introspection fails, fall back to uncoerced params
-                logger.debug(f"Type coercion failed for action '{action_name}': {e}. Using uncoerced params.")
+                logger.debug(
+                    f"Type coercion failed for action '{action_name}': {e}. Using uncoerced params."
+                )
                 coerced_params = rendered_params
 
             # call the registered function
@@ -329,7 +356,13 @@ class Actions:
             List of Pydantic model classes registered as return types
         """
         types = []
-        for func, on_error, default_save, return_type, default_value in cls._registry.values():
+        for (
+            func,
+            on_error,
+            default_save,
+            return_type,
+            default_value,
+        ) in cls._registry.values():
             if return_type is not None and return_type not in types:
                 types.append(return_type)
         return types

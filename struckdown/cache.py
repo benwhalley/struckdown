@@ -88,6 +88,7 @@ cache_dir = get_cache_dir()
 cache_size_limit = get_cache_size_limit()
 memory = None
 
+
 def _get_cache_size(cache_path: Path) -> int:
     """Calculate total size of cache directory in bytes."""
     total_size = 0
@@ -132,14 +133,18 @@ if cache_dir is not None:
             thread = threading.Thread(
                 target=_reduce_cache_size_async,
                 args=(memory, cache_size_limit),
-                daemon=True
+                daemon=True,
             )
             thread.start()
-            logger.info(f"Cache initialized at {cache_dir} with {cache_size_limit / (1024**3):.1f} GB limit")
+            logger.info(
+                f"Cache initialized at {cache_dir} with {cache_size_limit / (1024**3):.1f} GB limit"
+            )
         else:
             logger.info(f"Cache initialized at {cache_dir} with no size limit")
     except (PermissionError, OSError) as e:
-        logger.warning("Failed to create cache directory at ~/.struckdown/cache trying local directory cacheing.")
+        logger.warning(
+            "Failed to create cache directory at ~/.struckdown/cache trying local directory cacheing."
+        )
         try:
             fallback_dir = Path(".struckdown/cache")
             fallback_dir.mkdir(parents=True, exist_ok=True)
@@ -148,11 +153,13 @@ if cache_dir is not None:
                 thread = threading.Thread(
                     target=_reduce_cache_size_async,
                     args=(memory, cache_size_limit),
-                    daemon=True
+                    daemon=True,
                 )
                 thread.start()
         except (PermissionError, OSError):
-            logger.warning("Failed to create local cache directory .struckdown/cache. Caching is disabled.")
+            logger.warning(
+                "Failed to create local cache directory .struckdown/cache. Caching is disabled."
+            )
             memory = Memory(location=None, verbose=0)
 else:
     # Caching disabled - use a no-op Memory object

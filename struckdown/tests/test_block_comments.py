@@ -5,6 +5,7 @@ They are completely dropped from the template before any other processing.
 """
 
 import pytest
+
 from struckdown.parsing import parse_syntax
 
 
@@ -21,11 +22,11 @@ def test_simple_block_comment():
     result = parse_syntax(template)
     assert len(result) == 1
     section = result[0]
-    prompt_text = section['response'].text
+    prompt_text = section["response"].text
 
     # comment content should not appear in prompt
-    assert 'This is a comment' not in prompt_text
-    assert '{{name}}' in prompt_text
+    assert "This is a comment" not in prompt_text
+    assert "{{name}}" in prompt_text
 
 
 def test_block_comment_with_special_syntax():
@@ -45,15 +46,15 @@ def test_block_comment_with_special_syntax():
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['actual_completion'].text
+    prompt_text = section["actual_completion"].text
 
     # block comment content should not leak
-    assert 'ignored' not in prompt_text
-    assert '{{ignored_var}}' not in prompt_text
-    assert '[[pick:' not in prompt_text
+    assert "ignored" not in prompt_text
+    assert "{{ignored_var}}" not in prompt_text
+    assert "[[pick:" not in prompt_text
 
     # actual content should be present
-    assert '{{actual_var}}' in prompt_text
+    assert "{{actual_var}}" in prompt_text
 
 
 def test_multiple_block_comments():
@@ -72,12 +73,12 @@ def test_multiple_block_comments():
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['response'].text
+    prompt_text = section["response"].text
 
-    assert 'First comment' not in prompt_text
-    assert 'Second comment' not in prompt_text
-    assert 'Some text' in prompt_text
-    assert 'More text' in prompt_text
+    assert "First comment" not in prompt_text
+    assert "Second comment" not in prompt_text
+    assert "Some text" in prompt_text
+    assert "More text" in prompt_text
 
 
 def test_block_comment_at_start():
@@ -93,10 +94,10 @@ Write a joke about {{topic}}
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['joke'].text
+    prompt_text = section["joke"].text
 
-    assert 'Simple Chain Example' not in prompt_text
-    assert '{{topic}}' in prompt_text
+    assert "Simple Chain Example" not in prompt_text
+    assert "{{topic}}" in prompt_text
 
 
 def test_block_comment_with_obliviate():
@@ -122,13 +123,13 @@ def test_block_comment_with_obliviate():
 
     # both sections should be clean
     # completions use variable names 'first' and 'second' as specified
-    first_prompt = result[0]['first'].text
-    second_prompt = result[1]['second'].text
+    first_prompt = result[0]["first"].text
+    second_prompt = result[1]["second"].text
 
-    assert 'First section docs' not in first_prompt
-    assert 'Second section docs' not in second_prompt
-    assert 'First prompt' in first_prompt
-    assert 'Second prompt' in second_prompt
+    assert "First section docs" not in first_prompt
+    assert "Second section docs" not in second_prompt
+    assert "First prompt" in first_prompt
+    assert "Second prompt" in second_prompt
 
 
 def test_empty_block_comment():
@@ -162,9 +163,9 @@ def test_multiline_block_comment():
 
     result = parse_syntax(template)
     section = result[0]
-    prompt_text = section['response'].text
+    prompt_text = section["response"].text
 
-    assert 'Line 1' not in prompt_text
-    assert 'Line 2' not in prompt_text
-    assert 'Line 3' not in prompt_text
-    assert 'Actual content' in prompt_text
+    assert "Line 1" not in prompt_text
+    assert "Line 2" not in prompt_text
+    assert "Line 3" not in prompt_text
+    assert "Actual content" in prompt_text

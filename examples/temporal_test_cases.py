@@ -8,7 +8,8 @@ Run with: python examples/temporal_test_cases.py
 """
 
 from datetime import date, datetime, time, timedelta
-from struckdown import chatter, LLM, LLMCredentials
+
+from struckdown import LLM, LLMCredentials, chatter
 
 # Test case format: (description, prompt, expected_type, validation_function)
 TEST_CASES = [
@@ -39,25 +40,28 @@ TEST_CASES = [
         "description": "Extract 'next Monday'",
         "prompt": "The deadline is next Monday [[date:d]]",
         "expected_type": date,
-        "validate": lambda r: isinstance(r["d"], date) and r["d"].weekday() == 0,  # Monday
+        "validate": lambda r: isinstance(r["d"], date)
+        and r["d"].weekday() == 0,  # Monday
     },
-
     # ===== RECURRING PATTERNS - SINGLE VALUE =====
     {
         "category": "Patterns - Single (with warning)",
         "description": "Pattern 'first tuesday in november' (single) - should warn about truncation",
         "prompt": "first tuesday in november [[date:d]]",
         "expected_type": date,
-        "validate": lambda r: isinstance(r["d"], date) and r["d"].month == 11 and r["d"].weekday() == 1,
+        "validate": lambda r: isinstance(r["d"], date)
+        and r["d"].month == 11
+        and r["d"].weekday() == 1,
     },
     {
         "category": "Patterns - Single (with warning)",
         "description": "Pattern 'last friday in december' (single)",
         "prompt": "last friday in december [[date:d]]",
         "expected_type": date,
-        "validate": lambda r: isinstance(r["d"], date) and r["d"].month == 12 and r["d"].weekday() == 4,
+        "validate": lambda r: isinstance(r["d"], date)
+        and r["d"].month == 12
+        and r["d"].weekday() == 4,
     },
-
     # ===== RECURRING PATTERNS - LISTS =====
     {
         "category": "Patterns - Lists",
@@ -100,10 +104,11 @@ TEST_CASES = [
         "validate": lambda r: (
             isinstance(r["dates"], list)
             and len(r["dates"]) >= 4  # At least 4 Wednesdays in September
-            and all(d.year == 2025 and d.month == 9 and d.weekday() == 2 for d in r["dates"])
+            and all(
+                d.year == 2025 and d.month == 9 and d.weekday() == 2 for d in r["dates"]
+            )
         ),
     },
-
     # ===== MULTIPLE EXPLICIT DATES (LISTS) =====
     {
         "category": "Lists - Explicit Dates",
@@ -125,7 +130,6 @@ TEST_CASES = [
         "expected_type": list,
         "validate": lambda r: isinstance(r["dates"], list) and len(r["dates"]) == 3,
     },
-
     # ===== QUANTIFIERS =====
     {
         "category": "Quantifiers",
@@ -139,7 +143,8 @@ TEST_CASES = [
         "description": "1-3 dates [[date{1,3}:dates]]",
         "prompt": "Q1 months: Jan, Feb, March [[date{1,3}:dates]]",
         "expected_type": list,
-        "validate": lambda r: isinstance(r["dates"], list) and 1 <= len(r["dates"]) <= 3,
+        "validate": lambda r: isinstance(r["dates"], list)
+        and 1 <= len(r["dates"]) <= 3,
     },
     {
         "category": "Quantifiers",
@@ -155,14 +160,15 @@ TEST_CASES = [
         "expected_type": list,
         "validate": lambda r: isinstance(r["dates"], list),  # Can be empty
     },
-
     # ===== DATETIME EXTRACTIONS =====
     {
         "category": "DateTimes - Explicit",
         "description": "Extract datetime with time",
         "prompt": "Meeting at January 15, 2024 at 3:30 PM [[datetime:dt]]",
         "expected_type": datetime,
-        "validate": lambda r: isinstance(r["dt"], datetime) and r["dt"].hour == 15 and r["dt"].minute == 30,
+        "validate": lambda r: isinstance(r["dt"], datetime)
+        and r["dt"].hour == 15
+        and r["dt"].minute == 30,
     },
     {
         "category": "DateTimes - Explicit",
@@ -185,21 +191,24 @@ TEST_CASES = [
         "expected_type": list,
         "validate": lambda r: isinstance(r["dts"], list) and len(r["dts"]) >= 2,
     },
-
     # ===== TIME EXTRACTIONS =====
     {
         "category": "Times - Explicit",
         "description": "Extract time '3:30 PM'",
         "prompt": "The show starts at 3:30 PM [[time:t]]",
         "expected_type": time,
-        "validate": lambda r: isinstance(r["t"], time) and r["t"].hour == 15 and r["t"].minute == 30,
+        "validate": lambda r: isinstance(r["t"], time)
+        and r["t"].hour == 15
+        and r["t"].minute == 30,
     },
     {
         "category": "Times - Explicit",
         "description": "Extract 24-hour time",
         "prompt": "Train departs at 18:45 [[time:t]]",
         "expected_type": time,
-        "validate": lambda r: isinstance(r["t"], time) and r["t"].hour == 18 and r["t"].minute == 45,
+        "validate": lambda r: isinstance(r["t"], time)
+        and r["t"].hour == 18
+        and r["t"].minute == 45,
     },
     {
         "category": "Times - Lists",
@@ -215,15 +224,17 @@ TEST_CASES = [
         "expected_type": time,
         "validate": lambda r: isinstance(r["t"], time) and r["t"].hour == 12,
     },
-
     # ===== DURATION EXTRACTIONS =====
     {
         "category": "Durations - Simple",
         "description": "Extract duration '2 hours'",
         "prompt": "The movie lasts 2 hours [[duration:d]]",
         "expected_type": timedelta,
-        "validate": lambda r: isinstance(r["d"], (timedelta, str)) and (
-            r["d"] == timedelta(hours=2) if isinstance(r["d"], timedelta) else "2 hour" in r["d"].lower()
+        "validate": lambda r: isinstance(r["d"], (timedelta, str))
+        and (
+            r["d"] == timedelta(hours=2)
+            if isinstance(r["d"], timedelta)
+            else "2 hour" in r["d"].lower()
         ),
     },
     {
@@ -231,8 +242,11 @@ TEST_CASES = [
         "description": "Extract duration '30 minutes'",
         "prompt": "Meeting duration: 30 minutes [[duration:d]]",
         "expected_type": timedelta,
-        "validate": lambda r: isinstance(r["d"], (timedelta, str)) and (
-            r["d"] == timedelta(minutes=30) if isinstance(r["d"], timedelta) else "30 minute" in r["d"].lower()
+        "validate": lambda r: isinstance(r["d"], (timedelta, str))
+        and (
+            r["d"] == timedelta(minutes=30)
+            if isinstance(r["d"], timedelta)
+            else "30 minute" in r["d"].lower()
         ),
     },
     {
@@ -240,8 +254,11 @@ TEST_CASES = [
         "description": "Extract duration '1 week and 3 days'",
         "prompt": "Project timeline: 1 week and 3 days [[duration:d]]",
         "expected_type": timedelta,
-        "validate": lambda r: isinstance(r["d"], (timedelta, str)) and (
-            r["d"] == timedelta(weeks=1, days=3) if isinstance(r["d"], timedelta) else ("week" in r["d"].lower() and "day" in r["d"].lower())
+        "validate": lambda r: isinstance(r["d"], (timedelta, str))
+        and (
+            r["d"] == timedelta(weeks=1, days=3)
+            if isinstance(r["d"], timedelta)
+            else ("week" in r["d"].lower() and "day" in r["d"].lower())
         ),
     },
     {
@@ -249,8 +266,11 @@ TEST_CASES = [
         "description": "Extract duration '2 hours 45 minutes'",
         "prompt": "Flight time: 2 hours 45 minutes [[duration:d]]",
         "expected_type": timedelta,
-        "validate": lambda r: isinstance(r["d"], (timedelta, str)) and (
-            r["d"] == timedelta(hours=2, minutes=45) if isinstance(r["d"], timedelta) else ("2 hour" in r["d"].lower() or "45 minute" in r["d"].lower())
+        "validate": lambda r: isinstance(r["d"], (timedelta, str))
+        and (
+            r["d"] == timedelta(hours=2, minutes=45)
+            if isinstance(r["d"], timedelta)
+            else ("2 hour" in r["d"].lower() or "45 minute" in r["d"].lower())
         ),
     },
     {
@@ -258,9 +278,9 @@ TEST_CASES = [
         "description": "Extract multiple durations",
         "prompt": "Task durations: 30 minutes, 1 hour, 2.5 hours [[duration*:durations]]",
         "expected_type": list,
-        "validate": lambda r: isinstance(r["durations"], list) and len(r["durations"]) >= 2,
+        "validate": lambda r: isinstance(r["durations"], list)
+        and len(r["durations"]) >= 2,
     },
-
     # ===== MIXED TEMPORAL TYPES =====
     {
         "category": "Mixed Types",
@@ -283,7 +303,6 @@ TEST_CASES = [
             and isinstance(r["length"], (timedelta, str))
         ),
     },
-
     # ===== EDGE CASES =====
     {
         "category": "Edge Cases",
@@ -306,14 +325,15 @@ TEST_CASES = [
         "expected_type": date,
         "validate": lambda r: isinstance(r["d"], date) and r["d"].month == 12,
     },
-
     # ===== YEAR INFERENCE =====
     {
         "category": "Year Inference",
         "description": "Month without year (should use current year context)",
         "prompt": "first monday in november [[date:d]]",
         "expected_type": date,
-        "validate": lambda r: isinstance(r["d"], date) and r["d"].month == 11 and r["d"].year >= 2025,
+        "validate": lambda r: isinstance(r["d"], date)
+        and r["d"].month == 11
+        and r["d"].year >= 2025,
     },
     {
         "category": "Year Inference",
@@ -326,7 +346,6 @@ TEST_CASES = [
             and all(d.year == 2026 for d in r["dates"])
         ),
     },
-
     # ===== COMPLEX PATTERNS =====
     {
         "category": "Complex Patterns",
@@ -476,7 +495,9 @@ if __name__ == "__main__":
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     stop_on_error = "--stop-on-error" in sys.argv or "-x" in sys.argv
 
-    print("\nUsage: python examples/temporal_test_cases.py [--verbose|-v] [--stop-on-error|-x]\n")
+    print(
+        "\nUsage: python examples/temporal_test_cases.py [--verbose|-v] [--stop-on-error|-x]\n"
+    )
 
     results = run_tests(verbose=verbose, stop_on_error=stop_on_error)
 

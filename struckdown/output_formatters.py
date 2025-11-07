@@ -123,9 +123,7 @@ def write_markdown(data: List[Dict[str, Any]], output_path: Path) -> None:
 
 
 def render_template(
-    data: List[Dict[str, Any]],
-    output_path: Path,
-    template_path: Path
+    data: List[Dict[str, Any]], output_path: Path, template_path: Path
 ) -> None:
     """
     Render data through Jinja2 template.
@@ -138,8 +136,7 @@ def render_template(
 
     # Load template with strict undefined checking
     env = Environment(
-        loader=FileSystemLoader(template_path.parent),
-        undefined=StrictUndefined
+        loader=FileSystemLoader(template_path.parent), undefined=StrictUndefined
     )
     template = env.get_template(template_path.name)
 
@@ -150,12 +147,13 @@ def render_template(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(final_output)
 
-    logger.info(f"Rendered {len(data)} results using template {template_path.name} to {output_path}")
+    logger.info(
+        f"Rendered {len(data)} results using template {template_path.name} to {output_path}"
+    )
 
 
 def write_output(
-    data: List[Dict[str, Any]],
-    output_path: Union[Path, str, None] = None
+    data: List[Dict[str, Any]], output_path: Union[Path, str, None] = None
 ) -> None:
     """
     Write data to output file with format auto-detection.

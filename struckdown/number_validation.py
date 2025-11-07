@@ -7,7 +7,9 @@ Handles parsing and validation of numeric constraints (min/max) and the required
 from typing import Any, List, Optional, Tuple, Union
 
 
-def parse_number_options(options: Optional[List[str]]) -> Tuple[Optional[float], Optional[float], bool]:
+def parse_number_options(
+    options: Optional[List[str]],
+) -> Tuple[Optional[float], Optional[float], bool]:
     """
     Parse numeric options to extract min, max, and required flag.
 

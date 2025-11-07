@@ -7,7 +7,7 @@ with optional min/max validation.
 Run with: uv run python examples/number_test_cases.py
 """
 
-from struckdown import chatter, LLM, LLMCredentials
+from struckdown import LLM, LLMCredentials, chatter
 
 # Test case format: (description, prompt, expected_type, validation_function)
 TEST_CASES = [
@@ -47,7 +47,6 @@ TEST_CASES = [
         "expected_type": float,
         "validate": lambda r: isinstance(r["val"], (int, float)) and r["val"] > 0,
     },
-
     # ===== MIN CONSTRAINT =====
     {
         "category": "Min Constraint",
@@ -70,7 +69,6 @@ TEST_CASES = [
         "expected_type": float,
         "validate": lambda r: abs(r["temp"] - (-5.5)) < 0.01 and r["temp"] >= -10.5,
     },
-
     # ===== MAX CONSTRAINT =====
     {
         "category": "Max Constraint",
@@ -93,7 +91,6 @@ TEST_CASES = [
         "expected_type": float,
         "validate": lambda r: abs(r["rating"] - 4.8) < 0.01 and r["rating"] <= 5.0,
     },
-
     # ===== MIN/MAX COMBINED =====
     {
         "category": "Min/Max Combined",
@@ -121,9 +118,9 @@ TEST_CASES = [
         "description": "Extract with min=-273.15,max=100.0 (float range)",
         "prompt": "Temperature: 37.5 degrees Celsius [[number:temp|min=-273.15,max=100.0]]",
         "expected_type": float,
-        "validate": lambda r: abs(r["temp"] - 37.5) < 0.01 and -273.15 <= r["temp"] <= 100.0,
+        "validate": lambda r: abs(r["temp"] - 37.5) < 0.01
+        and -273.15 <= r["temp"] <= 100.0,
     },
-
     # ===== LIST EXTRACTION =====
     {
         "category": "Lists - Basic",
@@ -152,12 +149,8 @@ TEST_CASES = [
         "description": "Extract mixed int/float list",
         "prompt": "Values: 10, 20.5, 30, 40.75 [[number*:values]]",
         "expected_type": list,
-        "validate": lambda r: (
-            isinstance(r["values"], list)
-            and len(r["values"]) == 4
-        ),
+        "validate": lambda r: (isinstance(r["values"], list) and len(r["values"]) == 4),
     },
-
     # ===== QUANTIFIERS =====
     {
         "category": "Quantifiers",
@@ -171,7 +164,8 @@ TEST_CASES = [
         "description": "1-3 numbers [[number{1,3}:values]]",
         "prompt": "Ratings: 4.5, 3.8 [[number{1,3}:values]]",
         "expected_type": list,
-        "validate": lambda r: isinstance(r["values"], list) and 1 <= len(r["values"]) <= 3,
+        "validate": lambda r: isinstance(r["values"], list)
+        and 1 <= len(r["values"]) <= 3,
     },
     {
         "category": "Quantifiers",
@@ -187,7 +181,6 @@ TEST_CASES = [
         "expected_type": list,
         "validate": lambda r: isinstance(r["values"], list),  # Can be empty
     },
-
     # ===== LIST WITH CONSTRAINTS =====
     {
         "category": "Lists with Constraints",
@@ -195,8 +188,7 @@ TEST_CASES = [
         "prompt": "Scores: 10, 25, 50 [[number*:scores|min=0]]",
         "expected_type": list,
         "validate": lambda r: (
-            isinstance(r["scores"], list)
-            and all(x >= 0 for x in r["scores"])
+            isinstance(r["scores"], list) and all(x >= 0 for x in r["scores"])
         ),
     },
     {
@@ -215,11 +207,9 @@ TEST_CASES = [
         "prompt": "Ratings: 3.5, 4.0, 4.5 out of 5 [[number*:ratings|min=0,max=5]]",
         "expected_type": list,
         "validate": lambda r: (
-            isinstance(r["ratings"], list)
-            and all(0 <= x <= 5 for x in r["ratings"])
+            isinstance(r["ratings"], list) and all(0 <= x <= 5 for x in r["ratings"])
         ),
     },
-
     # ===== QUANTIFIER + CONSTRAINTS =====
     {
         "category": "Quantifier + Constraints",
@@ -232,7 +222,6 @@ TEST_CASES = [
             and all(0 <= x <= 100 for x in r["scores"])
         ),
     },
-
     # ===== EDGE CASES =====
     {
         "category": "Edge Cases",
@@ -269,7 +258,6 @@ TEST_CASES = [
         "expected_type": float,
         "validate": lambda r: 0 < r["precision"] < 0.001,
     },
-
     # ===== PRACTICAL USE CASES =====
     {
         "category": "Practical - Prices",
@@ -416,7 +404,13 @@ def run_tests(verbose=False, stop_on_error=False):
                     try:
                         result = chatter(prompt, model=model, credentials=credentials)
                         # If we got here, the validation didn't raise an error (TEST FAILED)
-                        results["failed"].append((test, result, "Expected ValueError but got successful result"))
+                        results["failed"].append(
+                            (
+                                test,
+                                result,
+                                "Expected ValueError but got successful result",
+                            )
+                        )
                         if verbose:
                             print(f"  ✗ FAILED - Expected ValueError but got result")
                             print(f"  Result: {result}")
@@ -452,7 +446,13 @@ def run_tests(verbose=False, stop_on_error=False):
                                 print("✓ PASSED")
                         else:
                             # Wrong type of exception
-                            results["failed"].append((test, str(e), "Expected ValueError but got different exception"))
+                            results["failed"].append(
+                                (
+                                    test,
+                                    str(e),
+                                    "Expected ValueError but got different exception",
+                                )
+                            )
                             if verbose:
                                 print(f"  ✗ FAILED - Wrong exception type")
                                 print(f"  Exception: {e}")
@@ -542,7 +542,9 @@ if __name__ == "__main__":
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     stop_on_error = "--stop-on-error" in sys.argv or "-x" in sys.argv
 
-    print("\nUsage: uv run python examples/number_test_cases.py [--verbose|-v] [--stop-on-error|-x]\n")
+    print(
+        "\nUsage: uv run python examples/number_test_cases.py [--verbose|-v] [--stop-on-error|-x]\n"
+    )
 
     results = run_tests(verbose=verbose, stop_on_error=stop_on_error)
 

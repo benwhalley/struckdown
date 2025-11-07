@@ -53,10 +53,14 @@ class ResponseTypes:
                 # Factory function that returns a ResponseModel
                 ...
         """
+
         def decorator(model_or_factory: Union[type, Callable]) -> Union[type, Callable]:
             cls._registry[type_name] = model_or_factory
-            logger.debug(f"Registered response type '{type_name}' with {model_or_factory}")
+            logger.debug(
+                f"Registered response type '{type_name}' with {model_or_factory}"
+            )
             return model_or_factory
+
         return decorator
 
     @classmethod
@@ -82,7 +86,7 @@ class ResponseTypes:
         Returns:
             Dict mapping type names to ResponseModel classes/factories
         """
-        default_type = cls._registry.get('default')
+        default_type = cls._registry.get("default")
         if default_type is None:
             raise RuntimeError(
                 "No 'default' response type registered. "

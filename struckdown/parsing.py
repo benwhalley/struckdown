@@ -24,7 +24,19 @@ DEFAULT_RETURN_TYPE = "respond"
 
 PromptPart = namedtuple(
     "PromptPart",
-    ["key", "return_type", "options", "text", "shared_header", "quantifier", "action_type", "llm_kwargs", "required_prefix", "is_function", "has_explicit_var"],
+    [
+        "key",
+        "return_type",
+        "options",
+        "text",
+        "shared_header",
+        "quantifier",
+        "action_type",
+        "llm_kwargs",
+        "required_prefix",
+        "is_function",
+        "has_explicit_var",
+    ],
 )
 
 
@@ -34,7 +46,9 @@ class MindframeTransformer(Transformer):
         self.current_buf = []  # holds text/vars/etc
         self.current_parts = []  # list of (key, PromptPart)
         self.shared_header = ""  # holds shared header text
-        self.completion_counters = {}  # Track auto-variable generation per completion type
+        self.completion_counters = (
+            {}
+        )  # Track auto-variable generation per completion type
         self.action_counters = {}  # Track auto-variable generation per action name
 
     def _flush_section(self):
@@ -93,7 +107,7 @@ class MindframeTransformer(Transformer):
     def single_completion(self, items):
         body = items[0]
         # Check if body dict contains is_function flag (set by typed_completion)
-        is_function = body.get('is_function', False)
+        is_function = body.get("is_function", False)
         self._record_completion(body, is_function=is_function)
         return None
 
@@ -115,7 +129,9 @@ class MindframeTransformer(Transformer):
             llm_kwargs=llm_kwargs,  # Store parsed LLM parameters
             required_prefix=body.get("required_prefix", False),  # Store ! prefix flag
             is_function=is_function,  # Mark if this is a function call (no LLM)
-            has_explicit_var=body.get("has_explicit_var", True),  # Default to True for LLM completions
+            has_explicit_var=body.get(
+                "has_explicit_var", True
+            ),  # Default to True for LLM completions
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []  # reset prompt buffer
@@ -139,8 +155,8 @@ class MindframeTransformer(Transformer):
         kwargs_dict = {}
 
         for opt in options_list:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
+            if "=" in opt:
+                key, value = opt.split("=", 1)
                 key = key.strip()
                 value = value.strip()
 
@@ -155,7 +171,7 @@ class MindframeTransformer(Transformer):
                         kwargs_dict[key] = getattr(validated, key)
                     except ValidationError as e:
                         # Extract user-friendly error message
-                        error_msg = e.errors()[0]['msg'] if e.errors() else str(e)
+                        error_msg = e.errors()[0]["msg"] if e.errors() else str(e)
                         raise ValueError(f"Invalid value for '{key}': {error_msg}")
                 else:
                     # Model-specific options like min=0, max=100, required stay as plain options
@@ -196,7 +212,9 @@ class MindframeTransformer(Transformer):
             over built-in types. This enables disambiguation in [[...]] syntax.
         """
         # first check Actions registry (custom actions take priority)
-        action_model = Actions.create_action_model(key, options, quantifier, required_prefix)
+        action_model = Actions.create_action_model(
+            key, options, quantifier, required_prefix
+        )
         if action_model is not None:
             return action_model
 
@@ -206,7 +224,7 @@ class MindframeTransformer(Transformer):
             return rt
 
         # not found - return default response type
-        return ResponseTypes.get('default')
+        return ResponseTypes.get("default")
 
     # All other methods: passthrough or reused from your original
     def typed_completion_with_var(self, items):
@@ -244,7 +262,9 @@ class MindframeTransformer(Transformer):
         is_function = Actions.is_registered(type_name)
 
         return {
-            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "return_type": self._lookup_rt(
+                type_name, options, quantifier, required_prefix
+            ),
             "key": var_name,
             "options": options,
             "quantifier": quantifier,
@@ -290,7 +310,9 @@ class MindframeTransformer(Transformer):
         is_function = Actions.is_registered(type_name)
 
         return {
-            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "return_type": self._lookup_rt(
+                type_name, options, quantifier, required_prefix
+            ),
             "key": var_name,
             "options": options,
             "quantifier": quantifier,
@@ -344,7 +366,9 @@ class MindframeTransformer(Transformer):
         var_name = type_name
 
         return {
-            "return_type": self._lookup_rt(type_name, options, quantifier, required_prefix),
+            "return_type": self._lookup_rt(
+                type_name, options, quantifier, required_prefix
+            ),
             "key": var_name,
             "options": options,
             "quantifier": quantifier,

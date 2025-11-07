@@ -8,9 +8,10 @@ This demonstrates:
 3. Final LLM completion can see both in its context
 """
 
-from struckdown import chatter, LLM, LLMCredentials
-from struckdown.return_type_models import ACTION_LOOKUP
 from unittest.mock import Mock, patch
+
+from struckdown import LLM, LLMCredentials, chatter
+from struckdown.return_type_models import ACTION_LOOKUP
 
 print("=" * 70)
 print("CONTEXT FLOW TEST: Expertise → Context → LLM Completion")
@@ -43,8 +44,9 @@ print("  Segment 3: LLM [[response]] using {{problem}} and {{relevant_tips}}")
 # Mock the LLM to show what context it receives
 mock_responses = {
     "problem": "insomnia and sleep difficulties",
-    "response": "Based on the problem (insomnia and sleep difficulties) and the relevant tips about CBT-I and sleep hygiene, I recommend we start with sleep restriction therapy..."
+    "response": "Based on the problem (insomnia and sleep difficulties) and the relevant tips about CBT-I and sleep hygiene, I recommend we start with sleep restriction therapy...",
 }
+
 
 def mock_structured_chat(prompt, return_type, llm, credentials, extra_kwargs):
     """Mock LLM that returns predefined responses and shows context"""
@@ -87,26 +89,27 @@ def mock_structured_chat(prompt, return_type, llm, credentials, extra_kwargs):
 
     return mock_result, mock_completion
 
+
 # Patch the LLM call
-with patch('struckdown.structured_chat', side_effect=mock_structured_chat):
-    print("\n" + "="*70)
+with patch("struckdown.structured_chat", side_effect=mock_structured_chat):
+    print("\n" + "=" * 70)
     print("EXECUTING TEMPLATE")
-    print("="*70)
+    print("=" * 70)
 
     result = chatter(template)
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("FINAL RESULTS")
-print("="*70)
+print("=" * 70)
 
 print("\nExtracted values:")
 print(f"  problem: {result['problem']}")
 print(f"  relevant_tips: {result['relevant_tips'][:100]}...")
 print(f"  response: {result['response'][:100]}...")
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("CONTEXT BUILD-UP TIMELINE")
-print("="*70)
+print("=" * 70)
 
 print("\nSegment 1:")
 print("  Action: LLM extracts [[problem]]")
@@ -127,10 +130,11 @@ print("  Context before: {problem: '...', relevant_tips: '...'}")
 print("  ✓ LLM prompt includes BOTH problem and relevant_tips")
 print("  ✓ Response can reference both variables")
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("KEY INSIGHT")
-print("="*70)
-print("""
+print("=" * 70)
+print(
+    """
 The expertise function call [[@]] executes BETWEEN the two LLM calls.
 It receives the context from Segment 1, performs its search, and adds
 results to the context BEFORE Segment 3's LLM call.
@@ -142,8 +146,9 @@ This is the "extract then search" pattern:
 
 The LLM in step 3 sees a prompt with the expertise text already
 interpolated, making it part of the context for generation.
-""")
+"""
+)
 
-print("="*70)
+print("=" * 70)
 print("TEST COMPLETE")
-print("="*70)
+print("=" * 70)

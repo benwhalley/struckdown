@@ -8,20 +8,14 @@ from typing import List, Optional
 import anyio
 import typer
 from decouple import config as env_config
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TimeRemainingColumn,
-)
-from rich.console import Console
-
-from . import ACTION_LOOKUP, LLM, LLMCredentials, chatter, chatter_async, CostSummary, __version__
-from .output_formatters import write_output, render_template
-
 from jinja2 import Environment, meta
+from rich.console import Console
+from rich.progress import (BarColumn, Progress, SpinnerColumn,
+                           TaskProgressColumn, TextColumn, TimeRemainingColumn)
+
+from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, __version__,
+               chatter, chatter_async)
+from .output_formatters import render_template, write_output
 
 app = typer.Typer(help="struckdown: structured conversations with language models")
 
@@ -91,10 +85,7 @@ def chat(
         None, help="Prompt with slots, e.g. tell a joke [[joke]]"
     ),
     prompt_file: Optional[Path] = typer.Option(
-        None,
-        "-p",
-        "--prompt-file",
-        help="Path to file containing the prompt"
+        None, "-p", "--prompt-file", help="Path to file containing the prompt"
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
@@ -106,7 +97,9 @@ def chat(
         help="Random seed for reproducible outputs (if supported by model)",
     ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Print the full ChatterResult object"),
+    verbose: bool = typer.Option(
+        False, "-v", "--verbose", help="Print the full ChatterResult object"
+    ),
 ):
     """
     Run a single chatter prompt (interactive mode).
@@ -118,6 +111,7 @@ def chat(
     """
     # start new run for cache detection
     from struckdown import new_run
+
     new_run()
 
     if verbose:
@@ -144,7 +138,10 @@ def chat(
             raise typer.Exit(1)
         prompt_str = stdin_content.strip()
     else:
-        typer.echo("Error: No prompt provided. Use a positional argument, -p/--prompt-file, or pipe to stdin.", err=True)
+        typer.echo(
+            "Error: No prompt provided. Use a positional argument, -p/--prompt-file, or pipe to stdin.",
+            err=True,
+        )
         raise typer.Exit(1)
     credentials = LLMCredentials()
     model = LLM(model_name=model_name)
@@ -222,7 +219,12 @@ async def batch_async(
             async with anyio.create_task_group() as tg:
                 for idx, input_item in enumerate(input_data):
 
-                    async def run_and_store(index=idx, item=input_item, progress_bar=progress, progress_task=task):
+                    async def run_and_store(
+                        index=idx,
+                        item=input_item,
+                        progress_bar=progress,
+                        progress_task=task,
+                    ):
                         async with sem:
                             try:
                                 # Execute chatter_async with the input context
@@ -245,8 +247,8 @@ async def batch_async(
                                     # Start with empty dict, only include extracted results
                                     output_item = {}
                                     # Keep filename for traceability
-                                    if 'filename' in item:
-                                        output_item['filename'] = item['filename']
+                                    if "filename" in item:
+                                        output_item["filename"] = item["filename"]
 
                                 for key, segment_result in result.results.items():
                                     output_item[key] = segment_result.output
@@ -254,7 +256,9 @@ async def batch_async(
                                 results[index] = output_item
 
                                 if verbose:
-                                    console.print(f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}")
+                                    console.print(
+                                        f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}"
+                                    )
 
                             except Exception as e:
                                 error_msg = f"Error processing item {index+1}: {e}"
@@ -262,6 +266,7 @@ async def batch_async(
                                 errors.append(error_msg)
                                 if verbose:
                                     import traceback
+
                                     console.print(traceback.format_exc())
 
                             finally:
@@ -298,8 +303,8 @@ async def batch_async(
                                 # Start with empty dict, only include extracted results
                                 output_item = {}
                                 # Keep filename for traceability
-                                if 'filename' in item:
-                                    output_item['filename'] = item['filename']
+                                if "filename" in item:
+                                    output_item["filename"] = item["filename"]
 
                             for key, segment_result in result.results.items():
                                 output_item[key] = segment_result.output
@@ -307,7 +312,9 @@ async def batch_async(
                             results[index] = output_item
 
                             if verbose:
-                                console.print(f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}")
+                                console.print(
+                                    f"Processed item {index+1}/{len(input_data)}: {output_item.get('filename', f'item_{index}')}"
+                                )
 
                         except Exception as e:
                             error_msg = f"Error processing item {index+1}: {e}"
@@ -315,6 +322,7 @@ async def batch_async(
                             errors.append(error_msg)
                             if verbose:
                                 import traceback
+
                                 console.print(traceback.format_exc())
 
                 tg.start_soon(run_and_store)
@@ -341,7 +349,7 @@ async def batch_async(
         # Write to multiple outputs
         for output_path in output:
             # Check if this is a JSON file
-            is_json = str(output_path).lower().endswith('.json')
+            is_json = str(output_path).lower().endswith(".json")
 
             if is_json or not template:
                 # Use format auto-detection for JSON or when no template specified
@@ -358,41 +366,39 @@ async def batch_async(
 def batch(
     prompt: Optional[str] = typer.Argument(
         None,
-        help="Prompt with slots, e.g. 'extract name [[name]]'. Omit if using --prompt/-p flag."
+        help="Prompt with slots, e.g. 'extract name [[name]]'. Omit if using --prompt/-p flag.",
     ),
     input_files: Optional[List[str]] = typer.Option(
         None,
         "-i",
         "--input",
-        help="Input files or glob patterns (e.g., -i '*.txt' -i 'data/*.json'). Can be specified multiple times."
+        help="Input files or glob patterns (e.g., -i '*.txt' -i 'data/*.json'). Can be specified multiple times.",
     ),
     prompt_file: Optional[Path] = typer.Option(
-        None,
-        "-p",
-        "--prompt",
-        help="Path to file containing the prompt"
+        None, "-p", "--prompt", help="Path to file containing the prompt"
     ),
     output: Optional[List[Path]] = typer.Option(
         None,
         "-o",
         "--output",
-        help="Output file (format inferred from extension: .json, .csv, .xlsx, .md, .txt). Can be specified multiple times."
+        help="Output file (format inferred from extension: .json, .csv, .xlsx, .md, .txt). Can be specified multiple times.",
     ),
     keep_inputs: bool = typer.Option(
         False,
         "-k",
         "--keep-inputs",
-        help="Include input fields (input, content, source, filename, basename) in output"
+        help="Include input fields (input, content, source, filename, basename) in output",
     ),
     template: Optional[Path] = typer.Option(
         None,
         "-t",
         "--template",
-        help="Jinja2 template file to apply to non-JSON outputs"
+        help="Jinja2 template file to apply to non-JSON outputs",
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
-        "-m", "--model",
+        "-m",
+        "--model",
         help="LLM model name (overrides DEFAULT_LLM env var)",
     ),
     seed: Optional[int] = typer.Option(
@@ -401,10 +407,7 @@ def batch(
         help="Random seed for reproducible outputs (if supported by model)",
     ),
     max_concurrent: int = typer.Option(
-        20,
-        "-c",
-        "--concurrency",
-        help="Maximum number of concurrent API requests"
+        20, "-c", "--concurrency", help="Maximum number of concurrent API requests"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable debug logging"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
@@ -423,6 +426,7 @@ def batch(
     """
     # start new run for cache detection
     from struckdown import new_run
+
     new_run()
 
     if verbose:
@@ -432,16 +436,20 @@ def batch(
     # Validate template usage
     if template:
         if not output:
-            typer.echo("Error: -t/--template requires at least one -o/--output", err=True)
+            typer.echo(
+                "Error: -t/--template requires at least one -o/--output", err=True
+            )
             raise typer.Exit(1)
 
         # Check if there's at least one non-JSON output
         has_non_json = any(
-            not str(out_path).lower().endswith('.json')
-            for out_path in output
+            not str(out_path).lower().endswith(".json") for out_path in output
         )
         if not has_non_json:
-            typer.echo("Error: -t/--template requires at least one non-JSON output file", err=True)
+            typer.echo(
+                "Error: -t/--template requires at least one non-JSON output file",
+                err=True,
+            )
             raise typer.Exit(1)
 
         # Validate template file exists
@@ -451,7 +459,9 @@ def batch(
 
     # Validate prompt arguments
     if prompt_file and prompt:
-        typer.echo("Error: Cannot specify both inline prompt and --prompt file", err=True)
+        typer.echo(
+            "Error: Cannot specify both inline prompt and --prompt file", err=True
+        )
         raise typer.Exit(1)
 
     if not prompt_file and not prompt:
@@ -513,14 +523,25 @@ def batch(
             elif isinstance(data, dict):
                 input_data = [data]
             else:
-                typer.echo(f"Error: stdin JSON must be dict or list, got {type(data)}", err=True)
+                typer.echo(
+                    f"Error: stdin JSON must be dict or list, got {type(data)}",
+                    err=True,
+                )
                 raise typer.Exit(1)
         except json.JSONDecodeError:
             # Treat as plain text
-            input_data = [{"input": stdin_content, "content": stdin_content, "filename": "<stdin>"}]
+            input_data = [
+                {
+                    "input": stdin_content,
+                    "content": stdin_content,
+                    "filename": "<stdin>",
+                }
+            ]
 
     else:
-        typer.echo("Error: No input provided (specify files or pipe to stdin)", err=True)
+        typer.echo(
+            "Error: No input provided (specify files or pipe to stdin)", err=True
+        )
         raise typer.Exit(1)
 
     # build extra_kwargs for API parameters
@@ -577,13 +598,15 @@ def _read_input_file(path: Path) -> List[dict]:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        return [{
-            "input": content,
-            "content": content,
-            "source": content,  # alias for compatibility
-            "filename": str(path),
-            "basename": path.stem
-        }]
+        return [
+            {
+                "input": content,
+                "content": content,
+                "source": content,  # alias for compatibility
+                "filename": str(path),
+                "basename": path.stem,
+            }
+        ]
 
 
 if __name__ == "__main__":

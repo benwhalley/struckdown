@@ -1,16 +1,13 @@
 """Tests for temperature and model parameter overrides in completion slots."""
 
 import unittest
+
 from struckdown.parsing import parse_syntax
-from struckdown.return_type_models import (
-    DefaultResponse,
-    ExtractedResponse,
-    PoeticalResponse,
-    IntegerResponse,
-    selection_response_model,
-    number_response_model,
-    date_response_model,
-)
+from struckdown.return_type_models import (DefaultResponse, ExtractedResponse,
+                                           IntegerResponse, PoeticalResponse,
+                                           date_response_model,
+                                           number_response_model,
+                                           selection_response_model)
 
 
 class TemperatureDefaultsTestCase(unittest.TestCase):

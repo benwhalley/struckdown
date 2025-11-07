@@ -61,7 +61,11 @@ try:
             print(f"    Action type: {prompt_part.action_type}")
             print(f"    Is function: {prompt_part.is_function}")
             if prompt_part.text:
-                text_preview = prompt_part.text[:50] + "..." if len(prompt_part.text) > 50 else prompt_part.text
+                text_preview = (
+                    prompt_part.text[:50] + "..."
+                    if len(prompt_part.text) > 50
+                    else prompt_part.text
+                )
                 print(f"    Text: {text_preview}")
 
 except Exception as e:
@@ -88,7 +92,9 @@ try:
         key, part = seg0_items[0]
         print(f"\n  [[]] completion:")
         print(f"    is_function={part.is_function} (should be False)")
-        assert part.is_function == False, "LLM completion incorrectly marked as function"
+        assert (
+            part.is_function == False
+        ), "LLM completion incorrectly marked as function"
         print(f"    ✓ Correct!")
 
     # Second segment should have function call

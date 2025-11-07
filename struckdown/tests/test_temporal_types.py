@@ -9,12 +9,10 @@ from unittest.mock import Mock, patch
 
 from struckdown import chatter
 from struckdown.parsing import parse_syntax
-from struckdown.return_type_models import (
-    date_response_model,
-    datetime_response_model,
-    duration_response_model,
-    time_response_model,
-)
+from struckdown.return_type_models import (date_response_model,
+                                           datetime_response_model,
+                                           duration_response_model,
+                                           time_response_model)
 
 
 class TemporalResponseModelsTestCase(unittest.TestCase):
@@ -326,7 +324,10 @@ Extract the date [[date:event_date]]
 Extract the time [[time:event_time]]"""
         sections = parse_syntax(template)
 
-        self.assertEqual(sections[0]["event_date"].shared_header, sections[1]["event_time"].shared_header)
+        self.assertEqual(
+            sections[0]["event_date"].shared_header,
+            sections[1]["event_time"].shared_header,
+        )
 
 
 class TemporalEdgeCaseTestCase(unittest.TestCase):
@@ -399,7 +400,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
 
         annotation = field.annotation
         # Optional[X] is Union[X, None]
-        self.assertTrue(get_origin(annotation) is type(None) or type(None) in get_args(annotation))
+        self.assertTrue(
+            get_origin(annotation) is type(None) or type(None) in get_args(annotation)
+        )
 
     def test_optional_date_accepts_none(self):
         """Test that optional date model accepts None"""
@@ -411,8 +414,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
 
     def test_required_date_rejects_none(self):
         """Test that required date model rejects None"""
-        from struckdown.return_type_models import date_response_model
         from pydantic import ValidationError
+
+        from struckdown.return_type_models import date_response_model
 
         model = date_response_model(options=["required"])
         with self.assertRaises(ValidationError):
@@ -429,7 +433,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
 
         annotation = field.annotation
         # Optional[X] is Union[X, None]
-        self.assertTrue(get_origin(annotation) is type(None) or type(None) in get_args(annotation))
+        self.assertTrue(
+            get_origin(annotation) is type(None) or type(None) in get_args(annotation)
+        )
 
     def test_time_factory_optional_by_default(self):
         """Test that time_response_model creates optional field by default"""
@@ -441,7 +447,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
         from typing import get_args, get_origin
 
         annotation = field.annotation
-        self.assertTrue(get_origin(annotation) is type(None) or type(None) in get_args(annotation))
+        self.assertTrue(
+            get_origin(annotation) is type(None) or type(None) in get_args(annotation)
+        )
 
     def test_duration_factory_optional_by_default(self):
         """Test that duration_response_model creates optional field by default"""
@@ -453,7 +461,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
         from typing import get_args, get_origin
 
         annotation = field.annotation
-        self.assertTrue(get_origin(annotation) is type(None) or type(None) in get_args(annotation))
+        self.assertTrue(
+            get_origin(annotation) is type(None) or type(None) in get_args(annotation)
+        )
 
     def test_optional_temporal_field_description_mentions_null(self):
         """Test that optional temporal fields mention null in description"""
@@ -467,12 +477,10 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
 
     def test_all_temporal_types_support_required(self):
         """Test that all temporal types support the required option"""
-        from struckdown.return_type_models import (
-            date_response_model,
-            datetime_response_model,
-            duration_response_model,
-            time_response_model,
-        )
+        from struckdown.return_type_models import (date_response_model,
+                                                   datetime_response_model,
+                                                   duration_response_model,
+                                                   time_response_model)
 
         # All should create required fields when passed ["required"]
         for factory in [

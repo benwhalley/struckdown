@@ -69,7 +69,8 @@ Extract the start time [[time:start_time]]
 How long will the meeting last? [[duration:meeting_length]]"""
 
 result = chatter(
-    template, context={"project_name": "Project Alpha on March 15 at 10:00 AM for 90 minutes"}
+    template,
+    context={"project_name": "Project Alpha on March 15 at 10:00 AM for 90 minutes"},
 )
 print(f"Meeting date: {result['meeting_date']}")
 print(f"Start time: {result['start_time']}")

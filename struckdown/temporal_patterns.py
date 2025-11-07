@@ -45,7 +45,8 @@ async def expand_temporal_pattern(
     logger.debug(f"Detected {action_type} pattern: {pattern_string}")
 
     # Import at function level to avoid circular dependency
-    from struckdown import chatter as chatter_func, SegmentResult
+    from struckdown import SegmentResult
+    from struckdown import chatter as chatter_func
 
     # Track interim steps
     interim_steps = []
@@ -170,4 +171,6 @@ async def expand_temporal_pattern(
 
     except Exception as e:
         logger.error(f"Failed to expand {action_type} pattern: {e}")
-        raise ValueError(f"Could not expand {action_type} pattern '{pattern_string}': {e}")
+        raise ValueError(
+            f"Could not expand {action_type} pattern '{pattern_string}': {e}"
+        )

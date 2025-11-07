@@ -11,49 +11,42 @@ from typing import Any, Dict, List, Optional
 import anyio
 import instructor
 import litellm  # REQUIRED: Cost tracking via _hidden_params["response_cost"] requires litellm
-                # Generalizing to non-litellm providers would require alternative cost calculation
+# Generalizing to non-litellm providers would require alternative cost calculation
 import openai
 from box import Box
 from decouple import config as env_config
-from instructor import from_openai, Mode
+from instructor import Mode, from_openai
 from jinja2 import Environment, StrictUndefined, Template, Undefined, meta
+# import specific litellm exceptions for error handling
+from litellm.exceptions import (APIConnectionError, APIError,
+                                APIResponseValidationError,
+                                AuthenticationError, BadRequestError,
+                                BudgetExceededError,
+                                ContentPolicyViolationError,
+                                ContextWindowExceededError,
+                                InternalServerError, NotFoundError,
+                                PermissionDeniedError, RateLimitError,
+                                ServiceUnavailableError, Timeout,
+                                UnprocessableEntityError,
+                                UnsupportedParamsError)
 from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# import specific litellm exceptions for error handling
-from litellm.exceptions import (
-    ContentPolicyViolationError,
-    ContextWindowExceededError,
-    AuthenticationError,
-    PermissionDeniedError,
-    NotFoundError,
-    BadRequestError,
-    UnsupportedParamsError,
-    APIResponseValidationError,
-    BudgetExceededError,
-    RateLimitError,
-    Timeout,
-    UnprocessableEntityError,
-    APIConnectionError,
-    APIError,
-    ServiceUnavailableError,
-    InternalServerError,
-)
-
 from struckdown.actions import Actions
-from struckdown.response_types import ResponseTypes
 from struckdown.cache import clear_cache, memory
-from struckdown.parsing import parser, _add_default_completion_if_needed
+from struckdown.number_validation import (parse_number_options,
+                                          validate_number_constraints)
+from struckdown.parsing import _add_default_completion_if_needed, parser
+from struckdown.response_types import ResponseTypes
 from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
-from struckdown.number_validation import parse_number_options, validate_number_constraints
-
 
 # litellm._turn_on_debug()
 
 # Version - reads from package metadata (set in pyproject.toml)
 try:
-    from importlib.metadata import version, PackageNotFoundError
+    from importlib.metadata import PackageNotFoundError, version
+
     __version__ = version("struckdown")
 except PackageNotFoundError:
     # Package is not installed (e.g., running from source in dev mode)
@@ -68,7 +61,7 @@ logger = logging.getLogger(__name__)
 # Run ID for cache detection - uses contextvars for thread/async safety
 # Works correctly in long-running processes (Django, Jupyter) by scoping to logical runs
 # Fresh API calls will have current run ID, cached calls will have old/missing IDs
-_run_id_var: ContextVar[Optional[str]] = ContextVar('run_id', default=None)
+_run_id_var: ContextVar[Optional[str]] = ContextVar("run_id", default=None)
 
 
 def get_run_id() -> str:
@@ -112,12 +105,13 @@ class StruckdownLLMError(Exception):
     Preserves the original exception while adding prompt, model, and additional context
     to help consumers make informed decisions about error handling.
     """
+
     def __init__(
         self,
         original_error: Exception,
         prompt: str,
         model_name: str,
-        extra_context: Optional[Dict[str, Any]] = None
+        extra_context: Optional[Dict[str, Any]] = None,
     ):
         self.original_error = original_error
         self.error_type = type(original_error).__name__
@@ -188,9 +182,9 @@ class LLM(BaseModel):
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
 
         # Create OpenAI-compatible instructor client (works with litellm proxies)
-        litellm.api_key=credentials.api_key
-        litellm.api_base=credentials.base_url
-        litellm.drop_params=True
+        litellm.api_key = credentials.api_key
+        litellm.api_base = credentials.base_url
+        litellm.drop_params = True
         client = instructor.from_litellm(litellm.completion)
         return client
 
@@ -229,11 +223,24 @@ def _call_llm_cached(
         # fatal authentication/authorization/model errors
         logger.error(f"Fatal API error for model {model_name}: {e}")
         raise StruckdownLLMError(e, prompt, model_name) from e
-    except (BadRequestError, UnsupportedParamsError, APIResponseValidationError, BudgetExceededError) as e:
+    except (
+        BadRequestError,
+        UnsupportedParamsError,
+        APIResponseValidationError,
+        BudgetExceededError,
+    ) as e:
         # fatal request errors
         logger.error(f"Bad request error for model {model_name}: {e}")
         raise StruckdownLLMError(e, prompt, model_name) from e
-    except (RateLimitError, Timeout, UnprocessableEntityError, APIConnectionError, APIError, ServiceUnavailableError, InternalServerError) as e:
+    except (
+        RateLimitError,
+        Timeout,
+        UnprocessableEntityError,
+        APIConnectionError,
+        APIError,
+        ServiceUnavailableError,
+        InternalServerError,
+    ) as e:
         # retryable errors -- let instructor handle these with its retry logic
         # we still log and wrap for context preservation
         logger.warning(f"Retryable API error for model {model_name}: {e}")
@@ -255,15 +262,17 @@ def _call_llm_cached(
     #   - model_id: Internal model identifier
     #   - additional_headers: Extra metadata
     # Non-litellm providers would need alternative cost tracking (e.g., token count × pricing)
-    if hasattr(com, '_hidden_params'):
-        com_dict['_hidden_params'] = com._hidden_params
-        logger.debug(f"Preserved _hidden_params with response_cost: {com._hidden_params.get('response_cost') if com._hidden_params else None}")
+    if hasattr(com, "_hidden_params"):
+        com_dict["_hidden_params"] = com._hidden_params
+        logger.debug(
+            f"Preserved _hidden_params with response_cost: {com._hidden_params.get('response_cost') if com._hidden_params else None}"
+        )
     else:
         logger.debug("No _hidden_params attribute on completion object")
 
     # mark with current run ID for cache detection
     # cached results will have different/missing _run_id
-    com_dict['_run_id'] = get_run_id()
+    com_dict["_run_id"] = get_run_id()
 
     return res.model_dump(), com_dict
 
@@ -324,11 +333,19 @@ class SegmentResult(BaseModel):
     prompt: str
     output: Any
     completion: Optional[Any] = Field(default=None, exclude=False)
-    action: Optional[str] = Field(default=None, description="Action type (e.g., 'pick', 'bool', 'int', 'evidence', 'memory')")
-    options: Optional[List[str]] = Field(default=None, description="Raw template options before variable resolution")
-    params: Optional[Dict[str, Any]] = Field(default=None, description="Resolved action parameters (with variables interpolated)")
+    action: Optional[str] = Field(
+        default=None,
+        description="Action type (e.g., 'pick', 'bool', 'int', 'evidence', 'memory')",
+    )
+    options: Optional[List[str]] = Field(
+        default=None, description="Raw template options before variable resolution"
+    )
+    params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Resolved action parameters (with variables interpolated)",
+    )
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def reconstruct_typed_output(cls, data: Any) -> Any:
         """Reconstruct registered Pydantic models from dict during deserialization.
@@ -337,9 +354,9 @@ class SegmentResult(BaseModel):
         are plain dicts. This validator checks if the action has a registered return_type
         and reconstructs the Pydantic model, preserving computed fields and methods.
         """
-        if isinstance(data, dict) and 'action' in data and 'output' in data:
-            action_name = data.get('action')
-            output = data.get('output')
+        if isinstance(data, dict) and "action" in data and "output" in data:
+            action_name = data.get("action")
+            output = data.get("output")
 
             # check if this action has a registered return type
             if action_name and isinstance(output, dict):
@@ -347,7 +364,7 @@ class SegmentResult(BaseModel):
                 if return_type is not None:
                     try:
                         # reconstruct the Pydantic model from the dict
-                        data['output'] = return_type.model_validate(output)
+                        data["output"] = return_type.model_validate(output)
                     except Exception as e:
                         # if reconstruction fails, log warning but keep the dict
                         logger.warning(
@@ -364,9 +381,9 @@ class ChatterResult(BaseModel):
     results: Dict[str, SegmentResult] = Field(default_factory=dict)
     interim_results: Dict[str, List[SegmentResult]] = Field(
         default_factory=dict,
-        description="Intermediate LLM calls and processing steps for multi-stage extractions (e.g., pattern expansion)"
+        description="Intermediate LLM calls and processing steps for multi-stage extractions (e.g., pattern expansion)",
     )
-    
+
     def __str__(self):
         return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
 
@@ -415,7 +432,9 @@ class ChatterResult(BaseModel):
         return sum(
             (seg.completion.usage.prompt_tokens or 0)
             for seg in self.results.values()
-            if seg.completion and hasattr(seg.completion, "usage") and seg.completion.usage
+            if seg.completion
+            and hasattr(seg.completion, "usage")
+            and seg.completion.usage
         )
 
     @property
@@ -424,7 +443,9 @@ class ChatterResult(BaseModel):
         return sum(
             (seg.completion.usage.completion_tokens or 0)
             for seg in self.results.values()
-            if seg.completion and hasattr(seg.completion, "usage") and seg.completion.usage
+            if seg.completion
+            and hasattr(seg.completion, "usage")
+            and seg.completion.usage
         )
 
     @property
@@ -449,7 +470,8 @@ class ChatterResult(BaseModel):
     def all_costs_unknown(self) -> bool:
         """True if ALL segments with completions have unknown costs"""
         segments_with_completion = [
-            seg for seg in self.results.values()
+            seg
+            for seg in self.results.values()
             if seg.completion and hasattr(seg.completion, "_hidden_params")
         ]
         if not segments_with_completion:
@@ -466,8 +488,9 @@ class ChatterResult(BaseModel):
         """Count of segments from fresh API calls (not cached)"""
         current_run_id = get_run_id()
         return sum(
-            1 for seg in self.results.values()
-            if seg.completion and seg.completion.get('_run_id') == current_run_id
+            1
+            for seg in self.results.values()
+            if seg.completion and seg.completion.get("_run_id") == current_run_id
         )
 
     @property
@@ -475,8 +498,9 @@ class ChatterResult(BaseModel):
         """Count of segments from cache"""
         current_run_id = get_run_id()
         return sum(
-            1 for seg in self.results.values()
-            if seg.completion and seg.completion.get('_run_id') != current_run_id
+            1
+            for seg in self.results.values()
+            if seg.completion and seg.completion.get("_run_id") != current_run_id
         )
 
     @property
@@ -486,9 +510,11 @@ class ChatterResult(BaseModel):
         return sum(
             (seg.completion._hidden_params.get("response_cost", 0.0) or 0.0)
             for seg in self.results.values()
-            if (seg.completion
+            if (
+                seg.completion
                 and hasattr(seg.completion, "_hidden_params")
-                and seg.completion.get('_run_id') == current_run_id)
+                and seg.completion.get("_run_id") == current_run_id
+            )
         )
 
     @property
@@ -506,6 +532,7 @@ class CostSummary(BaseModel):
 
     Consolidates cost tracking logic for display in CLIs.
     """
+
     total_cost: float = 0.0
     fresh_cost: float = 0.0
     total_prompt_tokens: int = 0
@@ -516,7 +543,7 @@ class CostSummary(BaseModel):
     all_costs_unknown: bool = False
 
     @classmethod
-    def from_results(cls, results: List[ChatterResult]) -> 'CostSummary':
+    def from_results(cls, results: List[ChatterResult]) -> "CostSummary":
         """Aggregate cost data from multiple ChatterResult objects.
 
         Args:
@@ -596,7 +623,7 @@ class CostSummary(BaseModel):
                     f"({self.fresh_count} fresh, {self.cached_count} cached)"
                 )
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
 
 async def process_single_segment_(
@@ -613,7 +640,9 @@ async def process_single_segment_(
     results = ChatterResult()
     prompt_parts = []
     accumulated_context = context.copy()
-    logger.debug(f"Initial context keys at segment start: {list(accumulated_context.keys())}")
+    logger.debug(
+        f"Initial context keys at segment start: {list(accumulated_context.keys())}"
+    )
 
     # Inject temporal context for date/time extractions
     # Check if any prompt parts use temporal response types
@@ -663,7 +692,13 @@ async def process_single_segment_(
 
         # Add temporal context hint if this is a temporal extraction
         temporal_hint = ""
-        if prompt_part.action_type in ["date", "datetime", "time", "duration", "date_rule"]:
+        if prompt_part.action_type in [
+            "date",
+            "datetime",
+            "time",
+            "duration",
+            "date_rule",
+        ]:
             temporal_hint = f"\n\n--- TEMPORAL CONTEXT (for resolving relative references only) ---\nUse this ONLY to resolve relative temporal expressions like 'tomorrow', 'next week', 'in 3 days', etc.\nDO NOT return these values as your answer. Extract temporal information from the INPUT TEXT above.\nReturn null if no temporal information can be found or interpreted in the input text.\n\nCurrent Date: {accumulated_context.get('_current_date', 'N/A')}\nCurrent Time: {accumulated_context.get('_current_time', 'N/A')}\nTimezone: {accumulated_context.get('_current_timezone', 'N/A')}\n--- END CONTEXT ---"
 
         # Render the prompt template.
@@ -681,27 +716,37 @@ async def process_single_segment_(
         # Determine the appropriate return type.
         if isinstance(prompt_part.return_type, FunctionType):
             # Get required_prefix flag if available (for ! prefix support)
-            required_prefix = getattr(prompt_part, 'required_prefix', False)
+            required_prefix = getattr(prompt_part, "required_prefix", False)
 
             # Factory functions: all now support both options and quantifier
-            if prompt_part.action_type in ["date", "datetime", "time", "duration", "number"]:
+            if prompt_part.action_type in [
+                "date",
+                "datetime",
+                "time",
+                "duration",
+                "number",
+            ]:
                 # Temporal and numeric types use both options (for constraints/flags) and quantifier (for lists)
-                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier, required_prefix)
+                rt = prompt_part.return_type(
+                    prompt_part.options, prompt_part.quantifier, required_prefix
+                )
             else:
                 # Other factory functions like pick also use both + required_prefix
-                rt = prompt_part.return_type(prompt_part.options, prompt_part.quantifier, required_prefix)
+                rt = prompt_part.return_type(
+                    prompt_part.options, prompt_part.quantifier, required_prefix
+                )
         else:
             rt = prompt_part.return_type
 
         # Build LLM kwargs: start with model defaults, then apply slot-specific overrides
         # Start with the response model's LLM config defaults
-        if hasattr(rt, 'llm_config') and isinstance(rt.llm_config, LLMConfig):
+        if hasattr(rt, "llm_config") and isinstance(rt.llm_config, LLMConfig):
             llm_config = rt.llm_config.model_copy()
         else:
             llm_config = LLMConfig()  # Fall back to base defaults
 
         # Apply slot-specific overrides from [[type:var|temperature=X,model=Y]]
-        if hasattr(prompt_part, 'llm_kwargs') and prompt_part.llm_kwargs:
+        if hasattr(prompt_part, "llm_kwargs") and prompt_part.llm_kwargs:
             try:
                 # Use Pydantic to validate and convert types automatically
                 llm_config = llm_config.model_copy(update=prompt_part.llm_kwargs)
@@ -724,27 +769,31 @@ async def process_single_segment_(
         llm_kwargs = llm_config.model_dump(exclude_none=True)
 
         # Handle model override by creating a new LLM instance if needed
-        slot_model = llm_kwargs.pop('model', None)
+        slot_model = llm_kwargs.pop("model", None)
         if slot_model:
             slot_llm = LLM(model_name=slot_model)
         else:
             slot_llm = llm
 
         # Check if this is a function call (no LLM) or a completion (LLM)
-        is_function_call = getattr(prompt_part, 'is_function', False)
+        is_function_call = getattr(prompt_part, "is_function", False)
 
-        if is_function_call and hasattr(rt, '_executor'):
+        if is_function_call and hasattr(rt, "_executor"):
             # Execute custom function instead of calling LLM
-            logger.debug(f"{LC.CYAN}Function call: {key} (action: {prompt_part.action_type}){LC.RESET}")
-            logger.debug(f"accumulated_context keys before executor: {list(accumulated_context.keys())}")
-            logger.debug(f"accumulated_context types: {[(k, type(v).__name__) for k, v in list(accumulated_context.items())[:10]]}")
+            logger.debug(
+                f"{LC.CYAN}Function call: {key} (action: {prompt_part.action_type}){LC.RESET}"
+            )
+            logger.debug(
+                f"accumulated_context keys before executor: {list(accumulated_context.keys())}"
+            )
+            logger.debug(
+                f"accumulated_context types: {[(k, type(v).__name__) for k, v in list(accumulated_context.items())[:10]]}"
+            )
             res, completion_obj = rt._executor(
-                accumulated_context,
-                rendered_prompt,
-                **llm_kwargs
+                accumulated_context, rendered_prompt, **llm_kwargs
             )
             # Extract resolved params if available (attached by action executor)
-            resolved_params = getattr(res, '_resolved_params', None)
+            resolved_params = getattr(res, "_resolved_params", None)
         else:
             # Call the LLM via structured_chat.
             res, completion_obj = await anyio.to_thread.run_sync(
@@ -771,9 +820,9 @@ async def process_single_segment_(
         def inject_context_recursively(obj):
             """Recursively inject context into ResponseModel instances."""
             # Access class-level _capture_from_context, avoiding Pydantic's private attr handling
-            capture_fields = getattr(type(obj), '_capture_from_context', [])
+            capture_fields = getattr(type(obj), "_capture_from_context", [])
             # Handle case where it might be a Pydantic ModelPrivateAttr
-            if hasattr(capture_fields, 'default'):
+            if hasattr(capture_fields, "default"):
                 capture_fields = capture_fields.default or []
 
             if capture_fields:
@@ -782,7 +831,7 @@ async def process_single_segment_(
                         setattr(obj, field_name, accumulated_context[field_name])
 
             # Recursively check list fields (e.g., CodeList.codes)
-            if hasattr(obj, '__dict__'):
+            if hasattr(obj, "__dict__"):
                 for attr_name, attr_value in obj.__dict__.items():
                     if isinstance(attr_value, list):
                         for item in attr_value:
@@ -797,15 +846,15 @@ async def process_single_segment_(
         # Call post_process hook on ResponseModel instances
         def call_post_process(obj):
             """Call post_process on ResponseModel instances."""
-            if hasattr(obj, 'post_process') and callable(obj.post_process):
+            if hasattr(obj, "post_process") and callable(obj.post_process):
                 obj.post_process(accumulated_context)
 
             # Recursively call on list fields
-            if hasattr(obj, '__dict__'):
+            if hasattr(obj, "__dict__"):
                 for attr_value in obj.__dict__.values():
                     if isinstance(attr_value, list):
                         for item in attr_value:
-                            if hasattr(item, 'post_process'):
+                            if hasattr(item, "post_process"):
                                 call_post_process(item)
 
         if isinstance(extracted_value, list):
@@ -881,7 +930,9 @@ async def process_single_segment_(
         )
 
         accumulated_context[key] = extracted_value
-        logger.debug(f"Added '{key}' to accumulated_context. Keys now: {list(accumulated_context.keys())}")
+        logger.debug(
+            f"Added '{key}' to accumulated_context. Keys now: {list(accumulated_context.keys())}"
+        )
 
         # For this segment, include the result in the prompt parts.
         prompt_parts.append(extracted_value)
@@ -939,7 +990,9 @@ class SegmentDependencyGraph:
                 template_vars.update(extract_jinja_variables(prompt_part.text))
 
                 # Also extract variables from action options (e.g., query={{summary}})
-                if prompt_part.options and isinstance(prompt_part.options, (list, tuple)):
+                if prompt_part.options and isinstance(
+                    prompt_part.options, (list, tuple)
+                ):
                     for option in prompt_part.options:
                         template_vars.update(extract_jinja_variables(option))
 
@@ -1121,7 +1174,7 @@ def get_embedding(
             )
         except Exception as e:
             raise Exception(f"Error getting embeddings: {e}")
-            
+
         embeddings.extend(item["embedding"] for item in response["data"])
 
     return embeddings

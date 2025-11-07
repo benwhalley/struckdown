@@ -15,6 +15,7 @@ class LLMConfig(BaseModel):
     This class defines all valid LLM parameters with their types and constraints.
     Use this for both defaults and runtime parameter validation.
     """
+
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     model: Optional[str] = None
     max_tokens: Optional[int] = Field(default=None, gt=0)
@@ -23,7 +24,7 @@ class LLMConfig(BaseModel):
     # frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
     # presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
 
-    model_config = ConfigDict(extra='forbid')  # Reject unknown parameters
+    model_config = ConfigDict(extra="forbid")  # Reject unknown parameters
 
 
 class ResponseModel(BaseModel):
@@ -50,7 +51,9 @@ class ResponseModel(BaseModel):
         pass
 
     @classmethod
-    def customize_schema_for_context(cls, schema: dict, context: Dict[str, Any]) -> dict:
+    def customize_schema_for_context(
+        cls, schema: dict, context: Dict[str, Any]
+    ) -> dict:
         """Override to customize schema based on context.
 
         Called by struckdown before passing schema to LLM.
@@ -66,8 +69,7 @@ class ResponseModel(BaseModel):
         return schema
 
 
-
-@ResponseTypes.register('poem')
+@ResponseTypes.register("poem")
 class PoeticalResponse(ResponseModel):
     """A spoken response, continuing the previous conversation, in 16th C style."""
 
@@ -76,17 +78,19 @@ class PoeticalResponse(ResponseModel):
         description="A response, continuing the previous conversation but always in POETRICAL form - often a haiku.",
     )
 
+
 PoeticalResponse.llm_config = LLMConfig(temperature=1.5, model=None)  # High creativity
 
 
-@ResponseTypes.register('chunked_conversation')
+@ResponseTypes.register("chunked_conversation")
 class ChunkedConversationResponse(ResponseModel):
     """A spoken response, continuing the previous conversation, in 16th C style."""
 
-    response: List['ConversationSegment'] = Field(
+    response: List["ConversationSegment"] = Field(
         ...,
         description="Returns a list of ConversationSegments, each with a description",
     )
+
 
 ChunkedConversationResponse.llm_config = LLMConfig(temperature=0.3, model=None)
 
@@ -105,6 +109,7 @@ class DefaultResponse(ResponseModel):
         description="An intelligent completion that responds to the context in a concise manner.",
     )
 
+
 DefaultResponse.llm_config = LLMConfig(temperature=0.7, model=None)
 
 
@@ -116,7 +121,10 @@ class ExtractedResponse(ResponseModel):
         description="Text extracted verbatim. Copy text exactly as it appears in the context. Never paraphrase or summarize. Never include any additional information.",
     )
 
-ExtractedResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # deterministic extraction
+
+ExtractedResponse.llm_config = LLMConfig(
+    temperature=0.0, model=None
+)  # deterministic extraction
 
 
 class SpokenResponse(ResponseModel):
@@ -127,7 +135,10 @@ class SpokenResponse(ResponseModel):
         description="A spoken response, continuing the previous conversation. Don't label the speaker or use quotes, just produce the words spoken.",
     )
 
-SpokenResponse.llm_config = LLMConfig(temperature=0.8, model=None)  # More natural variation
+
+SpokenResponse.llm_config = LLMConfig(
+    temperature=0.8, model=None
+)  # More natural variation
 
 
 class InternalThoughtsResponse(ResponseModel):
@@ -138,10 +149,13 @@ class InternalThoughtsResponse(ResponseModel):
         description="Your thoughts. Never a spoken response, yet -- just careful step by step thinking, planning and reasoning, written in super-concise note form. Always on topic and relevant to the task at hand.",
     )
 
-InternalThoughtsResponse.llm_config = LLMConfig(temperature=0.5, model=None)  # Moderate creativity for reasoning
+
+InternalThoughtsResponse.llm_config = LLMConfig(
+    temperature=0.5, model=None
+)  # Moderate creativity for reasoning
 
 
-@ResponseTypes.register('pick')
+@ResponseTypes.register("pick")
 def selection_response_model(valid_options, quantifier=None, required_prefix=False):
     """Factory to produce a pydantic model with specific options.
 
@@ -166,17 +180,17 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
     selection_options = []
 
     for opt in valid_options:
-        if '=' in opt:
-            key, value = opt.split('=', 1)
+        if "=" in opt:
+            key, value = opt.split("=", 1)
             key_lower = key.strip().lower()
             value_lower = value.strip().lower()
 
-            if key_lower == 'required':
+            if key_lower == "required":
                 # required=true/false
-                is_required = value_lower in ('true', 't', '1', 'yes')
-            elif key_lower == 'optional':
+                is_required = value_lower in ("true", "t", "1", "yes")
+            elif key_lower == "optional":
                 # optional=true means NOT required (but it's already default)
-                if value_lower in ('true', 't', '1', 'yes'):
+                if value_lower in ("true", "t", "1", "yes"):
                     is_required = False
             else:
                 # Keep other key=value options (shouldn't happen for pick, but be safe)
@@ -214,7 +228,7 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
             constraint_desc = f"between {min_items} and {max_items}"
 
         # Format options list for display -- quote each option for clarity
-        options_display = ', '.join(f"'{opt}'" for opt in selection_options)
+        options_display = ", ".join(f"'{opt}'" for opt in selection_options)
         description = f"A list of {constraint_desc} selections from these options: {options_display}. Each selection must exactly match one of the provided options. No discussion or explanation."
 
         model = create_model(
@@ -226,14 +240,16 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
             ),
             __module__=__name__,
         )
-        model.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
+        model.llm_config = LLMConfig(
+            temperature=0.0, model=None
+        )  # Deterministic selection
         return model
     else:
         # Single selection mode
         if is_required:
             # Required field - must return one of the options
             # Format options list for display -- quote each option for clarity
-            options_display = ', '.join(f"'{opt}'" for opt in selection_options)
+            options_display = ", ".join(f"'{opt}'" for opt in selection_options)
             model = create_model(
                 "SelectionResponse",
                 __base__=ResponseModel,
@@ -249,7 +265,7 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
         else:
             # Optional field - can return None if no valid selection can be made
             # Format options list for display -- quote each option for clarity
-            options_display = ', '.join(f"'{opt}'" for opt in selection_options)
+            options_display = ", ".join(f"'{opt}'" for opt in selection_options)
             model = create_model(
                 "SelectionResponse",
                 __base__=ResponseModel,
@@ -262,7 +278,9 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
                 ),
                 __module__=__name__,
             )
-        model.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic selection
+        model.llm_config = LLMConfig(
+            temperature=0.0, model=None
+        )  # Deterministic selection
         return model
 
 
@@ -274,7 +292,10 @@ class BooleanResponse(ResponseModel):
         description="Returns true or false only, based on the question/statement posed.",
     )
 
-BooleanResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic boolean
+
+BooleanResponse.llm_config = LLMConfig(
+    temperature=0.0, model=None
+)  # Deterministic boolean
 
 
 class IntegerResponse(ResponseModel):
@@ -285,11 +306,14 @@ class IntegerResponse(ResponseModel):
         description="Valid integers only.",
     )
 
-IntegerResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic integers
+
+IntegerResponse.llm_config = LLMConfig(
+    temperature=0.0, model=None
+)  # Deterministic integers
 
 
-@ResponseTypes.register('default')
-@ResponseTypes.register('respond')
+@ResponseTypes.register("default")
+@ResponseTypes.register("respond")
 def default_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce default text response models with optional list support.
 
@@ -307,9 +331,14 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
     # Check for required=true in options
     if options:
         for opt in options:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            if "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     is_required = True
 
     if quantifier:
@@ -327,7 +356,9 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
         if min_items == max_items:
             constraint_desc = f"exactly {min_items}"
         elif max_items is None:
-            constraint_desc = f"at least {min_items}" if min_items > 0 else "any number of"
+            constraint_desc = (
+                f"at least {min_items}" if min_items > 0 else "any number of"
+            )
         elif min_items == 0:
             constraint_desc = f"up to {max_items}"
         else:
@@ -340,7 +371,9 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
             __base__=ResponseModel,
             response=(
                 List[str],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -359,7 +392,7 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
                     Union[str, None],
                     Field(
                         default=None,
-                        description="An intelligent completion that responds to the context in a concise manner, or null if no response is appropriate."
+                        description="An intelligent completion that responds to the context in a concise manner, or null if no response is appropriate.",
                     ),
                 ),
                 __module__=__name__,
@@ -368,7 +401,7 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
             return model
 
 
-@ResponseTypes.register('int')
+@ResponseTypes.register("int")
 def integer_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce integer response models with optional list support.
 
@@ -392,7 +425,7 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
                 key = key.strip().lower()
                 value = value.strip()
 
-                if key == "required" and value.lower() in ('true', 't', '1', 'yes'):
+                if key == "required" and value.lower() in ("true", "t", "1", "yes"):
                     is_required = True
                 elif key == "min":
                     try:
@@ -440,7 +473,9 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
             __base__=ResponseModel,
             response=(
                 List[int],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -458,7 +493,7 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
                     Union[int, None],
                     Field(
                         default=None,
-                        description=f"A valid integer, or null if no integer can be determined.{constraint_desc}"
+                        description=f"A valid integer, or null if no integer can be determined.{constraint_desc}",
                     ),
                 ),
                 __module__=__name__,
@@ -467,9 +502,9 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
             return model
 
 
-@ResponseTypes.register('boolean')
-@ResponseTypes.register('bool')
-@ResponseTypes.register('decide')
+@ResponseTypes.register("boolean")
+@ResponseTypes.register("bool")
+@ResponseTypes.register("decide")
 def boolean_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce boolean response models with optional list support.
 
@@ -485,9 +520,14 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
 
     if options:
         for opt in options:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            if "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     is_required = True
 
     if quantifier:
@@ -516,7 +556,9 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
             __base__=ResponseModel,
             response=(
                 List[bool],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -534,7 +576,7 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
                     Union[bool, None],
                     Field(
                         default=None,
-                        description="Returns true, false, or null if the question cannot be answered."
+                        description="Returns true, false, or null if the question cannot be answered.",
                     ),
                 ),
                 __module__=__name__,
@@ -543,7 +585,7 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
             return model
 
 
-@ResponseTypes.register('extract')
+@ResponseTypes.register("extract")
 def extracted_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce extracted text response models with optional list support.
 
@@ -559,9 +601,14 @@ def extracted_response_model(options=None, quantifier=None, required_prefix=Fals
 
     if options:
         for opt in options:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            if "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     is_required = True
 
     if quantifier:
@@ -590,7 +637,9 @@ def extracted_response_model(options=None, quantifier=None, required_prefix=Fals
             __base__=ResponseModel,
             response=(
                 List[str],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -608,7 +657,7 @@ def extracted_response_model(options=None, quantifier=None, required_prefix=Fals
                     Union[str, None],
                     Field(
                         default=None,
-                        description="Text extracted verbatim, or null if no text found. Copy text exactly as it appears in the context."
+                        description="Text extracted verbatim, or null if no text found. Copy text exactly as it appears in the context.",
                     ),
                 ),
                 __module__=__name__,
@@ -617,8 +666,10 @@ def extracted_response_model(options=None, quantifier=None, required_prefix=Fals
             return model
 
 
-@ResponseTypes.register('think')
-def internal_thoughts_response_model(options=None, quantifier=None, required_prefix=False):
+@ResponseTypes.register("think")
+def internal_thoughts_response_model(
+    options=None, quantifier=None, required_prefix=False
+):
     """Factory to produce internal thoughts response models with optional list support.
 
     Args:
@@ -633,9 +684,14 @@ def internal_thoughts_response_model(options=None, quantifier=None, required_pre
 
     if options:
         for opt in options:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            if "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     is_required = True
 
     if quantifier:
@@ -664,7 +720,9 @@ def internal_thoughts_response_model(options=None, quantifier=None, required_pre
             __base__=ResponseModel,
             response=(
                 List[str],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -682,7 +740,7 @@ def internal_thoughts_response_model(options=None, quantifier=None, required_pre
                     Union[str, None],
                     Field(
                         default=None,
-                        description="Your thoughts, plans and step-by-step reasoning in concise note form, or null if no reasoning needed."
+                        description="Your thoughts, plans and step-by-step reasoning in concise note form, or null if no reasoning needed.",
                     ),
                 ),
                 __module__=__name__,
@@ -691,7 +749,7 @@ def internal_thoughts_response_model(options=None, quantifier=None, required_pre
             return model
 
 
-@ResponseTypes.register('speak')
+@ResponseTypes.register("speak")
 def spoken_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce spoken response models with optional list support.
 
@@ -707,9 +765,14 @@ def spoken_response_model(options=None, quantifier=None, required_prefix=False):
 
     if options:
         for opt in options:
-            if '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            if "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     is_required = True
 
     if quantifier:
@@ -738,7 +801,9 @@ def spoken_response_model(options=None, quantifier=None, required_prefix=False):
             __base__=ResponseModel,
             response=(
                 List[str],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -756,7 +821,7 @@ def spoken_response_model(options=None, quantifier=None, required_prefix=False):
                     Union[str, None],
                     Field(
                         default=None,
-                        description="A spoken response continuing the conversation, or null if no response is appropriate."
+                        description="A spoken response continuing the conversation, or null if no response is appropriate.",
                     ),
                 ),
                 __module__=__name__,
@@ -765,7 +830,7 @@ def spoken_response_model(options=None, quantifier=None, required_prefix=False):
             return model
 
 
-@ResponseTypes.register('number')
+@ResponseTypes.register("number")
 def number_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce numeric response models for int/float values.
 
@@ -793,7 +858,7 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
                 key = key.strip().lower()
                 value = value.strip()
 
-                if key == "required" and value.lower() in ('true', 't', '1', 'yes'):
+                if key == "required" and value.lower() in ("true", "t", "1", "yes"):
                     is_required = True
                 elif key == "min":
                     try:
@@ -830,9 +895,7 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
         if min_items == max_items:
             quant_desc = f"exactly {min_items}"
         elif max_items is None:
-            quant_desc = (
-                f"at least {min_items}" if min_items > 0 else "any number of"
-            )
+            quant_desc = f"at least {min_items}" if min_items > 0 else "any number of"
         elif min_items == 0:
             quant_desc = f"up to {max_items}"
         else:
@@ -845,11 +908,15 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
             __base__=ResponseModel,
             response=(
                 List[Union[int, float]],
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
-        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
+        model.llm_config = LLMConfig(
+            temperature=0.1, model=None
+        )  # Slightly flexible for extraction
         return model
     else:
         # Single extraction mode
@@ -862,10 +929,7 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
                 __base__=ResponseModel,
                 response=(
                     Union[int, float],
-                    Field(
-                        ...,
-                        description=single_description
-                    ),
+                    Field(..., description=single_description),
                 ),
                 __module__=__name__,
             )
@@ -878,18 +942,17 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
                 __base__=ResponseModel,
                 response=(
                     Union[int, float, None],
-                    Field(
-                        default=None,
-                        description=single_description
-                    ),
+                    Field(default=None, description=single_description),
                 ),
                 __module__=__name__,
             )
-        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Slightly flexible for extraction
+        model.llm_config = LLMConfig(
+            temperature=0.1, model=None
+        )  # Slightly flexible for extraction
         return model
 
 
-@ResponseTypes.register('date_rule')
+@ResponseTypes.register("date_rule")
 class DateRuleResponse(ResponseModel):
     """Returns RRULE parameters for generating recurring dates.
 
@@ -897,46 +960,49 @@ class DateRuleResponse(ResponseModel):
     """
 
     freq: str = Field(
-        ...,
-        description='Frequency: one of "DAILY", "WEEKLY", "MONTHLY", "YEARLY"'
+        ..., description='Frequency: one of "DAILY", "WEEKLY", "MONTHLY", "YEARLY"'
     )
     dtstart: str = Field(
         ...,
-        description="Starting date in ISO format (YYYY-MM-DD) or datetime with timezone. If no year is specified in the input, use the current year from the temporal context. For relative expressions like 'next month' or ambiguous month references like 'September' (without year), choose the year that makes most sense given the current date."
+        description="Starting date in ISO format (YYYY-MM-DD) or datetime with timezone. If no year is specified in the input, use the current year from the temporal context. For relative expressions like 'next month' or ambiguous month references like 'September' (without year), choose the year that makes most sense given the current date.",
     )
     count: Optional[int] = Field(
-        None,
-        description="Number of occurrences (e.g., 5 for 'first 5 Tuesdays')"
+        None, description="Number of occurrences (e.g., 5 for 'first 5 Tuesdays')"
     )
     until: Optional[str] = Field(
-        None,
-        description="End date in ISO format (YYYY-MM-DD)"
+        None, description="End date in ISO format (YYYY-MM-DD)"
     )
     interval: Optional[int] = Field(
         None,
-        description="Interval between occurrences (e.g., 2 for 'every other week')"
+        description="Interval between occurrences (e.g., 2 for 'every other week')",
     )
     byweekday: Optional[List[int]] = Field(
-        None,
-        description="List of weekdays as integers 0-6 (Monday=0, Sunday=6)"
+        None, description="List of weekdays as integers 0-6 (Monday=0, Sunday=6)"
     )
     bymonth: Optional[List[int]] = Field(
-        None,
-        description="List of months as integers 1-12"
+        None, description="List of months as integers 1-12"
     )
     bymonthday: Optional[List[int]] = Field(
-        None,
-        description="List of days of month as integers 1-31"
+        None, description="List of days of month as integers 1-31"
     )
     bysetpos: Optional[List[int]] = Field(
-        None,
-        description="Position in set (e.g., [1] for 'first', [-1] for 'last')"
+        None, description="Position in set (e.g., [1] for 'first', [-1] for 'last')"
     )
 
-DateRuleResponse.llm_config = LLMConfig(temperature=0.0, model=None)  # Deterministic rule parsing
+
+DateRuleResponse.llm_config = LLMConfig(
+    temperature=0.0, model=None
+)  # Deterministic rule parsing
 
 
-def temporal_response_model(field_type, type_name, description, required=False, quantifier=None, required_prefix=False):
+def temporal_response_model(
+    field_type,
+    type_name,
+    description,
+    required=False,
+    quantifier=None,
+    required_prefix=False,
+):
     """Factory to produce temporal response models.
 
     Args:
@@ -998,11 +1064,15 @@ When in doubt, if the pattern involves repetition or requires calculating multip
             __base__=ResponseModel,
             response=(
                 Union[List[field_type], List[str]],  # Accept dates OR pattern strings
-                Field(default_factory=list, description=list_description, **field_kwargs),
+                Field(
+                    default_factory=list, description=list_description, **field_kwargs
+                ),
             ),
             __module__=__name__,
         )
-        model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+        model.llm_config = LLMConfig(
+            temperature=0.1, model=None
+        )  # Low temp for temporal extraction
         return model
     else:
         # Single extraction mode
@@ -1025,15 +1095,19 @@ The pattern will be expanded automatically and the first occurrence will be used
                 f"{type_name}Response",
                 __base__=ResponseModel,
                 response=(
-                    Union[field_type, str],  # Accept field_type or pattern string, NO None
+                    Union[
+                        field_type, str
+                    ],  # Accept field_type or pattern string, NO None
                     Field(
                         ...,  # Required field - no default
-                        description=single_description
+                        description=single_description,
                     ),
                 ),
                 __module__=__name__,
             )
-            model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+            model.llm_config = LLMConfig(
+                temperature=0.1, model=None
+            )  # Low temp for temporal extraction
             return model
         else:
             # Optional field: accept field_type, str, or None
@@ -1054,19 +1128,20 @@ The pattern will be expanded automatically and the first occurrence will be used
                 f"{type_name}Response",
                 __base__=ResponseModel,
                 response=(
-                    Union[field_type, str, None],  # Accept field_type, pattern string, or None
-                    Field(
-                        default=None,
-                        description=single_description
-                    ),
+                    Union[
+                        field_type, str, None
+                    ],  # Accept field_type, pattern string, or None
+                    Field(default=None, description=single_description),
                 ),
                 __module__=__name__,
             )
-            model.llm_config = LLMConfig(temperature=0.1, model=None)  # Low temp for temporal extraction
+            model.llm_config = LLMConfig(
+                temperature=0.1, model=None
+            )  # Low temp for temporal extraction
             return model
 
 
-@ResponseTypes.register('date')
+@ResponseTypes.register("date")
 def date_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for date response models.
 
@@ -1079,13 +1154,18 @@ def date_response_model(options=None, quantifier=None, required_prefix=False):
     required = False
     if options:
         for opt in options:
-            if opt.strip().lower() == 'required':
+            if opt.strip().lower() == "required":
                 # Bare "required" keyword
                 required = True
                 break
-            elif '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            elif "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     required = True
                     break
 
@@ -1095,11 +1175,11 @@ def date_response_model(options=None, quantifier=None, required_prefix=False):
         "A date value. For relative dates (e.g., 'next Tuesday', 'tomorrow'), use the current date/time context provided. Return dates in ISO format (YYYY-MM-DD).",
         required=required,
         quantifier=quantifier,
-        required_prefix=required_prefix
+        required_prefix=required_prefix,
     )
 
 
-@ResponseTypes.register('datetime')
+@ResponseTypes.register("datetime")
 def datetime_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for datetime response models.
 
@@ -1112,13 +1192,18 @@ def datetime_response_model(options=None, quantifier=None, required_prefix=False
     required = False
     if options:
         for opt in options:
-            if opt.strip().lower() == 'required':
+            if opt.strip().lower() == "required":
                 # Bare "required" keyword
                 required = True
                 break
-            elif '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            elif "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     required = True
                     break
 
@@ -1128,11 +1213,11 @@ def datetime_response_model(options=None, quantifier=None, required_prefix=False
         "A datetime value with timezone awareness. For relative datetimes (e.g., 'next Tuesday at 3pm'), use the current date/time context provided. Return in ISO format with timezone.",
         required=required,
         quantifier=quantifier,
-        required_prefix=required_prefix
+        required_prefix=required_prefix,
     )
 
 
-@ResponseTypes.register('time')
+@ResponseTypes.register("time")
 def time_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for time response models.
 
@@ -1145,13 +1230,18 @@ def time_response_model(options=None, quantifier=None, required_prefix=False):
     required = False
     if options:
         for opt in options:
-            if opt.strip().lower() == 'required':
+            if opt.strip().lower() == "required":
                 # Bare "required" keyword
                 required = True
                 break
-            elif '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            elif "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     required = True
                     break
 
@@ -1161,11 +1251,11 @@ def time_response_model(options=None, quantifier=None, required_prefix=False):
         "A time value. For times without explicit AM/PM, use context clues. Return in HH:MM:SS format.",
         required=required,
         quantifier=quantifier,
-        required_prefix=required_prefix
+        required_prefix=required_prefix,
     )
 
 
-@ResponseTypes.register('duration')
+@ResponseTypes.register("duration")
 def duration_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for duration response models.
 
@@ -1178,13 +1268,18 @@ def duration_response_model(options=None, quantifier=None, required_prefix=False
     required = False
     if options:
         for opt in options:
-            if opt.strip().lower() == 'required':
+            if opt.strip().lower() == "required":
                 # Bare "required" keyword
                 required = True
                 break
-            elif '=' in opt:
-                key, value = opt.split('=', 1)
-                if key.strip().lower() == 'required' and value.strip().lower() in ('true', 't', '1', 'yes'):
+            elif "=" in opt:
+                key, value = opt.split("=", 1)
+                if key.strip().lower() == "required" and value.strip().lower() in (
+                    "true",
+                    "t",
+                    "1",
+                    "yes",
+                ):
                     required = True
                     break
 
@@ -1194,7 +1289,7 @@ def duration_response_model(options=None, quantifier=None, required_prefix=False
         "A duration expressed as a timedelta. Extract from phrases like '2 hours', '3 days', '1 week and 2 days', '30 minutes'. Return the total duration in days and seconds.",
         required=required,
         quantifier=quantifier,
-        required_prefix=required_prefix
+        required_prefix=required_prefix,
     )
 
 
