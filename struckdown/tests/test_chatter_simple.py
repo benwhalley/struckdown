@@ -6,16 +6,16 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from struckdown import ChatterResult, SegmentDependencyGraph
+from struckdown import ChatterResult, SegmentDependencyGraph, SegmentResult
 
 
 class ChatterSimpleTestCase(unittest.TestCase):
     def test_chatter_result_properties(self):
         """Test ChatterResult helper properties work correctly"""
         result = ChatterResult()
-        result["first"] = "first_value"
-        result["second"] = "second_value"
-        result["last"] = "last_value"
+        result["first"] = SegmentResult(name="first", output="first_value", prompt="")
+        result["second"] = SegmentResult(name="second", output="second_value", prompt="")
+        result["last"] = SegmentResult(name="last", output="last_value", prompt="")
 
         # Test .response property returns the last item
         self.assertEqual(result.response, "last_value")
@@ -35,9 +35,9 @@ class ChatterSimpleTestCase(unittest.TestCase):
         result = ChatterResult()
 
         # Add items in specific order
-        result["zebra"] = "z"
-        result["apple"] = "a"
-        result["banana"] = "b"
+        result["zebra"] = SegmentResult(name="zebra", output="z", prompt="")
+        result["apple"] = SegmentResult(name="apple", output="a", prompt="")
+        result["banana"] = SegmentResult(name="banana", output="b", prompt="")
 
         # Verify order is preserved
         keys = list(result.keys())
@@ -45,6 +45,17 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
         # Verify response is last inserted
         self.assertEqual(result.response, "b")
+
+    def test_chatter_result_type_enforcement(self):
+        """Test that ChatterResult enforces SegmentResult type"""
+        result = ChatterResult()
+
+        # Should raise TypeError when trying to assign non-SegmentResult
+        with self.assertRaises(TypeError) as context:
+            result["key"] = "raw_string"
+
+        self.assertIn("ChatterResult only accepts SegmentResult values", str(context.exception))
+        self.assertIn("str", str(context.exception))
 
     def test_segment_dependency_graph_no_dependencies(self):
         """Test dependency analysis for independent segments"""

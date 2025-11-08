@@ -330,6 +330,9 @@ def structured_chat(
 
 
 class SegmentResult(BaseModel):
+    name: Optional[str] = Field(
+        default=None, description="The slot/variable name for this result"
+    )
     prompt: str
     output: Any
     completion: Optional[Any] = Field(default=None, exclude=False)
@@ -373,6 +376,31 @@ class SegmentResult(BaseModel):
 
         return data
 
+    def __str__(self):
+        """String representation returns the output's string representation"""
+        return str(self.output)
+
+    def __repr__(self):
+        """Debug representation shows it's a SegmentResult with the output"""
+        return f"SegmentResult(name={self.name!r}, output={self.output!r}, action={self.action!r})"
+
+    def __eq__(self, other):
+        """Equality compares the output value"""
+        if isinstance(other, SegmentResult):
+            return self.output == other.output
+        return self.output == other
+
+    def __bool__(self):
+        """Boolean evaluation based on output"""
+        return bool(self.output)
+
+    def __hash__(self):
+        """Make hashable based on output (if output is hashable)"""
+        try:
+            return hash(self.output)
+        except TypeError:
+            return hash(id(self))
+
 
 class ChatterResult(BaseModel):
     type: str = Field(
@@ -385,21 +413,36 @@ class ChatterResult(BaseModel):
     )
 
     def __str__(self):
-        return "\n\n".join([f"{k}: {v.output}" for k, v in self.results.items()])
+        # abbreviate first prompt
+        first_prompt = ""
+        if self.results:
+            first_seg = next(iter(self.results.values()))
+            first_prompt = first_seg.prompt[:80] + ("..." if len(first_seg.prompt) > 80 else "")
+
+        # show outputs dict
+        outputs_repr = {k: str(v.output) for k, v in self.results.items()}
+
+        return f"<ChatterResult: outputs={outputs_repr}, prompt='{first_prompt}'>"
 
     def __getitem__(self, key):
         return self.results[key].output
 
-    def __setitem__(self, key, value):
-        # Assume caller is giving raw output — use None for completion by default
-        if isinstance(value, SegmentResult):
-            self.results[key] = value
-        else:
-            self.results[key] = SegmentResult(prompt="", output=value)
+    def __setitem__(self, key: str, value: SegmentResult):
+        """Set a result, enforcing SegmentResult type and ensuring name is set."""
+        if not isinstance(value, SegmentResult):
+            raise TypeError(
+                f"ChatterResult only accepts SegmentResult values, got {type(value).__name__}"
+            )
+        if value.name is None:
+            value.name = key
+        self.results[key] = value
 
-    def update(self, d: Dict[str, Any]):
+    def update(self, d: Dict[str, SegmentResult]):
+        """Update results with a dict of SegmentResults, ensuring names are set."""
         for k, v in d.items():
-            self[k] = v
+            if v.name is None:
+                v.name = k
+            self.results[k] = v
 
     def keys(self):
         return self.results.keys()
@@ -921,6 +964,7 @@ async def process_single_segment_(
 
         # Store the completion in both our final results and accumulated context.
         results[key] = SegmentResult(
+            name=key,
             output=extracted_value,
             completion=completion_obj,
             prompt=rendered_prompt,
