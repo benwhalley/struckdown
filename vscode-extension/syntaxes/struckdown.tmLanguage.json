@@ -42,12 +42,54 @@
     "struckdown-keywords": {
       "patterns": [
         {
-          "name": "keyword.control.obliviate.struckdown",
-          "match": "¡OBLIVIATE"
+          "name": "meta.block.system.struckdown",
+          "begin": "¡(SYSTEM|IMPORTANT)(\\+)?",
+          "end": "/END",
+          "beginCaptures": {
+            "0": {
+              "name": "keyword.control.system.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "keyword.control.end.struckdown"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#struckdown-template-variables"
+            },
+            {
+              "include": "#struckdown-django-tags"
+            }
+          ]
         },
         {
-          "name": "keyword.control.begin.struckdown",
-          "match": "¡BEGIN"
+          "name": "meta.block.header.struckdown",
+          "begin": "¡HEADER(\\+)?",
+          "end": "/END",
+          "beginCaptures": {
+            "0": {
+              "name": "keyword.control.header.struckdown"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "keyword.control.end.struckdown"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#struckdown-template-variables"
+            },
+            {
+              "include": "#struckdown-django-tags"
+            }
+          ]
+        },
+        {
+          "name": "keyword.control.obliviate.struckdown",
+          "match": "¡(OBLIVIATE|SEGMENT)"
         }
       ]
     },

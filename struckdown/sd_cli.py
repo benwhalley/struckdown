@@ -79,6 +79,20 @@ def auto_prepend_input(prompt: str) -> str:
         return prompt
 
 
+
+def setup_logging(verbosity: int):
+    if verbosity >= 2:
+        level = logging.DEBUG
+    elif verbosity == 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s: %(message)s",
+    )
+
 @app.command()
 def chat(
     prompt: Optional[List[str]] = typer.Argument(
@@ -97,8 +111,12 @@ def chat(
         help="Random seed for reproducible outputs (if supported by model)",
     ),
     show_context: bool = typer.Option(False, help="Print the resolved prompt context"),
-    verbose: bool = typer.Option(
-        False, "-v", "--verbose", help="Print the full ChatterResult object"
+    verbose: int = typer.Option(
+        0,
+        "-v",
+        "--verbose",
+        count=True,
+        help="-v for info, -vv for debug",
     ),
 ):
     """
@@ -114,10 +132,9 @@ def chat(
 
     new_run()
 
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger("struckdown").setLevel(logging.DEBUG)
-
+    setup_logging(verbose)
+    logger = logging.getLogger(__name__)
+    
     # Determine prompt source
     prompt_str = None
 
@@ -158,8 +175,46 @@ def chat(
         extra_kwargs=extra_kwargs if extra_kwargs else None,
     )
 
-    for k, v in result.results.items():
-        typer.echo(f"{k}: {v.output}")
+    if verbose:
+        typer.echo("\n" + "="*80)
+        typer.echo("VERBOSE OUTPUT - Message Threads")
+        typer.echo("="*80 + "\n")
+
+        for idx, (key, seg_result) in enumerate(result.results.items(), 1):
+            typer.echo(f"Segment {idx}: `{key}`")
+            typer.echo("-" * 80)
+
+            if seg_result.messages:
+                for msg in seg_result.messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+
+                    # Bold role name
+                    typer.echo(f"\033[1m{role}:\033[0m")
+                    typer.echo(content)
+                    typer.echo()
+
+                # Show response schema if available
+                if seg_result.response_schema:
+                    typer.echo("\033[1m\033[33mResponse Schema (Tool):\033[0m")
+                    # Get schema summary from SegmentResult method
+                    schema_summary = seg_result.get_schema_summary()
+                    typer.echo(f"\033[33m{schema_summary}\033[0m")
+                    typer.echo()
+
+                # Completion in red at the end
+                typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {seg_result.output}\033[0m\n")
+
+                
+            else:
+                # Fallback if messages not available
+                typer.echo(f"Output: {seg_result.output}")
+
+            typer.echo()  # Blank line after segment
+
+    else:
+        for k, v in result.results.items():
+            typer.echo(f"\033[1m{k}\033[0m: {v.output}")
 
     if show_context:
         typer.echo("\nFinal context:")

@@ -29,7 +29,8 @@ PromptPart = namedtuple(
         "return_type",
         "options",
         "text",
-        "shared_header",
+        "system_message",  # Accumulated system message at this point
+        "header_content",  # Accumulated header content at this point
         "quantifier",
         "action_type",
         "llm_kwargs",
@@ -45,7 +46,8 @@ class MindframeTransformer(Transformer):
         self.sections = []
         self.current_buf = []  # holds text/vars/etc
         self.current_parts = []  # list of (key, PromptPart)
-        self.shared_header = ""  # holds shared header text
+        self.current_system = ""  # Accumulated system message
+        self.current_header = ""  # Accumulated header content
         self.completion_counters = (
             {}
         )  # Track auto-variable generation per completion type
@@ -82,22 +84,70 @@ class MindframeTransformer(Transformer):
         )
         return None
 
-    def begin_delimiter(self, items):
-        # capture everything in current_buf as shared_header (including variables and template tags)
-        header_parts = []
-        for item in self.current_buf:
-            if item["type"] == "text":
-                header_parts.append(item["text"])
-            elif item["type"] == "variable":
-                header_parts.append(f"{{{{{item['name']}}}}}")
-            elif item["type"] == "templatetag":
-                header_parts.append(item["text"])
+    def _validate_no_completions(self, content: str, block_type: str):
+        """Validate that content doesn't contain completion syntax [[...]]
 
-        if header_parts:
-            self.shared_header = "\n".join(header_parts).strip()
+        Args:
+            content: The content to validate
+            block_type: Name of block type for error message (e.g., "¡SYSTEM", "¡HEADER")
 
-        # clear buffer since this was header content
-        self.current_buf = []
+        Raises:
+            ValueError: If completion syntax is found
+        """
+        if '[[' in content:
+            # Find the first occurrence for a helpful error message
+            import re
+            match = re.search(r'\[\[([^\]]+)\]\]', content)
+            if match:
+                completion_text = match.group(0)
+                raise ValueError(
+                    f"Completions are not allowed in {block_type} blocks.\n"
+                    f"Found: {completion_text}\n\n"
+                    f"{block_type} blocks can only contain:\n"
+                    f"  - Static text\n"
+                    f"  - Template variables: {{{{variable}}}}\n"
+                    f"  - Template tags: {{% tag %}}\n\n"
+                    f"To use completions, place them before the {block_type} block:\n"
+                    f"  Example:\n"
+                    f"    What language? [[pick:language|French,German]]\n"
+                    f"    \n"
+                    f"    {block_type}\n"
+                    f"    Answer in {{{{language}}}}\n"
+                    f"    /END"
+                )
+
+    def system_replace(self, items):
+        """Handle ¡SYSTEM - replace current system message"""
+        content = str(items[0]).strip() if items and items[0] else ""
+        self._validate_no_completions(content, "¡SYSTEM")
+        self.current_system = content
+        return None
+
+    def system_append(self, items):
+        """Handle ¡SYSTEM+ - append to current system message"""
+        content = str(items[0]).strip() if items and items[0] else ""
+        self._validate_no_completions(content, "¡SYSTEM+")
+        if self.current_system:
+            self.current_system += "\n\n" + content
+        else:
+            self.current_system = content
+        return None
+
+    def header_replace(self, items):
+        """Handle ¡HEADER - replace current header (empty wipes it)"""
+        content = str(items[0]).strip() if items and items[0] else ""
+        self._validate_no_completions(content, "¡HEADER")
+        self.current_header = content
+        return None
+
+    def header_append(self, items):
+        """Handle ¡HEADER+ - append to current header"""
+        content = str(items[0]).strip() if items and items[0] else ""
+        self._validate_no_completions(content, "¡HEADER+")
+        if self.current_header:
+            self.current_header += "\n\n" + content
+        else:
+            self.current_header = content
         return None
 
     def obliviate(self, items):
@@ -123,7 +173,8 @@ class MindframeTransformer(Transformer):
             return_type=body["return_type"],
             options=plain_options,  # Store only non-key=value options
             text=prompt,
-            shared_header=self.shared_header,  # Store shared_header separately
+            system_message=self.current_system,  # Capture accumulated system message
+            header_content=self.current_header,  # Capture accumulated header content
             quantifier=body.get("quantifier", None),
             action_type=body.get("action_type"),
             llm_kwargs=llm_kwargs,  # Store parsed LLM parameters

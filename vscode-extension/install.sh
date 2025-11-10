@@ -5,7 +5,7 @@
 
 set -e
 
-EXTENSION_NAME="struckdown-0.1.0"
+EXTENSION_NAME="struckdown-0.2.0"
 EXTENSION_DIR="$HOME/.vscode/extensions"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
@@ -15,10 +15,10 @@ echo ""
 # Create extensions directory if it doesn't exist
 mkdir -p "$EXTENSION_DIR"
 
-# Remove old version if exists
-if [ -d "$EXTENSION_DIR/$EXTENSION_NAME" ]; then
-    echo "Removing existing installation..."
-    rm -rf "$EXTENSION_DIR/$EXTENSION_NAME"
+# Remove old versions if they exist (all struckdown-* directories)
+if ls "$EXTENSION_DIR"/struckdown-* 1> /dev/null 2>&1; then
+    echo "Removing existing installation(s)..."
+    rm -rf "$EXTENSION_DIR"/struckdown-*
 fi
 
 # Copy extension

@@ -76,6 +76,7 @@ Batch operations accept JSON, so you can chain commands:
 ## Key Features
 
 - **Simple syntax** -- `[[variable]]` for completions, `{{variable}}` for references
+- **System messages** -- Control LLM behavior with `¡SYSTEM` and `¡HEADER` blocks
 - **Type safety** -- Extract booleans, numbers, dates, or pick from options
 - **Memory management** -- Use `¡OBLIVIATE` to save tokens between steps
 - **Batch processing** -- Process hundreds of files with progress bars
@@ -295,14 +296,18 @@ result = chatter("[[uppercase:loud|text={{input}}]]")
 
 See **[Custom Actions Guide](docs/CUSTOM_ACTIONS.md)** for details.
 
-### Shared Headers
+### System Messages and Headers
 
-Use `¡BEGIN` to define a shared header for all segments:
+Control system messages and persistent instructions:
 
 ```
-You are an expert analyst.
+¡SYSTEM
+You are an expert data analyst with 10 years of experience.
+/END
 
-¡BEGIN
+¡HEADER
+Always provide concise, data-driven responses.
+/END
 
 First analysis: [[analysis1]]
 
@@ -311,7 +316,20 @@ First analysis: [[analysis1]]
 Second analysis: [[analysis2]]
 ```
 
-The header is prepended to every segment after `¡OBLIVIATE`.
+**System messages** (`¡SYSTEM`) set the LLM's role and persist across all segments.
+**Headers** (`¡HEADER`) provide instructions that are prepended to each segment's first message.
+
+Both support template variables: `{{variable}}` and can be modified with `+`:
+
+```
+¡SYSTEM+
+Additionally, respond in {{language}}.
+/END
+
+¡HEADER+
+Consider: {{context}}
+/END
+```
 
 ### Model/Temperature Overrides
 

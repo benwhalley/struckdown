@@ -184,15 +184,15 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
 
 class SharedHeaderTestCase(unittest.TestCase):
-    """Test the ¡BEGIN shared header functionality"""
+    """Test the ¡SYSTEM and ¡HEADER functionality"""
 
     def test_shared_header_parsing(self):
-        """Test that ¡BEGIN correctly separates shared header from completions"""
+        """Test that ¡SYSTEM correctly stores system message"""
         from struckdown.parsing import parse_syntax
 
-        template = """System instruction: You are a helpful assistant.
-
-¡BEGIN
+        template = """¡SYSTEM
+You are a helpful assistant.
+/END
 
 Tell a joke [[joke]]"""
 
@@ -202,20 +202,20 @@ Tell a joke [[joke]]"""
         self.assertEqual(len(sections), 1)
         self.assertIn("joke", sections[0])
 
-        # The prompt part should have the shared_header stored
+        # The prompt part should have the system_message stored
         part = sections[0]["joke"]
         self.assertEqual(
-            part.shared_header, "System instruction: You are a helpful assistant."
+            part.system_message, "You are a helpful assistant."
         )
         self.assertEqual(part.text, "Tell a joke")
 
     def test_shared_header_with_multiple_segments(self):
-        """Test that shared header is preserved across OBLIVIATE segments"""
+        """Test that system message is preserved across OBLIVIATE segments"""
         from struckdown.parsing import parse_syntax
 
-        template = """You are a comedy expert.
-
-¡BEGIN
+        template = """¡SYSTEM
+You are a comedy expert.
+/END
 
 Tell a joke [[joke]]
 
@@ -228,32 +228,32 @@ Rate the joke from 1-10 [[int:rating]]"""
         # Should have 2 sections
         self.assertEqual(len(sections), 2)
 
-        # Both sections should have the same shared_header
-        self.assertEqual(sections[0]["joke"].shared_header, "You are a comedy expert.")
+        # Both sections should have the same system_message
+        self.assertEqual(sections[0]["joke"].system_message, "You are a comedy expert.")
         self.assertEqual(
-            sections[1]["rating"].shared_header, "You are a comedy expert."
+            sections[1]["rating"].system_message, "You are a comedy expert."
         )
 
     def test_shared_header_with_template_variables(self):
-        """Test that shared header can contain template variables"""
+        """Test that system message can contain template variables"""
         from struckdown.parsing import parse_syntax
 
-        template = """You are an expert in {{domain}}.
-
-¡BEGIN
+        template = """¡SYSTEM
+You are an expert in {{domain}}.
+/END
 
 Explain {{topic}} [[explanation]]"""
 
         sections = parse_syntax(template)
 
         part = sections[0]["explanation"]
-        self.assertIn("{{domain}}", part.shared_header)
+        self.assertIn("{{domain}}", part.system_message)
         # Note: parsing preserves the newline structure
         self.assertIn("Explain", part.text)
         self.assertIn("{{topic}}", part.text)
 
     def test_no_shared_header(self):
-        """Test that templates without ¡BEGIN work as before"""
+        """Test that templates without ¡SYSTEM or ¡HEADER work as before"""
         from struckdown.parsing import parse_syntax
 
         template = """Tell a joke [[joke]]"""
@@ -261,21 +261,23 @@ Explain {{topic}} [[explanation]]"""
         sections = parse_syntax(template)
 
         part = sections[0]["joke"]
-        self.assertEqual(part.shared_header, "")
+        self.assertEqual(part.system_message, "")
+        self.assertEqual(part.header_content, "")
         self.assertEqual(part.text, "Tell a joke")
 
     def test_shared_header_empty(self):
-        """Test that ¡BEGIN at start of template results in empty shared_header"""
+        """Test that empty ¡SYSTEM block results in empty system_message"""
         from struckdown.parsing import parse_syntax
 
-        template = """¡BEGIN
+        template = """¡SYSTEM
+/END
 
 Tell a joke [[joke]]"""
 
         sections = parse_syntax(template)
 
         part = sections[0]["joke"]
-        self.assertEqual(part.shared_header, "")
+        self.assertEqual(part.system_message, "")
         self.assertEqual(part.text, "Tell a joke")
 
 

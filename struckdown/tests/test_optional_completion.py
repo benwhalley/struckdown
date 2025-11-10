@@ -109,10 +109,10 @@ Hello {{name}}, how are you?"""
         self.assertIn("{{name}}", sections[1]["response"].text)
 
     def test_parse_with_shared_header_no_completion(self):
-        """Test shared header (¡BEGIN) with no completion in final segment"""
-        template = """You are a helpful assistant.
-
-¡BEGIN
+        """Test system message (¡SYSTEM) with no completion in final segment"""
+        template = """¡SYSTEM
+You are a helpful assistant.
+/END
 
 Tell me a joke"""
 
@@ -122,7 +122,7 @@ Tell me a joke"""
         self.assertIn("response", sections[0])
 
         part = sections[0]["response"]
-        self.assertEqual(part.shared_header, "You are a helpful assistant.")
+        self.assertEqual(part.system_message, "You are a helpful assistant.")
         self.assertEqual(part.text, "Tell me a joke")
 
     def test_parse_complex_multi_segment(self):

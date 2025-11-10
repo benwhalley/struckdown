@@ -1,15 +1,21 @@
 <!--
-Shared Header Example
+System Messages and Headers Example
 
-Templates can use the ¡BEGIN keyword to define a shared context for all the segments. 
+Templates can use ¡SYSTEM and ¡HEADER blocks to control LLM behavior.
 
-In this example, each segment defined by ¡OBLIVIATE will have access to the previous results, and to the shared context.
+¡SYSTEM defines the LLM's role and persists across all segments.
+¡HEADER provides instructions that are prepended to each segment.
 
+Both support template variables like {{topic}}.
 -->
 
-You are a helpful research assistant. Always be thorough and cite sources when possible. Use clear, professional language.
+¡SYSTEM
+You are a helpful research assistant. Always be thorough and cite sources when possible.
+/END
 
-¡BEGIN
+¡HEADER
+Use clear, professional language appropriate for academic research.
+/END
 
 Research the history of {{topic}} and provide key findings: [[findings]]
 

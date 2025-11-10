@@ -296,26 +296,26 @@ When is the event? [[date:event_date]]"""
 
 
 class TemporalSharedHeaderTestCase(unittest.TestCase):
-    """Test temporal types work with shared headers (¡BEGIN)"""
+    """Test temporal types work with system messages (¡SYSTEM)"""
 
     def test_shared_header_with_temporal_type(self):
-        """Test ¡BEGIN shared header with temporal extraction"""
-        template = """You are an expert at extracting dates from text.
-
-¡BEGIN
+        """Test ¡SYSTEM with temporal extraction"""
+        template = """¡SYSTEM
+You are an expert at extracting dates from text.
+/END
 
 Extract the date from this text [[date:extracted_date]]"""
         sections = parse_syntax(template)
 
         part = sections[0]["extracted_date"]
         self.assertEqual(part.action_type, "date")
-        self.assertIn("expert", part.shared_header)
+        self.assertIn("expert", part.system_message)
 
     def test_shared_header_persists_across_temporal_segments(self):
-        """Test shared header persists across multiple temporal segments"""
-        template = """You are a temporal extraction specialist.
-
-¡BEGIN
+        """Test system message persists across multiple temporal segments"""
+        template = """¡SYSTEM
+You are a temporal extraction specialist.
+/END
 
 Extract the date [[date:event_date]]
 
@@ -325,8 +325,8 @@ Extract the time [[time:event_time]]"""
         sections = parse_syntax(template)
 
         self.assertEqual(
-            sections[0]["event_date"].shared_header,
-            sections[1]["event_time"].shared_header,
+            sections[0]["event_date"].system_message,
+            sections[1]["event_time"].system_message,
         )
 
 

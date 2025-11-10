@@ -48,8 +48,16 @@ mock_responses = {
 }
 
 
-def mock_structured_chat(prompt, return_type, llm, credentials, extra_kwargs):
+def mock_structured_chat(messages, return_type, llm, credentials, extra_kwargs):
     """Mock LLM that returns predefined responses and shows context"""
+
+    # Extract the user message content from messages list
+    user_content = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_content += msg.get("content", "")
+
+    prompt = user_content  # For backward compatibility with rest of function
 
     # Determine which variable we're extracting based on the prompt
     if "Extract the main problem" in prompt:

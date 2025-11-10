@@ -2,7 +2,7 @@
   "name": "struckdown",
   "displayName": "Struckdown",
   "description": "Syntax highlighting for Struckdown prompt files (.sd)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "your-publisher-name",
   "engines": {
     "vscode": "^1.75.0"

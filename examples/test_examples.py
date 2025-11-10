@@ -108,12 +108,12 @@ def create_sample_context(placeholders):
 
 
 def test_shared_header_feature():
-    """Specifically test the new shared header feature"""
+    """Specifically test the system message feature"""
     print(f"=" * 60)
-    print("Testing Shared Header Feature")
+    print("Testing System Message Feature")
     print(f"=" * 60)
 
-    # test without shared header
+    # test without system message
     template1 = """Tell a joke: [[joke]]
 
 ¡OBLIVIATE
@@ -121,17 +121,17 @@ def test_shared_header_feature():
 Rate the joke {{joke}} from 1-10: [[int:rating]]"""
 
     sections1 = parse_syntax(template1)
-    print("Without shared header:")
+    print("Without system message:")
     for i, section in enumerate(sections1):
         for key, part in section.items():
             print(f"  Section {i+1} - {key}: {repr(part.text)}")
 
     print()
 
-    # test with shared header
-    template2 = """You are a comedy expert who rates jokes professionally.
-
-¡BEGIN
+    # test with system message
+    template2 = """¡SYSTEM
+You are a comedy expert who rates jokes professionally.
+/END
 
 Tell a joke: [[joke]]
 
@@ -140,10 +140,11 @@ Tell a joke: [[joke]]
 Rate the joke {{joke}} from 1-10: [[int:rating]]"""
 
     sections2 = parse_syntax(template2)
-    print("With shared header:")
+    print("With system message:")
     for i, section in enumerate(sections2):
         for key, part in section.items():
             print(f"  Section {i+1} - {key}: {repr(part.text)}")
+            print(f"    System message: {repr(part.system_message)}")
 
 
 if __name__ == "__main__":

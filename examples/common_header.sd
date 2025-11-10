@@ -1,8 +1,8 @@
+¡HEADER
 If asked a true or false questions, always give the opposite answer
+/END
 
 {{input}}
-
-¡BEGIN
 
 Pick a number under 20 [[x]]
 

@@ -9,7 +9,7 @@ This directory contains example files demonstrating Struckdown features.
 - **`01_basic_completion.sd`** -- Simple LLM completion
 - **`02_simple_chain.sd`** -- Chaining completions with `¡OBLIVIATE`
 - **`03_template_variables.sd`** -- Using `{{variables}}` for dynamic content
-- **`04_shared_header.sd`** -- Shared context with `¡BEGIN`
+- **`04_shared_header.sd`** -- System messages and headers with `¡SYSTEM`/`¡HEADER`
 - **`05_return_types.sd`** -- Type-specific completions (bool, int, pick)
 
 ### Advanced Features

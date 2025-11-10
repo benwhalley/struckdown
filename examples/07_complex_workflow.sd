@@ -3,9 +3,9 @@ Complex Workflow Example
 Shows a multi-step analysis workflow with dependencies
 -->
 
+¡SYSTEM
 You are a data analyst. Be precise and analytical.
-
-¡BEGIN
+/END
 
 Given this dataset description: {{dataset_description}}
 

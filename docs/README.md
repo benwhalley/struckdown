@@ -35,8 +35,9 @@ Complete documentation for Struckdown.
 [[variable]]                    # Basic completion
 [[type:variable]]               # Typed completion
 {{variable}}                    # Reference previous extraction
-¡OBLIVIATE                      # Memory boundary
-¡BEGIN                          # End of shared header
+¡OBLIVIATE                      # Memory boundary (or ¡SEGMENT)
+¡SYSTEM ... /END                # System message block
+¡HEADER ... /END                # Header block (prepended to segments)
 ```
 
 ### Types
@@ -119,7 +120,7 @@ sd batch *.txt -p prompt.sd -o results.csv
 ### Memory Model
 
 ```
-Shared header (before ¡BEGIN)
+¡SYSTEM / ¡HEADER (persistent across segments)
     ↓
 Segment 1: prompt → [[var1]]
     ↓
@@ -131,6 +132,9 @@ Segment 2: {{var1}} → [[var2]]
     ↓
 Segment 3: {{var1}} {{var2}} → [[var3]]
 ```
+
+System messages and headers persist across `¡OBLIVIATE` boundaries.
+Only user/assistant message history is cleared.
 
 ### Caching
 

@@ -1,4 +1,4 @@
-?start: (block_comment | single_completion | placeholder | templatetag | begin_delimiter | obliviate | markdown)* completion
+?start: (block_comment | system_block | system_append_block | header_block | header_append_block | single_completion | placeholder | templatetag | obliviate | segment_delimiter | markdown)* completion
 
 // Block comments are dropped entirely from the template
 // They can contain any content including completions, actions, etc.
@@ -9,6 +9,19 @@ BLOCK_COMMENT_CONTENT: /(.|\n)+?(?=-->)/
 BLOCK_COMMENT_START: "<!--"
 BLOCK_COMMENT_END: "-->"
 
+// System message blocks (¡SYSTEM and ¡IMPORTANT are synonyms)
+system_block: ("¡SYSTEM" | "¡IMPORTANT") SYSTEM_CONTENT "/END" -> system_replace
+system_append_block: ("¡SYSTEM+" | "¡IMPORTANT+") SYSTEM_CONTENT "/END" -> system_append
+
+// Header blocks
+header_block: "¡HEADER" HEADER_CONTENT "/END" -> header_replace
+header_append_block: "¡HEADER+" HEADER_CONTENT "/END" -> header_append
+
+// Content between tag and /END - captured as terminals to avoid zero-width issues
+// Using priority to ensure /END is not captured as content
+SYSTEM_CONTENT: /(.|\n)+?(?=\/END)/
+HEADER_CONTENT: /(.|\n)+?(?=\/END)/
+
 // markdown: /[^{{\[\¡]+/ -> markdown_text
 // using negative lookahead to avoid matching single { or [ or @ (for @@)
 // note: <!-- is handled by BLOCK_COMMENT_START terminal which has higher priority
@@ -17,9 +30,9 @@ markdown: /(?:(?!{{|\[\[|¡|@|<!--).)+/s  -> markdown_text
 placeholder: "{{" WS? var_path WS? "}}"
 var_path: CNAME ("." CNAME)*
 
-begin_delimiter: "¡BEGIN" -> begin_delimiter
-
+// Segment delimiters (¡OBLIVIATE and ¡SEGMENT are synonyms)
 obliviate: "¡OBLIVIATE" -> obliviate
+segment_delimiter: "¡SEGMENT" -> obliviate
 
 ?templatetag: /{%\s.*?%}/s        -> templatetag
 
