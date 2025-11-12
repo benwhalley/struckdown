@@ -1,2 +1,6 @@
 See the todo/ folder for ideas for new features to be given to claude.
 
+
+- Security audit on auto-escaping
+- Non-litellm LLM providers
+- Support for streaming responses
