@@ -4,6 +4,12 @@
   "injectionSelector": "L:text.html.markdown",
   "patterns": [
     {
+      "include": "#yaml-frontmatter"
+    },
+    {
+      "include": "#section-separator"
+    },
+    {
       "include": "#struckdown-comments"
     },
     {
@@ -20,6 +26,39 @@
     }
   ],
   "repository": {
+    "yaml-frontmatter": {
+      "patterns": [
+        {
+          "name": "meta.embedded.block.frontmatter.struckdown",
+          "begin": "\\A(?=name:)",
+          "while": "^(?!---#)",
+          "patterns": [
+            {
+              "include": "source.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    "section-separator": {
+      "patterns": [
+        {
+          "name": "meta.separator.section.struckdown",
+          "match": "^(---)(#)([a-zA-Z_][a-zA-Z0-9_]*)$",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.separator.struckdown"
+            },
+            "2": {
+              "name": "punctuation.definition.separator.hash.struckdown"
+            },
+            "3": {
+              "name": "entity.name.section.struckdown"
+            }
+          }
+        }
+      ]
+    },
     "struckdown-comments": {
       "patterns": [
         {

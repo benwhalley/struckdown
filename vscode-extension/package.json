@@ -1,8 +1,8 @@
 {
   "name": "struckdown",
   "displayName": "Struckdown",
-  "description": "Syntax highlighting for Struckdown prompt files (.sd)",
-  "version": "0.2.0",
+  "description": "Syntax highlighting for Struckdown prompt files (.sd, .soak)",
+  "version": "0.2.1",
   "publisher": "your-publisher-name",
   "engines": {
     "vscode": "^1.75.0"
@@ -32,7 +32,8 @@
           "struckdown"
         ],
         "extensions": [
-          ".sd"
+          ".sd",
+          ".soak"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
