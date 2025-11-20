@@ -211,7 +211,6 @@ def _call_llm_cached(
         cache_version: Version string included in cache key (typically struckdown version)
     """
     logger.info(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
-    
     try:
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=model_name,
