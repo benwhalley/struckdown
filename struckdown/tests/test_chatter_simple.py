@@ -61,9 +61,10 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for independent segments"""
 
         # Create mock segments with no dependencies
-        segment1 = OrderedDict([("var1", Mock(text="First segment"))])
-        segment2 = OrderedDict([("var2", Mock(text="Second segment"))])
-        segment3 = OrderedDict([("var3", Mock(text="Third segment"))])
+        # Note: Must explicitly set block=False to avoid Mock's default truthy behavior
+        segment1 = OrderedDict([("var1", Mock(text="First segment", block=False, options=None, system_message=None))])
+        segment2 = OrderedDict([("var2", Mock(text="Second segment", block=False, options=None, system_message=None))])
+        segment3 = OrderedDict([("var3", Mock(text="Third segment", block=False, options=None, system_message=None))])
 
         segments = [segment1, segment2, segment3]
 
@@ -81,10 +82,10 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for dependent segments"""
 
         # Create mock segments with dependencies
-        segment1 = OrderedDict([("fruit", Mock(text="What fruit?"))])
-        segment2 = OrderedDict([("color", Mock(text="What color?"))])
+        segment1 = OrderedDict([("fruit", Mock(text="What fruit?", block=False, options=None, system_message=None))])
+        segment2 = OrderedDict([("color", Mock(text="What color?", block=False, options=None, system_message=None))])
         segment3 = OrderedDict(
-            [("story", Mock(text="Tell story about {{fruit}} and {{color}}"))]
+            [("story", Mock(text="Tell story about {{fruit}} and {{color}}", block=False, options=None, system_message=None))]
         )
 
         segments = [segment1, segment2, segment3]
@@ -108,9 +109,9 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for sequential dependencies"""
 
         # Create mock segments with sequential dependencies
-        segment1 = OrderedDict([("first", Mock(text="First task"))])
-        segment2 = OrderedDict([("second", Mock(text="Second task using {{first}}"))])
-        segment3 = OrderedDict([("third", Mock(text="Third task using {{second}}"))])
+        segment1 = OrderedDict([("first", Mock(text="First task", block=False, options=None, system_message=None))])
+        segment2 = OrderedDict([("second", Mock(text="Second task using {{first}}", block=False, options=None, system_message=None))])
+        segment3 = OrderedDict([("third", Mock(text="Third task using {{second}}", block=False, options=None, system_message=None))])
 
         segments = [segment1, segment2, segment3]
 
@@ -129,11 +130,11 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for mixed parallel and sequential dependencies"""
 
         # Create mock segments with mixed dependencies
-        segment1 = OrderedDict([("a", Mock(text="Task A"))])
-        segment2 = OrderedDict([("b", Mock(text="Task B"))])
-        segment3 = OrderedDict([("c", Mock(text="Task C using {{a}}"))])
-        segment4 = OrderedDict([("d", Mock(text="Task D using {{a}} and {{b}}"))])
-        segment5 = OrderedDict([("e", Mock(text="Task E using {{c}} and {{d}}"))])
+        segment1 = OrderedDict([("a", Mock(text="Task A", block=False, options=None, system_message=None))])
+        segment2 = OrderedDict([("b", Mock(text="Task B", block=False, options=None, system_message=None))])
+        segment3 = OrderedDict([("c", Mock(text="Task C using {{a}}", block=False, options=None, system_message=None))])
+        segment4 = OrderedDict([("d", Mock(text="Task D using {{a}} and {{b}}", block=False, options=None, system_message=None))])
+        segment5 = OrderedDict([("e", Mock(text="Task E using {{c}} and {{d}}", block=False, options=None, system_message=None))])
 
         segments = [segment1, segment2, segment3, segment4, segment5]
 
@@ -160,13 +161,13 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
         # Create segments with different template variable styles
         segment1 = OrderedDict(
-            [("var1", Mock(text="First {{ var1 }}"))]
+            [("var1", Mock(text="First {{ var1 }}", block=False, options=None, system_message=None))]
         )  # Self-reference (should be ignored)
         segment2 = OrderedDict(
-            [("var2", Mock(text="Second {{var1}} and {{  var1  }}"))]
+            [("var2", Mock(text="Second {{var1}} and {{  var1  }}", block=False, options=None, system_message=None))]
         )  # Multiple refs with spaces
         segment3 = OrderedDict(
-            [("var3", Mock(text="Third {{var2}} and {{var1}}"))]
+            [("var3", Mock(text="Third {{var2}} and {{var1}}", block=False, options=None, system_message=None))]
         )  # Multiple dependencies
 
         segments = [segment1, segment2, segment3]
@@ -184,15 +185,13 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
 
 class SharedHeaderTestCase(unittest.TestCase):
-    """Test the ¡SYSTEM and ¡HEADER functionality"""
+    """Test <system> tag functionality"""
 
     def test_shared_header_parsing(self):
-        """Test that ¡SYSTEM correctly stores system message"""
+        """Test that <system> correctly stores system message"""
         from struckdown.parsing import parse_syntax
 
-        template = """¡SYSTEM
-You are a helpful assistant.
-/END
+        template = """<system>You are a helpful assistant.</system>
 
 Tell a joke [[joke]]"""
 
@@ -210,16 +209,14 @@ Tell a joke [[joke]]"""
         self.assertEqual(part.text, "Tell a joke")
 
     def test_shared_header_with_multiple_segments(self):
-        """Test that system message is preserved across OBLIVIATE segments"""
+        """Test that system message is preserved across checkpoints"""
         from struckdown.parsing import parse_syntax
 
-        template = """¡SYSTEM
-You are a comedy expert.
-/END
+        template = """<system>You are a comedy expert.</system>
 
 Tell a joke [[joke]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Rate the joke from 1-10 [[int:rating]]"""
 
@@ -238,9 +235,7 @@ Rate the joke from 1-10 [[int:rating]]"""
         """Test that system message can contain template variables"""
         from struckdown.parsing import parse_syntax
 
-        template = """¡SYSTEM
-You are an expert in {{domain}}.
-/END
+        template = """<system>You are an expert in {{domain}}.</system>
 
 Explain {{topic}} [[explanation]]"""
 
@@ -253,7 +248,7 @@ Explain {{topic}} [[explanation]]"""
         self.assertIn("{{topic}}", part.text)
 
     def test_no_shared_header(self):
-        """Test that templates without ¡SYSTEM or ¡HEADER work as before"""
+        """Test that templates without <system> work as before"""
         from struckdown.parsing import parse_syntax
 
         template = """Tell a joke [[joke]]"""
@@ -262,15 +257,13 @@ Explain {{topic}} [[explanation]]"""
 
         part = sections[0]["joke"]
         self.assertEqual(part.system_message, "")
-        self.assertEqual(part.header_content, "")
         self.assertEqual(part.text, "Tell a joke")
 
     def test_shared_header_empty(self):
-        """Test that empty ¡SYSTEM block results in empty system_message"""
+        """Test that empty <system> block results in empty system_message"""
         from struckdown.parsing import parse_syntax
 
-        template = """¡SYSTEM
-/END
+        template = """<system></system>
 
 Tell a joke [[joke]]"""
 

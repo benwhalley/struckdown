@@ -21,11 +21,11 @@ print("=" * 70)
 template = """
 Extract the main problem from: "I can't sleep, I've tried everything." [[problem]]
 
-¡OBLIVIATE
+<checkpoint>
 
 [[@expertise:relevant_tips|query={{problem}},n=2]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Now write a response to the client.
 

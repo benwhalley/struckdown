@@ -76,9 +76,9 @@ Batch operations accept JSON, so you can chain commands:
 ## Key Features
 
 - **Simple syntax** -- `[[variable]]` for completions, `{{variable}}` for references
-- **System messages** -- Control LLM behavior with `¡SYSTEM` and `¡HEADER` blocks
+- **System messages** -- Control LLM behavior with `<system>` tags
 - **Type safety** -- Extract booleans, numbers, dates, or pick from options
-- **Memory management** -- Use `¡OBLIVIATE` to save tokens between steps
+- **Memory management** -- Use `<checkpoint>` to save tokens between steps
 - **Batch processing** -- Process hundreds of files with progress bars
 - **Caching** -- Automatic disk caching saves money and time
 - **Custom actions** -- Extend with Python functions (RAG, APIs, databases)
@@ -165,26 +165,26 @@ Reference previous extractions with `{{variable}}`:
 ```
 Extract name: [[name]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Hello {{name}}, how are you? [[response]]
 ```
 
 ### Memory Boundaries
 
-Use `¡OBLIVIATE` to create memory boundaries and save tokens:
+Use `<checkpoint>` to create memory boundaries and save tokens:
 
 ```
 Long expensive context...
 
 Summary: [[summary]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Translate {{summary}} to Spanish: [[translation]]
 ```
 
-Everything before `¡OBLIVIATE` is forgotten -- only extracted variables carry forward.
+Everything before `<checkpoint>` is forgotten -- only extracted variables carry forward.
 
 ## CLI Commands
 
@@ -217,6 +217,82 @@ sd batch *.txt "[[purpose]]" | sd batch "Similar: [[product]]" -k
 - `.csv` -- CSV file
 - `.xlsx` -- Excel spreadsheet
 - None -- Pretty-printed to stdout
+
+### `sd check` - Validate Prompts
+
+Check prompt syntax and display execution plan:
+
+```bash
+# Validate and show structure
+sd check prompt.sd
+```
+
+Shows system prompt info, sections, completions, dependencies, and line numbers.
+
+### `sd graph` - Visualize Prompts
+
+Generate dependency graph visualizations:
+
+```bash
+# Generate HTML visualization (default)
+sd graph prompt.sd
+
+# Generate Mermaid diagram text
+sd graph prompt.sd -o diagram.mmd
+```
+
+Creates interactive diagrams showing sections, completions, dependencies, and execution flow.
+
+### `sd flat` - Flatten Templates
+
+Resolve all `{% include %}` directives and output flattened template:
+
+```bash
+# Output to stdout
+sd flat prompt.sd
+
+# Save to file
+sd flat prompt.sd -o flattened.sd
+```
+
+Useful for debugging includes or creating self-contained templates.
+
+## File Includes
+
+Struckdown supports file includes using Jinja2's `{% include %}` syntax:
+
+```struckdown
+{# Include shared system prompt #}
+{% include 'common/system.sd' %}
+
+{# Include evaluation rubric #}
+{% include 'rubrics/essay_criteria.txt' %}
+
+Process: {{input}}
+Result: [[output]]
+```
+
+**Search paths** (in priority order):
+1. Same directory as template file
+2. `templates/` subdirectory relative to template file
+3. `./includes/` (project-local includes)
+4. `./templates/` (project-local templates)
+5. `~/.struckdown/includes/` (global user includes)
+
+**Advanced includes:**
+
+```struckdown
+{# Conditional includes #}
+{% if verbose %}
+  {% include 'detailed_instructions.sd' %}
+{% else %}
+  {% include 'brief_instructions.sd' %}
+{% endif %}
+
+{# Dynamic includes with variables #}
+{% set rubric = 'rubrics/' + grade_level + '.sd' %}
+{% include rubric %}
+```
 
 ## Caching
 
@@ -296,40 +372,37 @@ result = chatter("[[uppercase:loud|text={{input}}]]")
 
 See **[Custom Actions Guide](docs/CUSTOM_ACTIONS.md)** for details.
 
-### System Messages and Headers
+### System Messages
 
-Control system messages and persistent instructions:
+Control system messages using XML-style `<system>` tags:
 
 ```
-¡SYSTEM
-You are an expert data analyst with 10 years of experience.
-/END
+<system>You are an expert data analyst with 10 years of experience.</system>
 
-¡HEADER
-Always provide concise, data-driven responses.
-/END
+<system local>Always provide concise, data-driven responses.</system>
 
 First analysis: [[analysis1]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Second analysis: [[analysis2]]
 ```
 
-**System messages** (`¡SYSTEM`) set the LLM's role and persist across all segments.
-**Headers** (`¡HEADER`) provide instructions that are prepended to each segment's first message.
+**Global system messages** (`<system>`) set the LLM's role and persist across all checkpoints.
+**Local system messages** (`<system local>`) provide instructions that only apply to the current segment.
 
-Both support template variables: `{{variable}}` and can be modified with `+`:
+Multiple `<system>` tags append to the system message by default. Use modifiers:
 
 ```
-¡SYSTEM+
-Additionally, respond in {{language}}.
-/END
+<system>Base instructions.</system>
+<system>Additional instructions.</system>        <!-- appends -->
+<system replace>Replace all previous.</system>  <!-- replaces -->
 
-¡HEADER+
-Consider: {{context}}
-/END
+<system local>This segment only.</system>       <!-- cleared after checkpoint -->
+<system local replace>New local only.</system>  <!-- replaces local -->
 ```
+
+All support template variables: `{{variable}}`.
 
 ### Model/Temperature Overrides
 

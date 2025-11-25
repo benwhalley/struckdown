@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: false,
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 15,
+                nodeSpacing: 30,
+                rankSpacing: 150,
+                diagramPadding: 15
+            },
+            themeVariables: {
+                fontSize: '13px'
+            }
+        });
+    </script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #2c3e50;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        h3 {
+            color: #34495e;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .metadata {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+        .metadata p {
+            margin: 5px 0;
+        }
+        .external-inputs {
+            background: #fff3cd;
+            padding: 15px;
+            border-left: 4px solid #ffc107;
+            border-radius: 3px;
+            margin: 20px 0;
+        }
+        .section-dag {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 8px;
+            margin: 30px 0;
+            border: 1px solid #dee2e6;
+        }
+        .section-dag h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+        .mermaid-container {
+            background: white;
+            padding: 30px;
+            border-radius: 5px;
+            overflow-x: auto;
+            overflow-y: visible;
+            display: flex;
+            justify-content: center;
+            min-height: 600px;
+            max-width: 100%;
+        }
+        .mermaid-container .mermaid {
+            display: inline-block;
+            max-width: 100%;
+        }
+        .mermaid-container .mermaid svg {
+            max-width: 100% !important;
+            height: auto !important;
+        }
+        .section {
+            margin-bottom: 40px;
+        }
+        .dependencies {
+            background: #e3f2fd;
+            padding: 12px;
+            border-left: 4px solid #2196f3;
+            border-radius: 3px;
+            margin: 15px 0;
+        }
+        .completions {
+            margin: 15px 0;
+        }
+        .completion-item {
+            padding: 10px;
+            margin: 8px 0;
+            background: #f9f9f9;
+            border-left: 3px solid #4caf50;
+            border-radius: 3px;
+        }
+        .completion-name {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .completion-type {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            font-weight: bold;
+            margin-left: 8px;
+        }
+        .completion-line {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .completion-summary {
+            margin-top: 5px;
+            color: #555;
+            font-style: italic;
+        }
+        .toggle-prompt {
+            background: none;
+            border: none;
+            color: #2196f3;
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 0.85em;
+            text-decoration: underline;
+            margin-left: 8px;
+        }
+        .toggle-prompt:hover {
+            color: #1976d2;
+        }
+        .prompt-text {
+            display: none;
+            margin-top: 10px;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .prompt-text.expanded {
+            display: block;
+        }
+        ul {
+            list-style-type: disc;
+            padding-left: 20px;
+            margin: 10px 0;
+        }
+        li {
+            margin: 5px 0;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+    <script>
+        function togglePrompt(key) {
+            const promptEl = document.getElementById('prompt-' + key);
+            const buttonEl = document.getElementById('toggle-' + key);
+            if (promptEl.classList.contains('expanded')) {
+                promptEl.classList.remove('expanded');
+                buttonEl.textContent = 'show prompt';
+            } else {
+                promptEl.classList.add('expanded');
+                buttonEl.textContent = 'hide prompt';
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Execution Plan: {{ prompt_name }}</h1>
+
+        <div class="metadata">
+            {% if system_prompt %}
+            <p><strong>System Prompt:</strong> {{ system_prompt.length|number_format }} characters, {{ system_prompt.lines }} {{ system_prompt.lines|pluralize('line') }}</p>
+            <p><strong>Preview:</strong> {{ system_prompt.preview }}</p>
+            {% endif %}
+            <p><strong>{{ sections|length|pluralize('Section') }}:</strong> {{ sections|length }}</p>
+            <p><strong>Total {{ total_completions|pluralize('Completion') }}:</strong> {{ total_completions }}</p>
+        </div>
+
+        {% if external_inputs %}
+        <div class="external-inputs">
+            <h3>External Inputs</h3>
+            <ul>
+            {% for input in external_inputs %}
+                <li><code>{{ input }}</code></li>
+            {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if section_dag_mermaid %}
+        <div class="section-dag">
+            <h2>Section Dependencies</h2>
+            <div class="mermaid-container">
+                <pre class="mermaid">
+{{ section_dag_mermaid }}
+                </pre>
+            </div>
+        </div>
+        {% endif %}
+
+        <h2>Detailed Section Breakdown</h2>
+
+        {% for section in sections %}
+        <div class="section">
+            <h2>{% if section.name %}{{ section.name }}{% else %}Checkpoint {{ section.index + 1 }}{% endif %}</h2>
+
+            {% if section.dependencies %}
+            <div class="dependencies">
+                <strong>{{ section.dependencies|length }} external {{ section.dependencies|length|pluralize('dependency', 'dependencies') }}</strong>
+                {% if section.depends_on_sections %}
+                (in sections {{ section.depends_on_sections|join(', ') }})
+                {% endif %}
+                <ul>
+                {% for dep in section.dependencies %}
+                    <li>
+                        <a href="#completion-{{ dep }}">
+                        <code>{{ dep }}</code>
+                        </a>
+                    </li>
+                {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <div class="completions">
+                <h3>{{ section.completions|length }} {{ section.completions|length|pluralize('completion') }}:</h3>
+                {% for completion in section.completions %}
+                <div class="completion-item" id="completion-{{ completion.key }}">
+                    <span class="completion-type">{{ completion.type|upper }}</span>
+
+                    <span class="completion-name">{{ completion.key }}</span>
+                    {% if completion.line_number %}
+                    <span class="completion-line">:{{ completion.line_number }}</span>
+                    {% endif %}
+
+                    {% if completion.prompt_text %}
+                    <button class="toggle-prompt" id="toggle-{{ completion.key }}" onclick="togglePrompt('{{ completion.key }}')">show prompt</button>
+                    {% endif %}
+
+                    {% if completion.summary %}
+                    <div>
+                    <span class="completion-summary">
+                        {{ completion.summary }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if completion.prompt_text %}
+                    <div class="prompt-text" id="prompt-{{ completion.key }}">{{ completion.prompt_text }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

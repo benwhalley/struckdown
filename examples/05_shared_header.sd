@@ -1,28 +1,24 @@
 <!--
-System Messages and Headers Example
+System Messages Example
 
-Templates can use ¡SYSTEM and ¡HEADER blocks to control LLM behavior.
+Templates can use <system> blocks to control LLM behavior.
 
-¡SYSTEM defines the LLM's role and persists across all segments.
-¡HEADER provides instructions that are prepended to each segment.
+<system> defines the LLM's role and persists across all segments.
+Use <system local> for instructions that only apply to the current segment.
 
 Both support template variables like {{topic}}.
 -->
 
-¡SYSTEM
-You are a helpful research assistant. Always be thorough and cite sources when possible.
-/END
+<system>You are a helpful research assistant. Always be thorough and cite sources when possible.</system>
 
-¡HEADER
-Use clear, professional language appropriate for academic research.
-/END
+<system local>Use clear, professional language appropriate for academic research.</system>
 
 Research the history of {{topic}} and provide key findings: [[findings]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Based on your research about {{topic}}, what are the current trends and future outlook: [[outlook]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Create a bibliography for your research on {{topic}}: [[bibliography]]

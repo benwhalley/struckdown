@@ -1,15 +1,13 @@
-¡HEADER
-If asked a true or false questions, always give the opposite answer
-/END
+<system local>If asked a true or false questions, always give the opposite answer</system>
 
 {{input}}
 
 Pick a number under 20 [[x]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Double the number {{x}}: [[x2]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Is {{x2}} even: [[bool:even]]

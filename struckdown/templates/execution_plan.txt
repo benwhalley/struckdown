@@ -1,0 +1,37 @@
+Execution Plan: {{ prompt_name }}
+============================================================
+{% if system_prompt %}
+
+System Prompt:
+  Length: {{ system_prompt.length|number_format }} characters, {{ system_prompt.lines }} lines
+  Preview: {{ system_prompt.preview }}
+{% endif %}
+{% if external_inputs %}
+
+External Inputs:
+{% for input in external_inputs %}
+  • {{ input }}
+{% endfor %}
+{% endif %}
+
+{{ sections|length }} {{ sections|length|pluralize('section') }}
+{{ total_completions }} {{ total_completions|pluralize('completion') }}
+{% for section in sections %}
+
+# {% if section.name %}{{ section.name }}{% else %}Checkpoint {{ section.index + 1 }}{% endif %}
+{% if section.dependencies %}
+
+{{ section.dependencies|length }} external {{ section.dependencies|length|pluralize('dependency', 'dependencies') }}{% if section.depends_on_sections %} (in sections {{ section.depends_on_sections|join(', ') }}){% endif %}
+
+{% for dep in section.dependencies %}
+- {{ dep }}
+{% endfor %}
+{% endif %}
+
+{{ section.completions|length }} {{ section.completions|length|pluralize('completion') }}:
+
+{% for completion in section.completions %}
+- {{ completion.key }}{% if completion.line_number %}:{{ completion.line_number }}{% endif %} <{{ completion.type|upper }}>{% if completion.summary %}: {{ completion.summary }}{% endif %}
+
+{% endfor %}
+{% endfor %}

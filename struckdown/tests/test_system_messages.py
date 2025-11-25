@@ -1,5 +1,6 @@
 """
-Tests for new system message and header semantics.
+Tests for system message semantics using new XML-style syntax.
+Tests the two-list model (globals + locals) for system prompts.
 """
 
 import unittest
@@ -7,13 +8,11 @@ from struckdown.parsing import parse_syntax
 
 
 class SystemMessageTestCase(unittest.TestCase):
-    """Test ¡SYSTEM and ¡IMPORTANT tags"""
+    """Test <system> tags"""
 
     def test_system_message_basic(self):
-        """Test basic ¡SYSTEM tag"""
-        template = """¡SYSTEM
-You are a helpful assistant.
-/END
+        """Test basic <system> tag"""
+        template = """<system>You are a helpful assistant.</system>
 
 Tell a joke [[joke]]"""
 
@@ -22,18 +21,13 @@ Tell a joke [[joke]]"""
 
         part = sections[0]["joke"]
         self.assertEqual(part.system_message, "You are a helpful assistant.")
-        self.assertEqual(part.header_content, "")
         self.assertEqual(part.text, "Tell a joke")
 
     def test_system_message_append(self):
-        """Test ¡SYSTEM+ appends to system message"""
-        template = """¡SYSTEM
-You are a helpful assistant.
-/END
+        """Test multiple <system> tags append to globals by default"""
+        template = """<system>You are a helpful assistant.</system>
 
-¡SYSTEM+
-Talk like a pirate.
-/END
+<system>Talk like a pirate.</system>
 
 Tell a joke [[joke]]"""
 
@@ -44,14 +38,10 @@ Tell a joke [[joke]]"""
         self.assertEqual(part.system_message, expected)
 
     def test_system_message_replace(self):
-        """Test ¡SYSTEM replaces previous system message"""
-        template = """¡SYSTEM
-First message.
-/END
+        """Test <system replace> replaces previous system message"""
+        template = """<system>First message.</system>
 
-¡SYSTEM
-Second message.
-/END
+<system replace>Second message.</system>
 
 Tell a joke [[joke]]"""
 
@@ -60,33 +50,13 @@ Tell a joke [[joke]]"""
 
         self.assertEqual(part.system_message, "Second message.")
 
-    def test_important_synonym(self):
-        """Test ¡IMPORTANT is synonym for ¡SYSTEM"""
-        template = """¡IMPORTANT
-You are helpful.
-/END
-
-¡IMPORTANT+
-Be concise.
-/END
-
-Answer [[answer]]"""
-
-        sections = parse_syntax(template)
-        part = sections[0]["answer"]
-
-        expected = "You are helpful.\n\nBe concise."
-        self.assertEqual(part.system_message, expected)
-
-    def test_system_persists_across_segments(self):
-        """Test system message persists across ¡OBLIVIATE"""
-        template = """¡SYSTEM
-You are helpful.
-/END
+    def test_system_persists_across_checkpoints(self):
+        """Test global system message persists across <checkpoint>"""
+        template = """<system>You are helpful.</system>
 
 First question? [[q1]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Second question? [[q2]]"""
 
@@ -97,107 +67,66 @@ Second question? [[q2]]"""
         self.assertEqual(sections[1]["q2"].system_message, "You are helpful.")
 
 
-class HeaderTestCase(unittest.TestCase):
-    """Test ¡HEADER tags"""
+class LocalSystemTestCase(unittest.TestCase):
+    """Test <system local> tags"""
 
-    def test_header_basic(self):
-        """Test basic ¡HEADER tag"""
-        template = """¡HEADER
-Answer all questions carefully.
-/END
+    def test_local_system_basic(self):
+        """Test <system local> adds to locals list"""
+        template = """<system>Global prompt.</system>
 
-What is 2+2? [[answer]]"""
+<system local>Local addition.</system>
 
-        sections = parse_syntax(template)
-        part = sections[0]["answer"]
-
-        self.assertEqual(part.header_content, "Answer all questions carefully.")
-        self.assertEqual(part.text, "What is 2+2?")
-
-    def test_header_append(self):
-        """Test ¡HEADER+ appends to header"""
-        template = """¡HEADER
-First instruction.
-/END
-
-¡HEADER+
-Second instruction.
-/END
-
-Question? [[answer]]"""
+Question? [[q]]"""
 
         sections = parse_syntax(template)
-        part = sections[0]["answer"]
+        part = sections[0]["q"]
 
-        expected = "First instruction.\n\nSecond instruction."
-        self.assertEqual(part.header_content, expected)
+        expected = "Global prompt.\n\nLocal addition."
+        self.assertEqual(part.system_message, expected)
 
-    def test_header_replace(self):
-        """Test ¡HEADER replaces previous header"""
-        template = """¡HEADER
-First header.
-/END
+    def test_local_system_cleared_after_checkpoint(self):
+        """Test locals are cleared after <checkpoint>"""
+        template = """<system>Global.</system>
 
-¡HEADER
-Second header.
-/END
+<system local>Local1.</system>
+Q1? [[q1]]
 
-Question? [[answer]]"""
+<checkpoint>
 
-        sections = parse_syntax(template)
-        part = sections[0]["answer"]
-
-        self.assertEqual(part.header_content, "Second header.")
-
-    def test_empty_header_wipes(self):
-        """Test empty ¡HEADER wipes current header"""
-        template = """¡HEADER
-Original header.
-/END
-
-¡HEADER
-
-/END
-
-Question? [[answer]]"""
+Q2? [[q2]]"""
 
         sections = parse_syntax(template)
-        part = sections[0]["answer"]
 
-        # Empty header wipes it
-        self.assertEqual(part.header_content, "")
+        # Section 1: has both global and local
+        self.assertEqual(sections[0]["q1"].system_message, "Global.\n\nLocal1.")
+        # Section 2: only global (local was cleared)
+        self.assertEqual(sections[1]["q2"].system_message, "Global.")
 
-    def test_header_persists_across_segments(self):
-        """Test header persists across ¡OBLIVIATE"""
-        template = """¡HEADER
-Important instructions.
-/END
+    def test_local_system_replace(self):
+        """Test <system local replace> replaces local list"""
+        template = """<system>Global.</system>
 
-First question? [[q1]]
+<system local>Local1.</system>
+<system local>Local2.</system>
+<system local replace>LocalReplaced.</system>
 
-¡OBLIVIATE
-
-Second question? [[q2]]"""
+Q? [[q]]"""
 
         sections = parse_syntax(template)
-        self.assertEqual(len(sections), 2)
+        part = sections[0]["q"]
 
-        self.assertEqual(
-            sections[0]["q1"].header_content, "Important instructions."
-        )
-        self.assertEqual(
-            sections[1]["q2"].header_content, "Important instructions."
-        )
+        expected = "Global.\n\nLocalReplaced."
+        self.assertEqual(part.system_message, expected)
 
 
-class SegmentTestCase(unittest.TestCase):
-    """Test ¡OBLIVIATE and ¡SEGMENT tags"""
+class CheckpointTestCase(unittest.TestCase):
+    """Test <checkpoint> and <obliviate> tags"""
 
-    def test_obliviate_creates_segment(self):
-        """Test ¡OBLIVIATE creates a new segment"""
+    def test_checkpoint_creates_segment(self):
+        """Test <checkpoint> creates a new segment"""
         template = """First question? [[q1]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Second question? [[q2]]"""
 
@@ -207,26 +136,53 @@ Second question? [[q2]]"""
         self.assertEqual(sections[0]["q1"].text, "First question?")
         self.assertEqual(sections[1]["q2"].text, "Second question?")
 
-    def test_segment_synonym(self):
-        """Test ¡SEGMENT is synonym for ¡OBLIVIATE"""
+    def test_obliviate_synonym(self):
+        """Test <obliviate> is synonym for <checkpoint>"""
         template = """First question? [[q1]]
 
-¡SEGMENT
+<obliviate>
 
 Second question? [[q2]]"""
 
         sections = parse_syntax(template)
         self.assertEqual(len(sections), 2)
 
+    def test_named_checkpoint(self):
+        """Test named checkpoint with closed tag"""
+        template = """<checkpoint>Introduction</checkpoint>
+First? [[q1]]
+
+<checkpoint>Analysis Phase</checkpoint>
+Second? [[q2]]"""
+
+        sections = parse_syntax(template)
+        self.assertEqual(len(sections), 2)
+
+        self.assertEqual(sections[0].segment_name, "Introduction")
+        self.assertEqual(sections[1].segment_name, "Analysis Phase")
+
+    def test_auto_named_checkpoint(self):
+        """Test auto-named checkpoint (no closing tag)"""
+        template = """First? [[q1]]
+
+<checkpoint>
+
+Second? [[q2]]
+
+<checkpoint>
+
+Third? [[q3]]"""
+
+        sections = parse_syntax(template)
+        self.assertEqual(len(sections), 3)
+
+        self.assertIsNone(sections[0].segment_name)
+        self.assertEqual(sections[1].segment_name, "Checkpoint 1")
+        self.assertEqual(sections[2].segment_name, "Checkpoint 2")
+
     def test_multiple_completions_in_segment(self):
         """Test multiple completions in same segment"""
-        template = """¡SYSTEM
-You are helpful.
-/END
-
-¡HEADER
-Context here.
-/END
+        template = """<system>You are helpful.</system>
 
 First question? [[q1]]
 
@@ -242,88 +198,67 @@ Final question? [[q3]]"""
         self.assertIn("q2", sections[0])
         self.assertIn("q3", sections[0])
 
-        # All share same system and header
+        # All share same system message
         for key in ["q1", "q2", "q3"]:
             self.assertEqual(sections[0][key].system_message, "You are helpful.")
-            self.assertEqual(sections[0][key].header_content, "Context here.")
 
 
 class IntegrationTestCase(unittest.TestCase):
     """Integration tests for combined features"""
 
     def test_full_example(self):
-        """Test the full example from the specification"""
-        template = """¡SYSTEM
-You are a kind and helpful therapist.
-/END
-
-¡HEADER
-Answer all questions carefully
-/END
+        """Test a comprehensive example with all features"""
+        template = """<system>You are a kind and helpful therapist.</system>
 
 What is the meaning of life? [[meaning_of_life]]
 
 Are you sure? [[are_you_sure]]
 
-¡OBLIVIATE
+<checkpoint>Analysis</checkpoint>
 
 What is the pirate code? [[pirate_code]]
 
-¡OBLIVIATE
+<checkpoint>Pirate Mode</checkpoint>
 
-¡SYSTEM+
-Talk like a pirate.
-/END
+<system>Talk like a pirate.</system>
 
-¡HEADER+
-The pirate code is: {{pirate_code}}. Bear this in mind.
-/END
+What should we do with a drunken sailor? [[drunken_sailor]]
 
-What should we do with a drunken sailor who steals our rum? [[drunken_sailor]]
-
-¡OBLIVIATE
+<checkpoint>Final</checkpoint>
 
 Make up a cool name? [[name]]"""
 
         sections = parse_syntax(template)
         self.assertEqual(len(sections), 4)
 
-        # Segment 0: meaning_of_life, are_you_sure
+        # Section 0: meaning_of_life, are_you_sure
         self.assertIn("meaning_of_life", sections[0])
         self.assertIn("are_you_sure", sections[0])
         self.assertEqual(
             sections[0]["meaning_of_life"].system_message,
             "You are a kind and helpful therapist.",
         )
-        self.assertEqual(
-            sections[0]["meaning_of_life"].header_content,
-            "Answer all questions carefully",
-        )
 
-        # Segment 1: pirate_code
+        # Section 1: pirate_code (named "Analysis")
         self.assertIn("pirate_code", sections[1])
+        self.assertEqual(sections[1].segment_name, "Analysis")
         self.assertEqual(
             sections[1]["pirate_code"].system_message,
             "You are a kind and helpful therapist.",
         )
 
-        # Segment 2: drunken_sailor (with appended system and header)
+        # Section 2: drunken_sailor (with appended system)
         self.assertIn("drunken_sailor", sections[2])
+        self.assertEqual(sections[2].segment_name, "Pirate Mode")
         expected_system = (
             "You are a kind and helpful therapist.\n\nTalk like a pirate."
         )
         self.assertEqual(sections[2]["drunken_sailor"].system_message, expected_system)
 
-        expected_header = (
-            "Answer all questions carefully\n\n"
-            "The pirate code is: {{pirate_code}}. Bear this in mind."
-        )
-        self.assertEqual(sections[2]["drunken_sailor"].header_content, expected_header)
-
-        # Segment 3: name (system and header persist from previous segment)
+        # Section 3: name (system persists from previous)
         self.assertIn("name", sections[3])
+        self.assertEqual(sections[3].segment_name, "Final")
         self.assertEqual(sections[3]["name"].system_message, expected_system)
-        self.assertEqual(sections[3]["name"].header_content, expected_header)
 
 
 if __name__ == "__main__":

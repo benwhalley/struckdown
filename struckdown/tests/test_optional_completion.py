@@ -44,7 +44,7 @@ class OptionalCompletionTestCase(unittest.TestCase):
         """Test parsing multiple segments where final has no completion"""
         template = """Generate a topic [[topic]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Write an essay about {{topic}}"""
 
@@ -65,7 +65,7 @@ Write an essay about {{topic}}"""
         """Test backward compatibility with explicit completions in all segments"""
         template = """Generate a topic [[topic]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Write an essay about {{topic}} [[essay]]"""
 
@@ -95,7 +95,7 @@ Write an essay about {{topic}} [[essay]]"""
         """Test final segment with template variables and no completion"""
         template = """What is your name? [[name]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Hello {{name}}, how are you?"""
 
@@ -109,10 +109,8 @@ Hello {{name}}, how are you?"""
         self.assertIn("{{name}}", sections[1]["response"].text)
 
     def test_parse_with_shared_header_no_completion(self):
-        """Test system message (¡SYSTEM) with no completion in final segment"""
-        template = """¡SYSTEM
-You are a helpful assistant.
-/END
+        """Test system message with no completion in final segment"""
+        template = """<system>You are a helpful assistant.</system>
 
 Tell me a joke"""
 
@@ -129,11 +127,11 @@ Tell me a joke"""
         """Test complex scenario with multiple segments and mixed completions"""
         template = """Generate 3 random topics [[pick+:topics]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Pick one topic from {{topics}} [[chosen]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Write a paragraph about {{chosen}}"""
 
@@ -200,44 +198,40 @@ With multiple lines"""
 
 
 class NonFinalSegmentValidationTestCase(unittest.TestCase):
-    """Test that non-final segments still require completions"""
+    """Test that non-final segments without completions are allowed (for context setup)"""
 
-    def test_non_final_segment_without_completion_fails(self):
-        """Test that non-final segments without completions raise errors"""
+    def test_non_final_segment_without_completion_allowed(self):
+        """Test that non-final segments without completions are allowed.
+
+        This is valid for segments that just set up context (e.g., <system> tags).
+        """
         # This template has a non-final segment without completion
         template = """First task without completion
 
-¡OBLIVIATE
+<checkpoint>
 
 Second task [[second]]"""
 
-        # This should fail during parsing because first segment lacks completion
-        with self.assertRaises(ValueError) as context:
-            parse_syntax(template)
+        # This should now succeed - non-final segments without completions are allowed
+        sections = parse_syntax(template)
+        # Should have parsed successfully
+        self.assertIsNotNone(sections)
 
-        # The error should mention non-final segment
-        self.assertIn("Non-final segment", str(context.exception))
-        self.assertIn("completion placeholder", str(context.exception))
-
-    def test_middle_segment_without_completion_fails(self):
-        """Test that middle segments without completions raise errors"""
+    def test_middle_segment_without_completion_allowed(self):
+        """Test that middle segments without completions are allowed."""
         template = """First task [[first]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Second task without completion
 
-¡OBLIVIATE
+<checkpoint>
 
 Third task [[third]]"""
 
-        # This should fail because the middle segment lacks completion
-        with self.assertRaises(ValueError) as context:
-            parse_syntax(template)
-
-        # The error should mention non-final segment
-        self.assertIn("Non-final segment", str(context.exception))
-        self.assertIn("completion placeholder", str(context.exception))
+        # This should now succeed - middle segments can be context-only
+        sections = parse_syntax(template)
+        self.assertIsNotNone(sections)
 
 
 if __name__ == "__main__":

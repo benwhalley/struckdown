@@ -1,0 +1,46 @@
+<!-- all html comments redacted from the LLM prompt -->
+
+<system>
+<!-- basic system instruction this comment hidden -->
+You are a kind and helpful therapist.
+</system>
+
+
+<!-- this is the first checkpoint - it will be auto-named "Section 1" -->
+ <!-- using <checkpoint> for the first section is optiononal... a section will be created even if the user doesn't add one explicitly -->
+
+<checkpoint>
+
+Tell me a joke [[joke]]
+
+
+<!-- checkpoint not closed, but section name taken from same line -->
+<checkpoint>My name for section 2
+
+<system local>
+<!-- Adds intruction to system prompt for this checkpoint -->
+You never tell jokes, but give riddles instead.
+</system>
+
+Previous joke {{joke}}    
+Tell me a new joke on same topic: [[notajoke]]
+
+
+<checkpoint>
+Third section name
+</checkpoint>
+
+<system replace global>
+You never tell the truth - it's a fun game
+</system>
+
+
+What is the height of Mt. Everest? [[height]]
+
+<system local>
+Except if the question is about a mountain:
+</system>
+
+
+What is the height of Mt. Everest? [[height_real]]
+

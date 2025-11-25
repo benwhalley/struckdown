@@ -1,56 +1,78 @@
-?start: (block_comment | system_block | system_append_block | header_block | header_append_block | single_completion | placeholder | templatetag | obliviate | segment_delimiter | markdown)* completion
+// Struckdown Grammar v2.0 - XML-style syntax
+// Single-stage parsing of all syntax elements
 
-// Block comments are dropped entirely from the template
-// They can contain any content including completions, actions, etc.
+start: (block_comment | checkpoint_tag | obliviate_tag | system_tag | include_tag | single_completion | placeholder | templatetag | markdown)*
+
+// HTML comments (dropped from LLM prompt)
 block_comment: BLOCK_COMMENT_START BLOCK_COMMENT_CONTENT? BLOCK_COMMENT_END
-
 BLOCK_COMMENT_CONTENT: /(.|\n)+?(?=-->)/
-
 BLOCK_COMMENT_START: "<!--"
 BLOCK_COMMENT_END: "-->"
 
-// System message blocks (¡SYSTEM and ¡IMPORTANT are synonyms)
-system_block: ("¡SYSTEM" | "¡IMPORTANT") SYSTEM_CONTENT "/END" -> system_replace
-system_append_block: ("¡SYSTEM+" | "¡IMPORTANT+") SYSTEM_CONTENT "/END" -> system_append
+// Checkpoint tag - two styles:
+// 1. <checkpoint>Name</checkpoint> - closed tag with name
+// 2. <checkpoint> - auto-named (just opening tag, no closing)
+checkpoint_tag: CHECKPOINT_CLOSED                          -> checkpoint_closed
+              | CHECKPOINT_OPEN                            -> checkpoint_auto
 
-// Header blocks
-header_block: "¡HEADER" HEADER_CONTENT "/END" -> header_replace
-header_append_block: "¡HEADER+" HEADER_CONTENT "/END" -> header_append
+CHECKPOINT_CLOSED.2: /<checkpoint\s*>(.|\n)*?<\/checkpoint>/
+CHECKPOINT_OPEN.2: /<checkpoint\s*>/
 
-// Content between tag and /END - captured as terminals to avoid zero-width issues
-// Using priority to ensure /END is not captured as content
-SYSTEM_CONTENT: /(.|\n)+?(?=\/END)/
-HEADER_CONTENT: /(.|\n)+?(?=\/END)/
+// Obliviate synonym (same patterns)
+obliviate_tag: OBLIVIATE_CLOSED                           -> obliviate_closed
+             | OBLIVIATE_OPEN                             -> obliviate_auto
 
-// markdown: /[^{{\[\¡]+/ -> markdown_text
-// using negative lookahead to avoid matching single { or [ or @ (for @@)
-// note: <!-- is handled by BLOCK_COMMENT_START terminal which has higher priority
-markdown: /(?:(?!{{|\[\[|¡|@|<!--).)+/s  -> markdown_text
+OBLIVIATE_CLOSED.2: /<obliviate\s*>(.|\n)*?<\/obliviate>/
+OBLIVIATE_OPEN.2: /<obliviate\s*>/
 
-placeholder: "{{" WS? var_path WS? "}}"
+// System tags: <system [modifiers]>content</system>
+// Match opening tag with optional modifiers, parse in transformer
+system_tag: SYSTEM_OPEN SYSTEM_CONTENT? SYSTEM_CLOSE
+
+SYSTEM_OPEN.2: /<system(?:\s+(?:local|global|append|replace))*\s*>/
+SYSTEM_CLOSE: "</system>"
+
+// Include tag: <include src="path/to/file.sd"/> or <include src='path/to/file.sd'/>
+// Resolved at parse time (compile-time)
+include_tag: "<include" _WHITESPACE "src=" INCLUDE_SRC _WHITESPACE? "/>"
+
+INCLUDE_SRC: /"[^"]*"/ | /'[^']*'/
+
+// Content terminals for tags (must match at least 1 character to avoid zero-width issues)
+SYSTEM_CONTENT: /(.|\n)+?(?=<\/system>)/
+
+// Markdown: everything else (with negative lookahead to exclude our syntax)
+// Matches anything that's NOT our special tags, completions, or variables
+// Note: <break> is now handled as [[@break|msg]] action, so not excluded here
+markdown: /(?:(?!<(?:checkpoint|obliviate|system|include|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
+
+// Template variables: {{variable}} or {{variable.path}}
+placeholder: "{{" _WHITESPACE? var_path _WHITESPACE? "}}"
 var_path: CNAME ("." CNAME)*
 
-// Segment delimiters (¡OBLIVIATE and ¡SEGMENT are synonyms)
-obliviate: "¡OBLIVIATE" -> obliviate
-segment_delimiter: "¡SEGMENT" -> obliviate
+// Jinja2 template tags: {% include 'file.sd' %}
+templatetag: /{%\s.*?%}/s  -> templatetag
 
-?templatetag: /{%\s.*?%}/s        -> templatetag
-
+// Completions (unchanged from v1)
 ?completion: single_completion
+single_completion: _OPEN_BRACKET _WHITESPACE? completion_body _WHITESPACE? _CLOSE_BRACKET
 
-// Completion syntax: [[type:var|opt1,opt2]] or [[@action:var|opt1,opt2]]
-// @ prefix distinguishes actions from LLM completions
-single_completion: "[[" WS? completion_body WS? "]]"
+completion_body: _AT CNAME _COLON CNAME (_PIPE option_list)? -> action_call_with_var
+    | _AT CNAME _COLON (_PIPE option_list)? -> action_call_auto_var
+    | _AT CNAME (_PIPE option_list)? -> action_call_no_var
+    | BANG? CNAME quantifier? _COLON CNAME (_PIPE option_list)? -> typed_completion_with_var
+    | BANG? CNAME quantifier? _COLON (_PIPE option_list)? -> typed_completion_auto_var
+    | BANG? CNAME quantifier? (_PIPE option_list)? -> typed_completion_no_var
 
-completion_body: ACTION_PREFIX CNAME ":" CNAME ("|" option_list)? -> action_call_with_var
-    | ACTION_PREFIX CNAME ":" ("|" option_list)? -> action_call_auto_var
-    | ACTION_PREFIX CNAME ("|" option_list)? -> action_call_no_var
-    | BANG? CNAME quantifier? ":" CNAME ("|" option_list)? -> typed_completion_with_var
-    | BANG? CNAME quantifier? ":" ("|" option_list)? -> typed_completion_auto_var
-    | BANG? CNAME quantifier? ("|" option_list)? -> typed_completion_no_var
-
-ACTION_PREFIX: "@"
 BANG: "!"
+
+// Underscore-prefixed terminals: filtered from tree but shown in error messages
+_OPEN_BRACKET: "[["
+_CLOSE_BRACKET: "]]"
+_PIPE: "|"
+_AT: "@"
+_COLON: ":"
+_WHITESPACE: /\s+/
 
 quantifier: "*"                           -> zero_or_more
           | "+"                           -> one_or_more
@@ -60,13 +82,10 @@ quantifier: "*"                           -> zero_or_more
           | "{" NUMBER "," NUMBER "}"     -> between
 
 option_list: option ("," option)*
-// allow quoted strings in options
-// exclude: comma, ], |
 option: STRING | /[^,\]\|]+/
-// option: CNAME
 
 %import common.CNAME
 %import common.INT -> NUMBER
 %import common.ESCAPED_STRING -> STRING
-%import common.WS
-%ignore WS
+%import common.NEWLINE
+%ignore _WHITESPACE

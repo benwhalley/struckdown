@@ -60,11 +60,11 @@ template = """The project meeting is scheduled for {{project_name}}.
 
 Extract the date [[date:meeting_date]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Extract the start time [[time:start_time]]
 
-¡OBLIVIATE
+<checkpoint>
 
 How long will the meeting last? [[duration:meeting_length]]"""
 

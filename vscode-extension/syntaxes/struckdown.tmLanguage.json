@@ -13,7 +13,7 @@
       "include": "#struckdown-comments"
     },
     {
-      "include": "#struckdown-keywords"
+      "include": "#struckdown-xml-tags"
     },
     {
       "include": "#struckdown-placeholders"
@@ -78,57 +78,84 @@
         }
       ]
     },
-    "struckdown-keywords": {
+    "struckdown-xml-tags": {
       "patterns": [
         {
-          "name": "meta.block.system.struckdown",
-          "begin": "¡(SYSTEM|IMPORTANT)(\\+)?",
-          "end": "/END",
+          "name": "meta.tag.system.struckdown",
+          "begin": "(<)(system)((?:\\s+(?:local|global|append|replace))*)(\\s*>)",
+          "end": "(</)(system)(>)",
           "beginCaptures": {
-            "0": {
-              "name": "keyword.control.system.struckdown"
-            }
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.system.struckdown" },
+            "3": { "name": "entity.other.attribute-name.struckdown" },
+            "4": { "name": "punctuation.definition.tag.end.struckdown" }
           },
           "endCaptures": {
-            "0": {
-              "name": "keyword.control.end.struckdown"
-            }
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.system.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
           },
+          "contentName": "meta.content.system.struckdown",
           "patterns": [
-            {
-              "include": "#struckdown-template-variables"
-            },
-            {
-              "include": "#struckdown-django-tags"
-            }
+            { "include": "#struckdown-template-variables" },
+            { "include": "#struckdown-django-tags" }
           ]
         },
         {
-          "name": "meta.block.header.struckdown",
-          "begin": "¡HEADER(\\+)?",
-          "end": "/END",
-          "beginCaptures": {
-            "0": {
-              "name": "keyword.control.header.struckdown"
-            }
-          },
-          "endCaptures": {
-            "0": {
-              "name": "keyword.control.end.struckdown"
-            }
-          },
-          "patterns": [
-            {
-              "include": "#struckdown-template-variables"
-            },
-            {
-              "include": "#struckdown-django-tags"
-            }
-          ]
+          "name": "meta.tag.checkpoint.self-closing.struckdown",
+          "match": "(<)(checkpoint)(\\s*/?>|\\s*>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.checkpoint.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          }
         },
         {
-          "name": "keyword.control.obliviate.struckdown",
-          "match": "¡(OBLIVIATE|SEGMENT)"
+          "name": "meta.tag.obliviate.self-closing.struckdown",
+          "match": "(<)(obliviate)(\\s*/?>|\\s*>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.obliviate.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          }
+        },
+        {
+          "name": "meta.tag.break.struckdown",
+          "begin": "(<)(break)(\\s*>)",
+          "end": "(</)(break)(>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.break.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          },
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.break.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          },
+          "contentName": "string.unquoted.break-message.struckdown"
+        },
+        {
+          "name": "meta.tag.break.self-closing.struckdown",
+          "match": "(<)(break)(\\s*/>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.break.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          }
+        },
+        {
+          "name": "meta.tag.include.struckdown",
+          "match": "(<)(include)(\\s+)(src)(=)(\"[^\"]*\"|'[^']*')(\\s*/>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.include.struckdown" },
+            "3": { "name": "text.struckdown" },
+            "4": { "name": "entity.other.attribute-name.struckdown" },
+            "5": { "name": "punctuation.separator.key-value.struckdown" },
+            "6": { "name": "string.quoted.struckdown" },
+            "7": { "name": "punctuation.definition.tag.end.struckdown" }
+          }
         }
       ]
     },
@@ -150,8 +177,28 @@
           },
           "patterns": [
             {
+              "name": "meta.placeholder.action.struckdown",
+              "begin": "(@)([a-zA-Z_][a-zA-Z0-9_]*)(\\:)",
+              "end": "(?=\\]\\])",
+              "beginCaptures": {
+                "1": { "name": "punctuation.definition.action.struckdown" },
+                "2": { "name": "entity.name.function.action.struckdown" },
+                "3": { "name": "punctuation.separator.type.struckdown" }
+              },
+              "patterns": [
+                {
+                  "name": "variable.other.placeholder.name.struckdown",
+                  "match": "[^|\\]\\[]+"
+                },
+                {
+                  "name": "punctuation.separator.options.struckdown",
+                  "match": "\\|"
+                }
+              ]
+            },
+            {
               "name": "meta.placeholder.typed.struckdown",
-              "match": "(?x)\n                (\\d+:\\d+\\*|\\d+\\*|\\*)?      # Optional multiplier: 2:4*, 3*, or *\n                (?:\n                  (think|speak|boolean|bool|int|json|number|pick)  # Type prefix\n                  (:)\n                )?",
+              "match": "(?x)\n                (\\d+:\\d+\\*|\\d+\\*|\\*)?      # Optional multiplier: 2:4*, 3*, or *\n                (?:\n                  (think|speak|boolean|bool|int|json|number|pick|date|datetime|time|duration|extract)  # Type prefix\n                  (\\:)\n                )?",
               "captures": {
                 "1": {
                   "name": "keyword.operator.multiplier.struckdown"
@@ -230,22 +277,32 @@
       "patterns": [
         {
           "name": "meta.tag.django.struckdown",
-          "begin": "\\{%",
-          "end": "%\\}",
+          "begin": "(\\{%)([-+]?)",
+          "end": "([-+]?)(%\\})",
           "beginCaptures": {
-            "0": {
-              "name": "punctuation.definition.tag.begin.struckdown"
-            }
+            "1": { "name": "punctuation.definition.tag.begin.django.struckdown" },
+            "2": { "name": "keyword.operator.whitespace.django.struckdown" }
           },
           "endCaptures": {
-            "0": {
-              "name": "punctuation.definition.tag.end.struckdown"
-            }
+            "1": { "name": "keyword.operator.whitespace.django.struckdown" },
+            "2": { "name": "punctuation.definition.tag.end.django.struckdown" }
           },
           "patterns": [
             {
               "name": "keyword.control.django.struckdown",
-              "match": "[^\\{%}]+"
+              "match": "\\b(if|else|elif|endif|for|endfor|include|extends|block|endblock|set|macro|endmacro|raw|endraw|import|from|as|with|endwith|call|endcall|filter|endfilter|autoescape|endautoescape)\\b"
+            },
+            {
+              "name": "variable.other.django.struckdown",
+              "match": "[a-zA-Z_][a-zA-Z0-9_]*"
+            },
+            {
+              "name": "string.quoted.single.django.struckdown",
+              "match": "'[^']*'"
+            },
+            {
+              "name": "string.quoted.double.django.struckdown",
+              "match": "\"[^\"]*\""
             }
           ]
         }

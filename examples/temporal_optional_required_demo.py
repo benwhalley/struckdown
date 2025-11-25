@@ -87,11 +87,11 @@ template = """The conference is on January 15, 2024 at 9:00 AM and lasts 2 hours
 
 Extract date [[date:conf_date|required]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Extract time [[time:conf_time|required]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Extract duration [[duration:conf_length|required]]"""
 

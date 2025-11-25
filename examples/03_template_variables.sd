@@ -8,7 +8,7 @@ are interpolated into the prompt text.
 
 Write a {{style}} poem about {{topic}}: [[poem]]
 
-¡OBLIVIATE  
+<checkpoint>
 
 Translate this poem into {{language}}.
 

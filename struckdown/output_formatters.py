@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, Template
+from jinja2 import Environment, FileSystemLoader, Template, Undefined
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,25 @@ def write_csv(data: List[Dict[str, Any]], output_path: Path) -> None:
     for record in flattened:
         all_keys.update(record.keys())
 
-    fieldnames = sorted(all_keys)
+    # check if we have original column ordering from spreadsheet input
+    original_columns = None
+    for record in data:
+        if "_original_columns" in record:
+            original_columns = record["_original_columns"]
+            break
+
+    if original_columns:
+        # preserve original column order, append new columns in appearance order
+        # exclude _original_columns itself from output
+        all_keys.discard("_original_columns")
+        # only include original columns that actually exist in output
+        existing_orig_cols = [col for col in original_columns if col in all_keys]
+        # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
+        new_columns = [k for k in flattened[0].keys() if k not in original_columns and k != "_original_columns"]
+        fieldnames = existing_orig_cols + new_columns
+    else:
+        # default: alphabetical order
+        fieldnames = sorted(all_keys)
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -73,7 +91,25 @@ def write_xlsx(data: List[Dict[str, Any]], output_path: Path) -> None:
     for record in flattened:
         all_keys.update(record.keys())
 
-    fieldnames = sorted(all_keys)
+    # check if we have original column ordering from spreadsheet input
+    original_columns = None
+    for record in data:
+        if "_original_columns" in record:
+            original_columns = record["_original_columns"]
+            break
+
+    if original_columns:
+        # preserve original column order, append new columns in appearance order
+        # exclude _original_columns itself from output
+        all_keys.discard("_original_columns")
+        # only include original columns that actually exist in output
+        existing_orig_cols = [col for col in original_columns if col in all_keys]
+        # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
+        new_columns = [k for k in flattened[0].keys() if k not in original_columns and k != "_original_columns"]
+        fieldnames = existing_orig_cols + new_columns
+    else:
+        # default: alphabetical order
+        fieldnames = sorted(all_keys)
 
     wb = Workbook()
     ws = wb.active
@@ -134,9 +170,9 @@ def render_template(
     if not template_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_path}")
 
-    # Load template with strict undefined checking
+    # Load template with tolerant undefined handling (missing vars become empty)
     env = Environment(
-        loader=FileSystemLoader(template_path.parent), undefined=StrictUndefined
+        loader=FileSystemLoader(template_path.parent), undefined=Undefined
     )
     template = env.get_template(template_path.name)
 

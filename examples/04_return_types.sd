@@ -5,11 +5,11 @@ Shows different LLM return types: text, bool, int, json
 
 Generate a random number between 1 and 100: [[int:number]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Is the number {{number}} greater than 50? [[bool:is_large]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Create a JSON object describing the number {{number}}:
 
@@ -17,6 +17,6 @@ Include: value, is_even, is_prime, description
 
 [[json:number_info]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Write a haiku about the number {{number}}: [[haiku]]

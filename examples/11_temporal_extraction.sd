@@ -6,27 +6,27 @@ Struckdown can extract a number of date/time and duration patterns from text.
 
 -->
 
-¡OBLIVIATE
+<checkpoint>
 
 The meeting is scheduled for next Tuesday [[date:meeting_date]]
 
-¡OBLIVIATE
+<checkpoint>
 
 The event starts at 3:30 PM [[time:event_time]]
 
-¡OBLIVIATE
+<checkpoint>
 
 The conference begins on January 15, 2024 at 2:00 PM [[datetime:conference_start]]
 
-¡OBLIVIATE
+<checkpoint>
 We flew for half an hour. What is the flight duration: [[duration:flight_duration]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Important dates: January 1, February 15, and March 30. 14 Dec=not important
 Extract all the important dates: [[date*:important_dates]]
 
-¡OBLIVIATE
+<checkpoint>
 
 <!-- finds the date relative to the current date -->
 The deadline is in 5 days [[date:deadline]]

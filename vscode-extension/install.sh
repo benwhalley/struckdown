@@ -5,7 +5,7 @@
 
 set -e
 
-EXTENSION_NAME="struckdown-0.2.0"
+EXTENSION_NAME="struckdown-0.2.2"
 EXTENSION_DIR="$HOME/.vscode/extensions"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 

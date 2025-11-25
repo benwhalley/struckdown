@@ -1,17 +1,17 @@
 <!--
 
 Simple Chain Example
-Shows chaining completions with obliviate
+Shows chaining completions with checkpoint
 
 The 2nd and 3rd completions for a summary and
-reading age rating will have access to the {{news}} 
+reading age rating will have access to the {{news}}
 variable and will be run in parallel:
 
 -->
 
 Imagine a news article on intergalactic TV: [[news]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Summarize the news in one sentence:
 
@@ -19,7 +19,7 @@ News: {{news}}
 
 Summary: [[summary]]
 
-¡OBLIVIATE
+<checkpoint>
 
 How weird is the news, on a scale of 1 to 10 (10 being the most weird):
 

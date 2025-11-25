@@ -3,7 +3,8 @@
   "type": "light",
   "colors": {
     "editor.background": "#fafafa",
-    "editor.foreground": "#383a42"
+    "editor.foreground": "#383a42",
+    "editor.lineHighlightBackground": "#FFFDE7"
   },
   "tokenColors": [
     {
@@ -35,9 +36,89 @@
       }
     },
     {
-      "scope": "keyword.control.obliviate.struckdown",
+      "name": "System tag - content background",
+      "scope": [
+        "meta.tag.system.struckdown",
+        "meta.content.system.struckdown"
+      ],
       "settings": {
-        "foreground": "#E45649",
+        "background": "#EDE9FE",
+        "foreground": "#6B21A8"
+      }
+    },
+    {
+      "name": "System tag - opening and closing tags",
+      "scope": [
+        "entity.name.tag.system.struckdown",
+        "meta.tag.system.struckdown punctuation.definition.tag.begin.struckdown",
+        "meta.tag.system.struckdown punctuation.definition.tag.end.struckdown"
+      ],
+      "settings": {
+        "background": "#8B5CF6",
+        "foreground": "#FFFFFF",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Checkpoint tag - solid background",
+      "scope": [
+        "meta.tag.checkpoint.closed.struckdown",
+        "meta.tag.checkpoint.self-closing.struckdown",
+        "entity.name.tag.checkpoint.struckdown",
+        "string.unquoted.checkpoint-name.struckdown"
+      ],
+      "settings": {
+        "background": "#E0F2FE",
+        "foreground": "#0369A1",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Obliviate tag - solid background",
+      "scope": [
+        "meta.tag.obliviate.closed.struckdown",
+        "meta.tag.obliviate.self-closing.struckdown",
+        "entity.name.tag.obliviate.struckdown"
+      ],
+      "settings": {
+        "background": "#FEE2E2",
+        "foreground": "#B91C1C",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Break tag",
+      "scope": [
+        "meta.tag.break.struckdown",
+        "meta.tag.break.self-closing.struckdown",
+        "entity.name.tag.break.struckdown"
+      ],
+      "settings": {
+        "background": "#FFEDD5",
+        "foreground": "#C2410C",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Include tag",
+      "scope": [
+        "meta.tag.include.struckdown",
+        "entity.name.tag.include.struckdown"
+      ],
+      "settings": {
+        "background": "#CCFBF1",
+        "foreground": "#0D9488",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Action function calls",
+      "scope": [
+        "entity.name.function.action.struckdown",
+        "punctuation.definition.action.struckdown"
+      ],
+      "settings": {
+        "foreground": "#4078F2",
         "fontStyle": "bold"
       }
     },
@@ -49,9 +130,36 @@
       }
     },
     {
-      "scope": "meta.tag.django.struckdown",
+      "name": "Django/Jinja tag delimiters",
+      "scope": [
+        "punctuation.definition.tag.begin.django.struckdown",
+        "punctuation.definition.tag.end.django.struckdown"
+      ],
+      "settings": {
+        "foreground": "#50A14F"
+      }
+    },
+    {
+      "name": "Django/Jinja keywords",
+      "scope": "keyword.control.django.struckdown",
+      "settings": {
+        "foreground": "#A626A4",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Django/Jinja variables",
+      "scope": "variable.other.django.struckdown",
       "settings": {
         "foreground": "#50A14F",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "System tag modifiers",
+      "scope": "entity.other.attribute-name.struckdown",
+      "settings": {
+        "foreground": "#A626A4",
         "fontStyle": "italic"
       }
     }

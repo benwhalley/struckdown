@@ -351,7 +351,7 @@ class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
 
     def test_action_in_template_with_variable(self):
         """Test action using template variable"""
-        template = "Original: [[input]]\n\n¡OBLIVIATE\n\nReversed: [[@reverse:output|text={{input}}]]"
+        template = "Original: [[input]]\n\n<checkpoint>\n\nReversed: [[@reverse:output|text={{input}}]]"
         sections = parse_syntax(template)
 
         self.assertEqual(len(sections), 2)
@@ -465,7 +465,7 @@ class RealWorldExampleTestCase(unittest.TestCase):
         template = """
         Get user input: [[user_text]]
 
-        ¡OBLIVIATE
+        <checkpoint>
 
         Transform to uppercase: [[@uppercase:loud_text|text={{user_text}}]]
         """

@@ -5,7 +5,7 @@ Shows generating lists with fixed counts and ranges
 
 Generate 3 creative business ideas: [[response{3}:idea]]
 
-¡OBLIVIATE
+<checkpoint>
 
 For each business idea, evaluate the pros and cons:
 
@@ -14,7 +14,7 @@ Business Ideas:
 
 Generate between 2 and 4 evaluations: [[default{2,4}:evaluation]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Now generate as many potential names as you can for the best business idea:
 

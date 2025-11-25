@@ -4,7 +4,10 @@ import traceback
 import uuid
 import warnings
 from collections import OrderedDict
+from contextlib import contextmanager
 from contextvars import ContextVar
+from pathlib import Path
+from typing import Callable
 from types import FunctionType
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +19,7 @@ import openai
 from box import Box
 from decouple import config as env_config
 from instructor import Mode, from_openai
-from jinja2 import Environment, StrictUndefined, Template, Undefined, meta
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, Template, Undefined, UndefinedError, meta
 # import specific litellm exceptions for error handling
 from litellm.exceptions import (APIConnectionError, APIError,
                                 APIResponseValidationError,
@@ -36,7 +39,12 @@ from struckdown.actions import Actions
 from struckdown.cache import clear_cache, memory
 from struckdown.number_validation import (parse_number_options,
                                           validate_number_constraints)
-from struckdown.parsing import _add_default_completion_if_needed, parser
+from struckdown.parsing import (
+    _add_default_completion_if_needed,
+    parser,
+    resolve_includes,
+    split_by_checkpoint,
+)
 from struckdown.response_types import ResponseTypes
 from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
 from struckdown.temporal_patterns import expand_temporal_pattern
@@ -57,6 +65,36 @@ except PackageNotFoundError:
 warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 logger = logging.getLogger(__name__)
+
+
+# Register built-in actions
+@Actions.register('set', on_error='propagate', default_save=True)
+def builtin_set(context, value="", **kwargs):
+    """Built-in action to set a variable without an LLM call.
+
+    Usage: [[@set:varname|newvalue]]
+    or: [[@set:varname|value=some_value]]
+    or: [[@set:varname|value={{other_var}}]]
+
+    This is useful for creating dependencies between segments without extra API calls.
+    """
+    return str(value)
+
+
+@Actions.register('break', on_error='propagate', default_save=True)
+def builtin_break(context, message="", **kwargs):
+    """Built-in action for early termination.
+
+    Usage: [[@break|reason for breaking]]
+
+    This stops execution of the current template and returns partial results.
+    The message (after the pipe) is stored in context['_break_message'] and
+    returned as the action output.
+    """
+    context['_break_requested'] = True
+    context['_break_message'] = message
+    return message
+
 
 # Run ID for cache detection - uses contextvars for thread/async safety
 # Works correctly in long-running processes (Django, Jupyter) by scoping to logical runs
@@ -99,6 +137,69 @@ def new_run() -> str:
     return run_id
 
 
+# Progress callback for per-API-call updates
+_progress_callback: ContextVar[Optional[Callable[[], None]]] = ContextVar(
+    '_progress_callback', default=None
+)
+
+
+@contextmanager
+def progress_tracking(on_api_call: Callable[[], None]):
+    """Context manager for tracking individual API calls.
+
+    Allows callers to receive a callback after each LLM completion,
+    enabling real-time progress updates without changing the chatter() signature.
+
+    Usage:
+        def on_call():
+            print("API call completed!")
+
+        with progress_tracking(on_api_call=on_call):
+            result = chatter(...)  # on_call() fires after each completion
+    """
+    token = _progress_callback.set(on_api_call)
+    try:
+        yield
+    finally:
+        _progress_callback.reset(token)
+
+
+class StruckdownEarlyTermination(Exception):
+    """Raised when [[end]] is encountered to stop template execution."""
+    def __init__(self, message, partial_results=None):
+        super().__init__(message)
+        self.partial_results = partial_results or ChatterResult()
+
+
+class StruckdownTemplateError(Exception):
+    """User-friendly wrapper for template rendering errors."""
+
+    def __init__(
+        self,
+        message: str,
+        original_error: Optional[Exception] = None,
+        template_path: Optional[str] = None,
+        line_number: Optional[int] = None,
+        context_variables: Optional[List[str]] = None,
+    ):
+        self.original_error = original_error
+        self.template_path = template_path
+        self.line_number = line_number
+        self.context_variables = context_variables or []
+        super().__init__(message)
+
+    def __str__(self):
+        parts = [f"Error: {self.args[0]}"]
+        if self.template_path:
+            loc = str(self.template_path)
+            if self.line_number:
+                loc += f":{self.line_number}"
+            parts.append(f"  File: {loc}")
+        if self.context_variables:
+            parts.append(f"  Context variables: {', '.join(sorted(self.context_variables))}")
+        return '\n'.join(parts)
+
+
 class StruckdownLLMError(Exception):
     """Wrapper for LLM API errors with rich context.
 
@@ -124,9 +225,9 @@ class StruckdownLLMError(Exception):
 
     def __str__(self):
         return (
-            f"[{self.error_type}] Model: {self.model_name}\n"
-            f"Error: {self.original_error}\n"
-            f"Prompt length: {len(self.prompt)} chars"
+            f"Error: {self.error_type}\n"
+            f"  Model: {self.model_name}\n"
+            f"  {self.original_error}"
         )
 
     def __repr__(self):
@@ -573,6 +674,8 @@ class ChatterResult(BaseModel):
     @property
     def response(self):
         # dict is insertion ordered python > 3.7
+        if not self.results:
+            return None
         last = self.results.get(next(reversed(self.results)), None)
         return last and last.output or None
 
@@ -839,7 +942,23 @@ async def process_single_segment_(
     # But system is re-added for each completion, so we only track user/assistant pairs
     segment_history = []
 
+    termination_requested = False
+    break_message = None
     for idx, (key, prompt_part) in enumerate(segment.items()):
+        # Check for break tag (early termination)
+        if prompt_part.is_break:
+            termination_requested = True
+            break_message = prompt_part.break_message
+            # Store break message in accumulated context
+            if break_message:
+                accumulated_context["_break_message"] = break_message
+            break  # Stop processing this segment
+
+        # Check for old-style early termination marker (requires ! prefix) - deprecated
+        if key.lower() == "end" and prompt_part.required_prefix:
+            termination_requested = True
+            break  # Stop processing this segment
+
         is_first_completion = (idx == 0)
 
         # Re-render system and header with current accumulated context
@@ -849,15 +968,24 @@ async def process_single_segment_(
             finalize=struckdown_finalize,
         )
 
+        def render_template_safe(template_str: str, context: dict, source_desc: str) -> str:
+            """Render template with user-friendly error on undefined variables."""
+            try:
+                template = env_with_finalize.from_string(template_str)
+                return template.render(**context)
+            except UndefinedError as e:
+                raise StruckdownTemplateError(
+                    message=str(e),
+                    original_error=e,
+                    line_number=prompt_part.line_number,
+                    context_variables=list(context.keys()),
+                ) from e
+
         system_message = ""
         if prompt_part.system_message:
-            system_template = env_with_finalize.from_string(prompt_part.system_message)
-            system_message = system_template.render(**accumulated_context)
-
-        header_content = ""
-        if prompt_part.header_content:
-            header_template = env_with_finalize.from_string(prompt_part.header_content)
-            header_content = header_template.render(**accumulated_context)
+            system_message = render_template_safe(
+                prompt_part.system_message, accumulated_context, "system message"
+            )
 
         # Build messages list for this completion
         messages = []
@@ -868,10 +996,6 @@ async def process_single_segment_(
 
         # Build user message content for THIS completion
         user_prompt = prompt_part.text
-
-        # Prepend header ONLY if this is the first completion
-        if is_first_completion and header_content:
-            user_prompt = f"{header_content}\n\n{user_prompt}"
 
         # Add temporal context hint if needed
         temporal_hint = ""
@@ -884,11 +1008,12 @@ async def process_single_segment_(
         ]:
             temporal_hint = f"\n\n--- TEMPORAL CONTEXT (for resolving relative references only) ---\nUse this ONLY to resolve relative temporal expressions like 'tomorrow', 'next week', 'in 3 days', etc.\nDO NOT return these values as your answer. Extract temporal information from the INPUT TEXT above.\nReturn null if no temporal information can be found or interpreted in the input text.\n\nCurrent Date: {accumulated_context.get('_current_date', 'N/A')}\nCurrent Time: {accumulated_context.get('_current_time', 'N/A')}\nTimezone: {accumulated_context.get('_current_timezone', 'N/A')}\n--- END CONTEXT ---"
 
-        # Render the user prompt template (reuse env_with_finalize from above)
-        user_template = env_with_finalize.from_string(
-            user_prompt + temporal_hint + "\n\nAlways use the tools/JSON response.\n\n```json\n"
+        # Render the user prompt template
+        rendered_user_content = render_template_safe(
+            user_prompt + temporal_hint + "\n\nAlways use the tools/JSON response.\n\n```json\n",
+            accumulated_context,
+            "user prompt",
         )
-        rendered_user_content = user_template.render(**accumulated_context)
 
         # Add segment history (previous user/assistant exchanges) before new user message
         messages.extend(segment_history)
@@ -1136,6 +1261,20 @@ async def process_single_segment_(
             f"Added '{key}' to accumulated_context. Keys now: {list(accumulated_context.keys())}"
         )
 
+        # Fire progress callback (for per-API-call progress updates)
+        callback = _progress_callback.get()
+        if callback:
+            callback()
+
+        # Check for [[@break]] action -- terminates execution immediately
+        if accumulated_context.get('_break_requested'):
+            break_msg = accumulated_context.get('_break_message', '')
+            logger.info(f"Break action triggered: {break_msg}")
+            raise StruckdownEarlyTermination(
+                f"Break requested: {break_msg}",
+                partial_results=results
+            )
+
         # Add this exchange to segment history for next completion
         # History grows: [user1, assistant1, user2, assistant2, ...]
         segment_history.append({"role": "user", "content": rendered_user_content})
@@ -1147,6 +1286,13 @@ async def process_single_segment_(
         else:
             # LLM completions add assistant message
             segment_history.append({"role": "assistant", "content": str(extracted_value)})
+
+    # Raise termination exception if requested (after saving all completed results)
+    if termination_requested:
+        raise StruckdownEarlyTermination(
+            f"Execution stopped at [[end]] marker",
+            partial_results=results
+        )
 
     return results
 
@@ -1349,6 +1495,23 @@ class SegmentDependencyGraph:
         )  # segment_id -> set of variable names defined in this segment
         self.build_dependency_graph()
 
+    def get_segment_display_name(self, segment_id: str) -> str:
+        """Get a human-readable name for a segment.
+
+        Args:
+            segment_id: Segment ID like 'segment_0', 'segment_1', etc.
+
+        Returns:
+            Segment name if available, otherwise the numeric ID
+        """
+        idx = int(segment_id.split("_")[1])
+        if idx < len(self.segments):
+            segment = self.segments[idx]
+            segment_name = getattr(segment, 'segment_name', None)
+            if segment_name:
+                return f"{segment_name} ({segment_id})"
+        return segment_id
+
     def build_dependency_graph(self):
         # First pass: identify variables defined in each segment
         for i, segment in enumerate(self.segments):
@@ -1366,11 +1529,9 @@ class SegmentDependencyGraph:
                 # Extract variables from prompt text
                 template_vars.update(extract_jinja_variables(prompt_part.text))
 
-                # Extract variables from system message and header content
+                # Extract variables from system message
                 if hasattr(prompt_part, 'system_message') and prompt_part.system_message:
                     template_vars.update(extract_jinja_variables(prompt_part.system_message))
-                if hasattr(prompt_part, 'header_content') and prompt_part.header_content:
-                    template_vars.update(extract_jinja_variables(prompt_part.header_content))
 
                 # Also extract variables from action options (e.g., query={{summary}})
                 if prompt_part.options and isinstance(
@@ -1385,6 +1546,24 @@ class SegmentDependencyGraph:
                     dep_segment_id = f"segment_{j}"
                     if var in self.segment_vars[dep_segment_id]:
                         self.dependency_graph[segment_id].add(dep_segment_id)
+
+        # Third pass: handle blocking completions
+        # If a segment contains a blocking completion, all subsequent segments depend on it
+        for i, segment in enumerate(self.segments):
+            segment_id = f"segment_{i}"
+            has_blocking = any(
+                hasattr(part, 'block') and part.block
+                for part in segment.values()
+            )
+            if has_blocking:
+                # Make all subsequent segments depend on this one
+                for j in range(i + 1, len(self.segments)):
+                    later_segment_id = f"segment_{j}"
+                    self.dependency_graph[later_segment_id].add(segment_id)
+                    logger.debug(
+                        f"Blocking completion in {self.get_segment_display_name(segment_id)} "
+                        f"→ {self.get_segment_display_name(later_segment_id)} depends on it"
+                    )
 
     def get_execution_plan(self) -> List[List[str]]:
         """
@@ -1437,81 +1616,110 @@ async def chatter_async(
     credentials: Optional[LLMCredentials] = None,
     context={},
     extra_kwargs=None,
+    template_path: Optional[Path] = None,
+    include_paths: Optional[List[Path]] = None,
 ):
     """
     example:
     chatter("tell a joke [[joke]]")
+
+    Processing happens in two phases:
+    1. Compile time: <include> tags resolved, template split by <checkpoint>
+    2. Execution time: Each segment is Jinja2-rendered with accumulated context,
+       then parsed and executed. This allows conditionals to reference earlier completions.
+
+    Args:
+        include_paths: Additional directories to search for <include> files.
+            By default, only the template's own directory is searched.
     """
 
     logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
 
-    # Auto-escape context values using Jinja2 finalize to prevent prompt injection.
-    # Values marked with mark_struckdown_safe() are passed through unchanged.
-    # This makes escaping automatic and transparent -- all {{variables}} are escaped
-    # unless explicitly marked safe.
+    # Configure search paths for includes
+    # Only template's own directory by default (secure), plus explicit include_paths
+    search_paths = [template_path.parent] if template_path else []
+    if include_paths:
+        search_paths.extend(include_paths)
+    search_paths = [p for p in search_paths if p.exists() and p.is_dir()]
+
+    # COMPILE TIME: Resolve <include> tags
+    resolved_template = resolve_includes(multipart_prompt, template_path.parent if template_path else None, search_paths)
+
+    # COMPILE TIME: Split by <checkpoint> tags
+    raw_segments = split_by_checkpoint(resolved_template)
+    logger.debug(f"Split into {len(raw_segments)} raw segments")
+
+    # Jinja2 environment with auto-escaping
+    loader = FileSystemLoader(search_paths) if search_paths else None
     env = Environment(
         undefined=KeepUndefined,
-        finalize=struckdown_finalize,  # Auto-escape struckdown syntax
+        finalize=struckdown_finalize,
+        loader=loader,
     )
-    template = env.from_string(multipart_prompt)
-    multipart_prompt_prefilled = template.render(**context)
 
-    # Add default completion to final segment if needed
-    preprocessed = _add_default_completion_if_needed(multipart_prompt_prefilled)
-
-    segments = parser().parse(preprocessed.strip())
-    dependency_graph = SegmentDependencyGraph(segments)
-    plan = dependency_graph.get_execution_plan()
-    if max([len(i) for i in plan]) > 1:
-        logger.debug(f"Execution plan includes concurrency: {plan}")
-
-    import anyio
-    from anyio import Event
-
-    segment_events = {f"segment_{i}": Event() for i, _ in enumerate(segments)}
-    segment_results = {}
-
-    for batch in plan:
-        async with anyio.create_task_group() as tg:
-            for segment_id in batch:
-                i = int(segment_id.split("_")[1])
-                segment = segments[i]
-                deps = dependency_graph.dependency_graph[segment_id]
-
-                async def run_segment(sid=segment_id, seg=segment, deps=deps):
-                    if deps:
-                        # wait for dependencies to complete
-                        [await segment_events[d].wait() for d in deps]
-                        dep_results = [segment_results[d] for d in deps]
-                        # merge base context with dependency results
-                        resolved_context = await merge_contexts(context, *dep_results)
-                    else:
-                        resolved_context = await merge_contexts(context)
-
-                    result = await process_single_segment_(
-                        seg,
-                        model,
-                        credentials,
-                        resolved_context,
-                        **(extra_kwargs or {}),
-                    )
-                    segment_results[sid] = result
-                    segment_events[sid].set()  # signal completion
-                    return result
-
-                tg.start_soon(run_segment)
-
-    # Gather results from all segments in original order
+    # EXECUTION TIME: Process each segment with accumulated context
     final = ChatterResult()
-    for i, segment in enumerate(segments):
-        sid = f"segment_{i}"
-        result = segment_results[sid]
-        final.update(result.results)
-        # Merge interim_results from this segment
-        for key, interim_steps in result.interim_results.items():
-            if key not in final.interim_results:
-                final.interim_results[key] = []
-            final.interim_results[key].extend(interim_steps)
+    accumulated_context = context.copy()
+
+    for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
+        # Render Jinja2 with accumulated context (includes results from prior completions)
+        template = env.from_string(raw_segment_text)
+        rendered_segment = template.render(**accumulated_context)
+
+        # Skip empty segments (may happen if Jinja2 conditional removes all content)
+        if not rendered_segment.strip():
+            logger.debug(f"Segment {seg_idx} empty after Jinja2 render, skipping")
+            continue
+
+        # Add default completion if this is the last segment and missing one
+        if seg_idx == len(raw_segments) - 1:
+            rendered_segment = _add_default_completion_if_needed(rendered_segment)
+
+        # Parse the rendered segment
+        try:
+            parsed_segments = parser().parse(rendered_segment.strip())
+        except Exception as e:
+            logger.debug(f"Parse error in segment {seg_idx}: {e}")
+            raise
+
+        # Execute all parsed segments (usually just one, but parser may return multiple)
+        if not parsed_segments:
+            logger.debug(f"Segment {seg_idx} parsed to empty, skipping")
+            continue
+
+        for parsed_segment in parsed_segments:
+            try:
+                result = await process_single_segment_(
+                    parsed_segment,
+                    model,
+                    credentials,
+                    accumulated_context,
+                    **(extra_kwargs or {}),
+                )
+                final.update(result.results)
+
+                # Merge interim_results
+                for key, interim_steps in result.interim_results.items():
+                    if key not in final.interim_results:
+                        final.interim_results[key] = []
+                    final.interim_results[key].extend(interim_steps)
+
+                # Update accumulated context with results for next segment
+                for key, seg_result in result.results.items():
+                    escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
+                    accumulated_context[key] = escaped_value
+
+                # Check for break action
+                if accumulated_context.get('_break_requested'):
+                    break_msg = accumulated_context.get('_break_message', '')
+                    logger.info(f"Break requested: {break_msg}")
+                    return final
+
+            except StruckdownEarlyTermination as e:
+                # [[!end]] marker encountered
+                final.update(e.partial_results.results)
+                logger.info(f"Early termination: {e}")
+                return final
 
     logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
     return final
@@ -1523,6 +1731,8 @@ def chatter(
     credentials: Optional[LLMCredentials] = None,
     context={},
     extra_kwargs=None,
+    template_path: Optional[Path] = None,
+    include_paths: Optional[List[Path]] = None,
 ):
     return anyio.run(
         chatter_async,
@@ -1531,6 +1741,8 @@ def chatter(
         credentials,
         context,
         extra_kwargs,
+        template_path,
+        include_paths,
     )
 
 

@@ -87,7 +87,7 @@ class TemporalParsingTestCase(unittest.TestCase):
         """Test multiple temporal types in one template"""
         template = """Extract the date [[date:event_date]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Extract the time [[time:start_time]]"""
         sections = parse_syntax(template)
@@ -285,7 +285,7 @@ class TemporalTemplateVariableTestCase(unittest.TestCase):
         """Test mixing temporal and non-temporal types across segments"""
         template = """Extract the event name [[extract:event_name]]
 
-¡OBLIVIATE
+<checkpoint>
 
 When is the event? [[date:event_date]]"""
         sections = parse_syntax(template)
@@ -296,13 +296,11 @@ When is the event? [[date:event_date]]"""
 
 
 class TemporalSharedHeaderTestCase(unittest.TestCase):
-    """Test temporal types work with system messages (¡SYSTEM)"""
+    """Test temporal types work with system messages"""
 
     def test_shared_header_with_temporal_type(self):
-        """Test ¡SYSTEM with temporal extraction"""
-        template = """¡SYSTEM
-You are an expert at extracting dates from text.
-/END
+        """Test system message with temporal extraction"""
+        template = """<system>You are an expert at extracting dates from text.</system>
 
 Extract the date from this text [[date:extracted_date]]"""
         sections = parse_syntax(template)
@@ -313,13 +311,11 @@ Extract the date from this text [[date:extracted_date]]"""
 
     def test_shared_header_persists_across_temporal_segments(self):
         """Test system message persists across multiple temporal segments"""
-        template = """¡SYSTEM
-You are a temporal extraction specialist.
-/END
+        template = """<system>You are a temporal extraction specialist.</system>
 
 Extract the date [[date:event_date]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Extract the time [[time:event_time]]"""
         sections = parse_syntax(template)

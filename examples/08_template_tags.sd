@@ -6,7 +6,7 @@ Note: Quantifiers must be literal numbers (not template variables)
 
 Generate a list of 5 {{item_type}} items: [[default{5}:item]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Here are your {{item_type}} items:
 
@@ -14,7 +14,7 @@ Items: {{items}}
 
 Pick the best one and explain why: [[best_choice]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Processing Results:
 Items generated: {{items}}

@@ -116,7 +116,7 @@ def test_shared_header_feature():
     # test without system message
     template1 = """Tell a joke: [[joke]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Rate the joke {{joke}} from 1-10: [[int:rating]]"""
 
@@ -129,13 +129,11 @@ Rate the joke {{joke}} from 1-10: [[int:rating]]"""
     print()
 
     # test with system message
-    template2 = """¡SYSTEM
-You are a comedy expert who rates jokes professionally.
-/END
+    template2 = """<system>You are a comedy expert who rates jokes professionally.</system>
 
 Tell a joke: [[joke]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Rate the joke {{joke}} from 1-10: [[int:rating]]"""
 

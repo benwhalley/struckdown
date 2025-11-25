@@ -7,20 +7,18 @@ This directory contains example files demonstrating Struckdown features.
 ### Basic Features
 
 - **`01_basic_completion.sd`** -- Simple LLM completion
-- **`02_simple_chain.sd`** -- Chaining completions with `¡OBLIVIATE`
+- **`02_simple_chain.sd`** -- Chaining completions with `<checkpoint>`
 - **`03_template_variables.sd`** -- Using `{{variables}}` for dynamic content
-- **`04_shared_header.sd`** -- System messages and headers with `¡SYSTEM`/`¡HEADER`
-- **`05_return_types.sd`** -- Type-specific completions (bool, int, pick)
+- **`05_shared_header.sd`** -- System messages with `<system>`
+- **`04_return_types.sd`** -- Type-specific completions (bool, int, pick)
 
 ### Advanced Features
 
 - **`06_list_completions.sd`** -- List generation (`3*[[item]]`, `*[[item]]`)
 - **`07_complex_workflow.sd`** -- Multi-step data analysis pipeline
 - **`08_template_tags.sd`** -- Dynamic content generation
-- **`09_edge_cases.sd`** -- Error handling and special cases
-- **`11_variables_in_header.sd`** -- Using variables in shared headers
-- **`12_temporal_extraction.sd`** -- Date/time extraction examples
-- **`13_number_extraction.sd`** -- Number extraction with constraints
+- **`11_temporal_extraction.sd`** -- Date/time extraction examples
+- **`10_number_extraction.sd`** -- Number extraction with constraints
 
 ## Demo Scripts
 
@@ -99,24 +97,36 @@ uv run python examples/test_examples.py
 Context...
 [[extract1]]
 
-¡OBLIVIATE              # Memory boundary
+<checkpoint>              # Memory boundary
 
-Use {{extract1}}        # Only variables carry forward
+Use {{extract1}}          # Only variables carry forward
 [[extract2]]
 ```
 
-### Shared Headers
+### System Messages
 
 ```
-You are an expert.
-
-¡BEGIN                  # Header ends here
+<system>You are an expert assistant.</system>
 
 Prompt 1: [[result1]]
 
-¡OBLIVIATE
+<checkpoint>
 
-Prompt 2: [[result2]]  # Header is prepended automatically
+Prompt 2: [[result2]]     # System message persists
+```
+
+### Local System Messages
+
+```
+<system>Global instruction for all segments.</system>
+
+<system local>Extra instruction for this segment only.</system>
+
+Prompt 1: [[result1]]
+
+<checkpoint>
+
+Prompt 2: [[result2]]     # Local instruction is cleared
 ```
 
 ## Example Workflows

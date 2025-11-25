@@ -230,6 +230,10 @@ class Actions:
                     if param_name == "context":
                         continue  # context is always dict, passed separately
 
+                    # skip *args and **kwargs - they're catch-alls, not validated params
+                    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                        continue
+
                     # get type hint for this parameter
                     param_type = type_hints.get(
                         param_name, str

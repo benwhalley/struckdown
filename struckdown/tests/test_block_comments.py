@@ -101,7 +101,7 @@ Write a joke about {{topic}}
 
 
 def test_block_comment_with_obliviate():
-    """Block comments work correctly with OBLIVIATE sections"""
+    """Block comments work correctly with checkpoint sections"""
     template = """
     <!--First section docs-->
 
@@ -109,7 +109,7 @@ def test_block_comment_with_obliviate():
 
     [[first]]
 
-    ¡OBLIVIATE
+    <checkpoint>
 
     <!--Second section docs-->
 
