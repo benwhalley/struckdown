@@ -36,7 +36,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*", "quarto/**/*"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"

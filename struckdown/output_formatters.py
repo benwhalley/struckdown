@@ -64,7 +64,7 @@ def write_csv(data: List[Dict[str, Any]], output_path: Path) -> None:
         fieldnames = sorted(all_keys)
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(flattened)
 

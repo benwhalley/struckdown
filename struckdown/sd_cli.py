@@ -400,6 +400,63 @@ def chat(
     typer.echo(summary.format_summary(), err=True)
 
 
+def _merge_result_with_input(
+    item: dict, result, keep_inputs: bool
+) -> dict:
+    """
+    Merge input data with completion results, handling column name clashes.
+
+    When keep_inputs is True and a completion key matches an input column:
+    - Input column is renamed to {key}.data
+    - Completion is stored as {key}.predicted
+
+    Also stores _completion_slots metadata listing the actual column names
+    where completions were stored (after any renaming).
+    """
+    # Get completion keys
+    completion_keys = set(result.results.keys())
+
+    # Get input keys (excluding internal metadata)
+    input_keys = {k for k in item.keys() if not k.startswith("_")}
+
+    # Find clashes
+    clashing_keys = completion_keys & input_keys
+
+    # Track actual completion slot names (after renaming)
+    completion_slots = []
+
+    if keep_inputs:
+        output_item = {}
+        for k, v in item.items():
+            if k.startswith("_"):
+                # Keep internal metadata as-is
+                output_item[k] = v
+            elif k in clashing_keys:
+                output_item[f"{k}.data"] = v
+            else:
+                output_item[k] = v
+    else:
+        output_item = {}
+        # Keep filename for traceability
+        if "filename" in item:
+            output_item["filename"] = item["filename"]
+
+    # Add completion results
+    for key, segment_result in result.results.items():
+        if key in clashing_keys:
+            actual_key = f"{key}.predicted"
+            output_item[actual_key] = segment_result.output
+            completion_slots.append(actual_key)
+        else:
+            output_item[key] = segment_result.output
+            completion_slots.append(key)
+
+    # Store completion slots as metadata
+    output_item["_completion_slots"] = completion_slots
+
+    return output_item
+
+
 async def batch_async(
     prompt: str,
     input_data: List[dict],
@@ -413,6 +470,10 @@ async def batch_async(
     quiet: bool,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
+    compare: Optional[List[str]] = None,
+    statsonly: bool = False,
+    classification_errors: Optional[int] = None,
+    min_n_compare: int = 1,
 ):
     """
     Async implementation of batch processing with concurrent execution.
@@ -472,6 +533,7 @@ async def batch_async(
                                         )
 
                                 # Execute chatter_async with progress tracking
+                                # Use strict_undefined to catch column name mismatches
                                 with progress_tracking(on_api_call=on_api_call):
                                     result = await chatter_async(
                                         multipart_prompt=prompt,
@@ -481,6 +543,7 @@ async def batch_async(
                                         extra_kwargs=extra_kwargs,
                                         template_path=template_path,
                                         include_paths=include_paths,
+                                        strict_undefined=True,
                                     )
 
                                 # collect result for cost tracking
@@ -488,18 +551,7 @@ async def batch_async(
                                     chatter_results.append(result)
 
                                 # Merge input data with extracted results
-                                if keep_inputs:
-                                    output_item = item.copy()
-                                else:
-                                    # Start with empty dict, only include extracted results
-                                    output_item = {}
-                                    # Keep filename for traceability
-                                    if "filename" in item:
-                                        output_item["filename"] = item["filename"]
-
-                                for key, segment_result in result.results.items():
-                                    output_item[key] = segment_result.output
-
+                                output_item = _merge_result_with_input(item, result, keep_inputs)
                                 results[index] = output_item
 
                                 if verbose:
@@ -539,6 +591,7 @@ async def batch_async(
                                 api_call_count[0] += 1
 
                             # Execute chatter_async with progress tracking
+                            # Use strict_undefined to catch column name mismatches
                             with progress_tracking(on_api_call=on_api_call):
                                 result = await chatter_async(
                                     multipart_prompt=prompt,
@@ -548,6 +601,7 @@ async def batch_async(
                                     extra_kwargs=extra_kwargs,
                                     template_path=template_path,
                                     include_paths=include_paths,
+                                    strict_undefined=True,
                                 )
 
                             # collect result for cost tracking
@@ -555,18 +609,7 @@ async def batch_async(
                                 chatter_results.append(result)
 
                             # Merge input data with extracted results
-                            if keep_inputs:
-                                output_item = item.copy()
-                            else:
-                                # Start with empty dict, only include extracted results
-                                output_item = {}
-                                # Keep filename for traceability
-                                if "filename" in item:
-                                    output_item["filename"] = item["filename"]
-
-                            for key, segment_result in result.results.items():
-                                output_item[key] = segment_result.output
-
+                            output_item = _merge_result_with_input(item, result, keep_inputs)
                             results[index] = output_item
 
                             if verbose:
@@ -600,8 +643,87 @@ async def batch_async(
         typer.echo("Error: No results produced", err=True)
         raise typer.Exit(1)
 
-    # Filter out None results from errors
-    results = [r for r in results if r is not None]
+    # Filter out None results from errors, keeping input_data aligned
+    paired = [(inp, res) for inp, res in zip(input_data, results) if res is not None]
+    if paired:
+        input_data_filtered, results = zip(*paired)
+        input_data_filtered = list(input_data_filtered)
+        results = list(results)
+    else:
+        input_data_filtered = []
+        results = []
+
+    # Calculate comparison statistics if requested
+    stats = None
+    error_examples = None
+    if compare:
+        from .stats import (
+            calculate_batch_stats,
+            collect_error_examples,
+            format_error_examples,
+            format_stats_table,
+            parse_compare_spec,
+            stats_to_json,
+        )
+
+        # Get available column names from data
+        input_cols = set()
+        result_cols = set()
+        completion_slots = set()
+        if input_data_filtered:
+            input_cols = {k for k in input_data_filtered[0].keys() if not k.startswith("_")}
+        if results:
+            result_cols = {k for k in results[0].keys() if not k.startswith("_")}
+            # Get completion slots from metadata
+            completion_slots = set(results[0].get("_completion_slots", []))
+
+        # Parse and resolve compare specs (handle renamed columns)
+        compare_specs = []
+
+        # Handle wildcard: --compare=all finds input columns matching completion slots
+        if "all" in compare:
+            # For each completion slot, find the matching input column
+            for slot in sorted(completion_slots):
+                # Get base name (strip .predicted suffix if present)
+                if slot.endswith(".predicted"):
+                    base_name = slot[:-10]
+                else:
+                    base_name = slot
+
+                # Find matching input column (either base_name.data or base_name)
+                if f"{base_name}.data" in input_cols:
+                    compare_specs.append((f"{base_name}.data", slot))
+                elif base_name in input_cols:
+                    compare_specs.append((base_name, slot))
+
+        # Process explicit specs (non-wildcard)
+        for spec in compare:
+            if spec == "all":
+                continue  # Already handled above
+            col, comp = parse_compare_spec(spec)
+
+            # Auto-resolve renamed columns due to clashes
+            actual_col = f"{col}.data" if f"{col}.data" in input_cols else col
+            actual_comp = f"{comp}.predicted" if f"{comp}.predicted" in result_cols else comp
+
+            compare_specs.append((actual_col, actual_comp))
+
+        stats = calculate_batch_stats(input_data_filtered, results, compare_specs, min_n_compare)
+
+        # Collect error examples if requested
+        if classification_errors is not None:
+            max_examples = None if classification_errors == -1 else classification_errors
+            error_examples = collect_error_examples(
+                input_data_filtered, results, compare_specs, max_per_type=max_examples
+            )
+
+        if statsonly:
+            # Output only stats as JSON to stdout
+            output_data = stats_to_json(stats)
+            if error_examples:
+                output_data["_error_examples"] = error_examples
+            print(json.dumps(output_data, indent=2))
+            return
 
     if output:
         # Write to multiple outputs
@@ -615,9 +737,21 @@ async def batch_async(
             else:
                 # Use template rendering for non-JSON outputs when template is specified
                 render_template(results, output_path, template)
-    else:
-        # No outputs specified, write to stdout
+    elif not compare:
+        # No outputs specified and no compare - write results to stdout
         write_output(results, None)
+
+    # Print stats summary if calculated
+    if stats:
+        # Print to stdout if no output files, stderr otherwise
+        err_target = bool(output)
+
+        # Print error examples first (if collected)
+        if error_examples:
+            typer.echo(format_error_examples(error_examples), err=err_target)
+
+        # Then print confusion matrices / stats table
+        typer.echo(format_stats_table(stats), err=err_target)
 
 
 @app.command()
@@ -665,7 +799,7 @@ def batch(
         help="Random seed for reproducible outputs (if supported by model)",
     ),
     max_concurrent: int = typer.Option(
-        20, "-c", "--concurrency", help="Maximum number of concurrent API requests"
+        20, "-j", "--concurrency", help="Maximum number of concurrent API requests"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable debug logging"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
@@ -674,6 +808,36 @@ def batch(
         "-I",
         "--include-path",
         help="Additional directories to search for includes (can be repeated)",
+    ),
+    compare: Optional[List[str]] = typer.Option(
+        None,
+        "-c",
+        "--compare",
+        help="Compare column to completion for stats. Use 'col' for same-name or 'col=completion' for mapping. Can be repeated.",
+    ),
+    statsonly: bool = typer.Option(
+        False,
+        "--statsonly",
+        help="Output only comparison statistics as JSON (requires --compare)",
+    ),
+    head: Optional[int] = typer.Option(
+        None,
+        "-h",
+        "--head",
+        help="Limit to first N inputs",
+    ),
+    classification_errors: Optional[int] = typer.Option(
+        None,
+        "-e",
+        "--classification-errors",
+        help="Show examples of misclassifications. Use -e for all, -e N for N examples per error type.",
+        is_flag=False,
+        flag_value=-1,  # -1 means show all
+    ),
+    min_n_compare: int = typer.Option(
+        1,
+        "--min-n-compare",
+        help="Minimum ground truth count for a category to be included in aggregate metrics (macro/weighted F1).",
     ),
 ):
     """
@@ -697,6 +861,11 @@ def batch(
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
+
+    # Validate --statsonly requires --compare
+    if statsonly and not compare:
+        typer.echo("Error: --statsonly requires at least one --compare option", err=True)
+        raise typer.Exit(1)
 
     # Validate template usage
     if template:
@@ -809,6 +978,10 @@ def batch(
         )
         raise typer.Exit(1)
 
+    # Limit to first N inputs if --head specified
+    if head is not None and head > 0:
+        input_data = input_data[:head]
+
     # build extra_kwargs for API parameters
     extra_kwargs = {}
     if seed is not None:
@@ -836,6 +1009,10 @@ def batch(
         quiet,
         prompt_file,  # Pass prompt_file as template_path for includes
         all_include_paths if all_include_paths else None,
+        compare,
+        statsonly,
+        classification_errors,
+        min_n_compare,
     )
 
 
@@ -857,10 +1034,11 @@ def _extract_spreadsheet_rows(path: Path) -> tuple[List[dict], List[str]]:
 
     suffix = path.suffix.lower()
 
+    # Disable default NA parsing to preserve strings like "n/a", "NA" as literal text
     if suffix == ".csv":
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, keep_default_na=False, na_values=[""])
     elif suffix == ".xlsx":
-        df = pd.read_excel(path, engine="openpyxl")
+        df = pd.read_excel(path, engine="openpyxl", keep_default_na=False, na_values=[""])
     else:
         raise ValueError(f"Unsupported spreadsheet format: {suffix}")
 
@@ -1081,57 +1259,78 @@ def check_alias(
 
 @app.command()
 def preview(
-    prompt_file: Path = typer.Argument(..., help="Path to .sd prompt file"),
+    prompt_file: Optional[Path] = typer.Argument(
+        None, help="Path to .sd file (reads from stdin if --fragment)"
+    ),
     output: Optional[Path] = typer.Option(
         None, "-o", "--output", help="Output HTML file (default: open in browser)"
     ),
     raw: bool = typer.Option(
         False, "--raw", "-r", help="Show raw file without resolving includes"
     ),
+    fragment: bool = typer.Option(
+        False, "--fragment", "-f", help="Output HTML fragment to stdout (for embedding)"
+    ),
 ):
-    """Preview .sd file with syntax highlighting in browser.
+    """Preview .sd file with syntax highlighting.
 
     By default resolves all includes and opens the preview in your default browser.
     Use -o to save to a file instead.
+    Use --fragment to output just the highlighted HTML (no page wrapper) to stdout.
 
     Examples:
         sd preview prompt.sd              # Opens in browser (includes resolved)
         sd preview prompt.sd -o out.html  # Saves to file
         sd preview prompt.sd --raw        # Don't resolve includes
+        sd preview prompt.sd --fragment   # Output HTML fragment to stdout
+        sd preview --fragment < prompt.sd # Fragment from stdin
     """
     import tempfile
     import webbrowser
-    from .highlight import render_preview_html
+    from .highlight import render_preview_html, highlight_struckdown_with_system_blocks
 
     console = Console()
 
-    if not prompt_file.exists():
-        console.print(f"[red]Error: {prompt_file} not found[/red]")
-        raise typer.Exit(1)
-
-    # read content (resolve <include> tags by default, but don't execute Jinja)
-    if raw:
-        content = prompt_file.read_text(encoding="utf-8")
+    # handle stdin for fragment mode
+    if prompt_file is None:
+        if not fragment:
+            console.print("[red]Error: prompt_file required (or use --fragment with stdin)[/red]")
+            raise typer.Exit(1)
+        content = sys.stdin.read()
     else:
-        from struckdown.parsing import resolve_includes
-        try:
-            content = prompt_file.read_text(encoding="utf-8")
-            # only resolve <include src="..."/> tags, not Jinja {% include %}
-            search_paths = [
-                prompt_file.parent,
-                prompt_file.parent / 'templates',
-                Path.cwd(),
-                Path.cwd() / 'includes',
-                Path.cwd() / 'templates',
-            ]
-            search_paths = [p for p in search_paths if p.exists() and p.is_dir()]
-            content = resolve_includes(content, prompt_file.parent, search_paths)
-        except Exception as e:
-            console.print(f"[red]Error resolving includes:[/red] {e}")
+        if not prompt_file.exists():
+            console.print(f"[red]Error: {prompt_file} not found[/red]")
             raise typer.Exit(1)
 
-    # render HTML
-    html = render_preview_html(content, filename=prompt_file.name)
+        # read content (resolve <include> tags by default, but don't execute Jinja)
+        if raw:
+            content = prompt_file.read_text(encoding="utf-8")
+        else:
+            from struckdown.parsing import resolve_includes
+            try:
+                content = prompt_file.read_text(encoding="utf-8")
+                # only resolve <include src="..."/> tags, not Jinja {% include %}
+                search_paths = [
+                    prompt_file.parent,
+                    prompt_file.parent / 'templates',
+                    Path.cwd(),
+                    Path.cwd() / 'includes',
+                    Path.cwd() / 'templates',
+                ]
+                search_paths = [p for p in search_paths if p.exists() and p.is_dir()]
+                content = resolve_includes(content, prompt_file.parent, search_paths)
+            except Exception as e:
+                console.print(f"[red]Error resolving includes:[/red] {e}")
+                raise typer.Exit(1)
+
+    # fragment mode: output just highlighted HTML to stdout
+    if fragment:
+        highlighted = highlight_struckdown_with_system_blocks(content)
+        print(highlighted, end="")
+        return
+
+    # full preview mode
+    html = render_preview_html(content, filename=prompt_file.name if prompt_file else "stdin")
 
     if output:
         output.write_text(html, encoding="utf-8")
@@ -1143,7 +1342,7 @@ def preview(
             temp_dir = Path('/tmp')
         else:
             temp_dir = Path(tempfile.gettempdir())
-        temp_path = temp_dir / f'{prompt_file.stem}.html'
+        temp_path = temp_dir / f'{prompt_file.stem if prompt_file else "preview"}.html'
         temp_path.write_text(html, encoding='utf-8')
 
         file_url = f'file://{temp_path}'

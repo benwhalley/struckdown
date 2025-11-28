@@ -36,17 +36,20 @@ from more_itertools import chunked
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from struckdown.actions import Actions
-from struckdown.cache import clear_cache, memory
+from struckdown.cache import clear_cache, hash_return_type, memory
+from struckdown.jinja_analysis import analyze_template, TemplateAnalysis
 from struckdown.number_validation import (parse_number_options,
                                           validate_number_constraints)
 from struckdown.parsing import (
     _add_default_completion_if_needed,
     parser,
+    parser_with_state,
     resolve_includes,
     split_by_checkpoint,
 )
 from struckdown.response_types import ResponseTypes
 from struckdown.return_type_models import ACTION_LOOKUP, LLMConfig
+from struckdown.segment_processor import process_segment_with_delta
 from struckdown.temporal_patterns import expand_temporal_pattern
 
 # litellm._turn_on_debug()
@@ -241,6 +244,32 @@ class KeepUndefined(Undefined):
         return f"{{{{ {self._undefined_name} }}}}"
 
 
+def make_strict_undefined(available_vars: list[str]):
+    """Create a StrictUndefined class that includes available variables in error message."""
+
+    class StrictUndefinedWithHint(Undefined):
+        """Raises error for undefined variables with helpful hints."""
+
+        def _fail_with_undefined_error(self, *args, **kwargs):
+            hint = ""
+            if available_vars:
+                hint = f"\n  Available variables: {', '.join(sorted(available_vars))}"
+            raise UndefinedError(
+                f"Variable '{{{{ {self._undefined_name} }}}}' is not defined in context.{hint}"
+            )
+
+        # Override all methods that could be called on undefined
+        __str__ = _fail_with_undefined_error
+        __iter__ = _fail_with_undefined_error
+        __bool__ = _fail_with_undefined_error
+        __eq__ = _fail_with_undefined_error
+        __ne__ = _fail_with_undefined_error
+        __hash__ = _fail_with_undefined_error
+        __len__ = _fail_with_undefined_error
+
+    return StrictUndefinedWithHint
+
+
 class Example(BaseModel):
     name: str
     age: int
@@ -297,6 +326,7 @@ def _call_llm_cached(
     max_retries: int,
     max_tokens: Optional[int],
     extra_kwargs: Optional[dict],
+    return_type_hash: str,  # Hash of return_type schema - included in cache key
     return_type,
     llm,
     credentials,
@@ -432,6 +462,8 @@ def structured_chat(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
     logger.debug(f"LLM kwargs: {extra_kwargs}")
+    # print(messages)
+    # print("\n\n"+"*"*80, flush=True)
     try:
         res_dict, com_dict = _call_llm_cached(
             messages=messages,
@@ -439,6 +471,7 @@ def structured_chat(
             max_retries=max_retries,
             max_tokens=max_tokens,
             extra_kwargs=extra_kwargs or {},
+            return_type_hash=hash_return_type(return_type),
             return_type=return_type,
             llm=llm,
             credentials=credentials,
@@ -1618,6 +1651,7 @@ async def chatter_async(
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
+    strict_undefined: bool = False,
 ):
     """
     example:
@@ -1626,11 +1660,14 @@ async def chatter_async(
     Processing happens in two phases:
     1. Compile time: <include> tags resolved, template split by <checkpoint>
     2. Execution time: Each segment is Jinja2-rendered with accumulated context,
-       then parsed and executed. This allows conditionals to reference earlier completions.
+       then parsed and executed. Jinja conditionals can react to slot values
+       filled within the same segment via delta-based re-rendering.
 
     Args:
         include_paths: Additional directories to search for <include> files.
             By default, only the template's own directory is searched.
+        strict_undefined: If True, raise error when template variables are not found
+            in context. Useful for batch processing to catch column name mismatches.
     """
 
     logger.debug(f"\n\n{LC.ORANGE}Chatter Prompt: {multipart_prompt}{LC.RESET}\n\n")
@@ -1649,77 +1686,52 @@ async def chatter_async(
     raw_segments = split_by_checkpoint(resolved_template)
     logger.debug(f"Split into {len(raw_segments)} raw segments")
 
-    # Jinja2 environment with auto-escaping
-    loader = FileSystemLoader(search_paths) if search_paths else None
-    env = Environment(
-        undefined=KeepUndefined,
-        finalize=struckdown_finalize,
-        loader=loader,
-    )
-
     # EXECUTION TIME: Process each segment with accumulated context
     final = ChatterResult()
     accumulated_context = context.copy()
 
+    # Track global system messages (persist across checkpoints)
+    accumulated_globals: List[str] = []
+
     for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
-        # Render Jinja2 with accumulated context (includes results from prior completions)
-        template = env.from_string(raw_segment_text)
-        rendered_segment = template.render(**accumulated_context)
+        from .segment_processor import extract_system_message
 
-        # Skip empty segments (may happen if Jinja2 conditional removes all content)
-        if not rendered_segment.strip():
-            logger.debug(f"Segment {seg_idx} empty after Jinja2 render, skipping")
-            continue
+        # Extract system message from this segment
+        system_template, body_template = extract_system_message(raw_segment_text)
 
-        # Add default completion if this is the last segment and missing one
-        if seg_idx == len(raw_segments) - 1:
-            rendered_segment = _add_default_completion_if_needed(rendered_segment)
+        # System messages accumulate across segments (globals persist)
+        if system_template:
+            env = Environment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            rendered_system = env.from_string(system_template).render(**accumulated_context)
+            accumulated_globals.append(rendered_system)
 
-        # Parse the rendered segment
+        # Analyze template structure for smart re-rendering
+        analysis = analyze_template(body_template)
+        logger.debug(
+            f"Segment {seg_idx} analysis: "
+            f"{len(analysis.slots)} slots, triggers={analysis.triggers}"
+        )
+
         try:
-            parsed_segments = parser().parse(rendered_segment.strip())
+            result = await process_segment_with_delta(
+                body_template,
+                accumulated_context,
+                model,
+                credentials,
+                analysis=analysis,
+                global_system_messages=accumulated_globals,
+                **(extra_kwargs or {}),
+            )
+            final.update(result.results)
+
+            # Update accumulated context with results for next segment
+            for key, seg_result in result.results.items():
+                escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
+                accumulated_context[key] = escaped_value
+
         except Exception as e:
-            logger.debug(f"Parse error in segment {seg_idx}: {e}")
+            logger.error(f"Segment {seg_idx} error: {e}")
             raise
-
-        # Execute all parsed segments (usually just one, but parser may return multiple)
-        if not parsed_segments:
-            logger.debug(f"Segment {seg_idx} parsed to empty, skipping")
-            continue
-
-        for parsed_segment in parsed_segments:
-            try:
-                result = await process_single_segment_(
-                    parsed_segment,
-                    model,
-                    credentials,
-                    accumulated_context,
-                    **(extra_kwargs or {}),
-                )
-                final.update(result.results)
-
-                # Merge interim_results
-                for key, interim_steps in result.interim_results.items():
-                    if key not in final.interim_results:
-                        final.interim_results[key] = []
-                    final.interim_results[key].extend(interim_steps)
-
-                # Update accumulated context with results for next segment
-                for key, seg_result in result.results.items():
-                    escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
-                    accumulated_context[key] = escaped_value
-
-                # Check for break action
-                if accumulated_context.get('_break_requested'):
-                    break_msg = accumulated_context.get('_break_message', '')
-                    logger.info(f"Break requested: {break_msg}")
-                    return final
-
-            except StruckdownEarlyTermination as e:
-                # [[!end]] marker encountered
-                final.update(e.partial_results.results)
-                logger.info(f"Early termination: {e}")
-                return final
 
     logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
     return final
@@ -1733,6 +1745,7 @@ def chatter(
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
+    strict_undefined: bool = False,
 ):
     return anyio.run(
         chatter_async,
@@ -1743,6 +1756,7 @@ def chatter(
         extra_kwargs,
         template_path,
         include_paths,
+        strict_undefined,
     )
 
 

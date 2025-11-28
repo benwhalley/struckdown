@@ -23,6 +23,184 @@ except Exception:
 MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
 
+# Regex pattern for finding [[...]] slot placeholders
+SLOT_PATTERN = re.compile(r'\[\[([^\]]+)\]\]')
+
+# Mini-grammar for parsing just the inner content of [[...]] slots
+# This is a subset of the main grammar, used for extracting slot keys
+_slot_body_grammar = """
+start: completion_body
+
+completion_body: _AT CNAME _COLON CNAME (_PIPE option_list)? -> action_call_with_var
+    | _AT CNAME _COLON (_PIPE option_list)? -> action_call_auto_var
+    | _AT CNAME (_PIPE option_list)? -> action_call_no_var
+    | BANG? CNAME quantifier? _COLON CNAME (_PIPE option_list)? -> typed_completion_with_var
+    | BANG? CNAME quantifier? _COLON (_PIPE option_list)? -> typed_completion_auto_var
+    | BANG? CNAME quantifier? (_PIPE option_list)? -> typed_completion_no_var
+
+BANG: "!"
+_PIPE: "|"
+_AT: "@"
+_COLON: ":"
+_WHITESPACE: /\\s+/
+
+quantifier: "*"                           -> zero_or_more
+          | "+"                           -> one_or_more
+          | "?"                           -> zero_or_one
+          | "{" NUMBER "}"                -> exact
+          | "{" NUMBER "," "}"            -> at_least
+          | "{" NUMBER "," NUMBER "}"     -> between
+
+option_list: option ("," option)*
+option: STRING | /[^,\\]\\|]+/
+
+%import common.CNAME
+%import common.INT -> NUMBER
+%import common.ESCAPED_STRING -> STRING
+%ignore _WHITESPACE
+"""
+
+_cached_slot_parser = None
+
+
+def _get_slot_body_parser():
+    """Get cached mini-parser for slot body content."""
+    global _cached_slot_parser
+    if _cached_slot_parser is None:
+        _cached_slot_parser = Lark(_slot_body_grammar, parser="lalr")
+    return _cached_slot_parser
+
+
+class SlotKeyTransformer(Transformer):
+    """Extracts slot info from a slot body parse tree.
+
+    Returns a dict with 'key', 'type', 'is_action', 'options', and 'auto' fields.
+    """
+
+    def action_call_with_var(self, items):
+        action_name = str(items[0])
+        var_name = str(items[1])
+        options = items[2] if len(items) > 2 else []
+        return {"key": var_name, "type": action_name, "is_action": True, "options": options, "auto": False}
+
+    def action_call_auto_var(self, items):
+        action_name = str(items[0])
+        options = items[1] if len(items) > 1 else []
+        return {"key": None, "type": action_name, "is_action": True, "options": options, "auto": True}
+
+    def action_call_no_var(self, items):
+        action_name = str(items[0])
+        options = items[1] if len(items) > 1 else []
+        return {"key": action_name, "type": action_name, "is_action": True, "options": options, "auto": False}
+
+    def typed_completion_with_var(self, items):
+        idx = 0
+        if items and str(items[0]) == "!":
+            idx = 1
+        type_name = str(items[idx])
+        idx += 1
+        # skip quantifier if present
+        if idx < len(items) and isinstance(items[idx], tuple):
+            idx += 1
+        var_name = str(items[idx])
+        idx += 1
+        options = items[idx] if idx < len(items) else []
+        return {"key": var_name, "type": type_name, "is_action": False, "options": options, "auto": False}
+
+    def typed_completion_auto_var(self, items):
+        idx = 0
+        if items and str(items[0]) == "!":
+            idx = 1
+        type_name = str(items[idx])
+        idx += 1
+        # skip quantifier if present
+        if idx < len(items) and isinstance(items[idx], tuple):
+            idx += 1
+        options = items[idx] if idx < len(items) else []
+        return {"key": None, "type": type_name, "is_action": False, "options": options, "auto": True}
+
+    def typed_completion_no_var(self, items):
+        idx = 0
+        if items and str(items[0]) == "!":
+            idx = 1
+        type_name = str(items[idx])
+        idx += 1
+        # skip quantifier if present
+        if idx < len(items) and isinstance(items[idx], tuple):
+            idx += 1
+        options = items[idx] if idx < len(items) else []
+        return {"key": type_name, "type": type_name, "is_action": False, "options": options, "auto": False}
+
+    # quantifier handlers return tuples
+    def zero_or_more(self, items):
+        return (0, None)
+
+    def one_or_more(self, items):
+        return (1, None)
+
+    def zero_or_one(self, items):
+        return (0, 1)
+
+    def exact(self, items):
+        return (int(str(items[0])), int(str(items[0])))
+
+    def at_least(self, items):
+        return (int(str(items[0])), None)
+
+    def between(self, items):
+        return (int(str(items[0])), int(str(items[1])))
+
+    def option_list(self, items):
+        return list(map(str, items))
+
+    def option(self, item):
+        return str(item[0]).strip()
+
+    def start(self, items):
+        return items[0]
+
+
+def parse_slot_body(inner_text: str) -> dict:
+    """Parse slot inner content using Lark.
+
+    Args:
+        inner_text: Content between [[ and ]], e.g. "type:var|opts"
+
+    Returns:
+        Dict with 'key', 'type', 'is_action', 'options', 'auto' fields.
+    """
+    parser = _get_slot_body_parser()
+    tree = parser.parse(inner_text.strip())
+    return SlotKeyTransformer().transform(tree)
+
+
+def extract_slot_key(inner_text: str) -> str:
+    """Extract just the variable key from slot inner content.
+
+    Args:
+        inner_text: Content between [[ and ]]
+
+    Returns:
+        Variable key string, or the type name if no explicit key
+    """
+    result = parse_slot_body(inner_text)
+    return result["key"] if result["key"] else result["type"]
+
+
+def find_slots_with_positions(text: str) -> list:
+    """Find all [[...]] slots in text with positions.
+
+    Args:
+        text: Template text to search
+
+    Returns:
+        List of (key, start_pos, end_pos, inner_text) tuples
+    """
+    return [
+        (extract_slot_key(m.group(1)), m.start(), m.end(), m.group(1))
+        for m in SLOT_PATTERN.finditer(text)
+    ]
+
 
 class NamedSegment(OrderedDict):
     """OrderedDict subclass that adds optional segment name metadata.
@@ -48,6 +226,7 @@ PromptPart = namedtuple(
         "options",
         "text",
         "system_message",  # Computed effective system message (globals + locals)
+        "header_message",  # Computed effective header (globals + locals), sent as user role
         "quantifier",
         "action_type",
         "llm_kwargs",
@@ -111,6 +290,11 @@ class MindframeTransformer(Transformer):
         # two-list system prompt model
         self.globals = []  # global system prompts (persist across checkpoints)
         self.locals = []   # local system prompts (cleared after each checkpoint)
+
+        # two-list header model (same semantics, but sent as user role after system)
+        self.header_globals = []  # global headers (persist across checkpoints)
+        self.header_locals = []   # local headers (cleared after each checkpoint)
+
         self.checkpoint_counter = 0  # counter for auto-naming checkpoints
 
         self.completion_counters = {}  # track auto-variable generation per completion type
@@ -129,6 +313,7 @@ class MindframeTransformer(Transformer):
         self.current_buf = []
         self.current_parts = []
         self.locals = []  # Clear locals after each checkpoint
+        self.header_locals = []  # Clear header locals after each checkpoint
         self.completions_in_current_checkpoint = []
 
     def _extract_line_number(self, items):
@@ -336,6 +521,59 @@ class MindframeTransformer(Transformer):
 
         return None
 
+    def header_tag(self, items):
+        """Handle <header [modifiers]>content</header> - set header messages.
+
+        Grammar: header_tag: HEADER_OPEN HEADER_CONTENT? HEADER_CLOSE
+        Items: [HEADER_OPEN token, optional HEADER_CONTENT, HEADER_CLOSE]
+
+        Same semantics as system_tag, but content is sent as user role message
+        (appears after system message in the message list).
+
+        Modifiers parsed from opening tag:
+        - scope: 'local' (cleared after checkpoint) or 'global' (default, persists)
+        - action: 'replace' (clear list) or 'append' (default, add to list)
+        """
+        scope = 'global'
+        action = 'append'
+
+        # First item is HEADER_OPEN (e.g., "<header local replace>")
+        opening_tag = str(items[0]) if items else "<header>"
+
+        # Parse modifiers from opening tag
+        if 'local' in opening_tag:
+            scope = 'local'
+        elif 'global' in opening_tag:
+            scope = 'global'
+
+        if 'replace' in opening_tag:
+            action = 'replace'
+        elif 'append' in opening_tag:
+            action = 'append'
+
+        # Second item (if present and not HEADER_CLOSE) is content
+        content = ""
+        if len(items) > 2:  # Has content between open and close
+            content = str(items[1]).strip()
+            # Strip HTML comments from content
+            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+
+        # Apply the header tag
+        if action == 'replace':
+            if scope == 'global':
+                self.header_globals = [content] if content else []
+            else:  # local
+                self.header_locals = [content] if content else []
+        else:  # append
+            if scope == 'global':
+                if content:  # Only append non-empty content
+                    self.header_globals.append(content)
+            else:  # local
+                if content:
+                    self.header_locals.append(content)
+
+        return None
+
     def include_tag(self, items):
         """Handle <include src="path"/> - file inclusion (fallback).
 
@@ -362,6 +600,11 @@ class MindframeTransformer(Transformer):
     def _compute_effective_system(self):
         """Compute effective system prompt = globals + locals."""
         all_parts = self.globals + self.locals
+        return "\n\n".join(all_parts) if all_parts else ""
+
+    def _compute_effective_header(self):
+        """Compute effective header = header_globals + header_locals."""
+        all_parts = self.header_globals + self.header_locals
         return "\n\n".join(all_parts) if all_parts else ""
 
     # -------------------------------------------------------------------------
@@ -410,7 +653,8 @@ class MindframeTransformer(Transformer):
             return_type=body["return_type"],
             options=plain_options,
             text=prompt,
-            system_message=self._compute_effective_system(),  # NEW: Use computed effective system
+            system_message=self._compute_effective_system(),
+            header_message=self._compute_effective_header(),
             quantifier=body.get("quantifier", None),
             action_type=body.get("action_type"),
             llm_kwargs=llm_kwargs,
@@ -478,7 +722,13 @@ class MindframeTransformer(Transformer):
         return prompt_text
 
     def _lookup_rt(self, key, options=None, quantifier=None, required_prefix=False):
-        """Lookup return type, checking Actions registry first, then ResponseTypes."""
+        """Lookup return type, checking Actions registry first, then ResponseTypes.
+
+        If the registered type is a factory function, calls it with options
+        to get the actual Pydantic model class.
+        """
+        from types import FunctionType
+
         action_model = Actions.create_action_model(
             key, options, quantifier, required_prefix
         )
@@ -487,9 +737,16 @@ class MindframeTransformer(Transformer):
 
         rt = ResponseTypes.get(key)
         if rt is not None:
+            # If it's a factory function, call it with options to get the model
+            if isinstance(rt, FunctionType):
+                return rt(options, quantifier, required_prefix)
             return rt
 
-        return ResponseTypes.get("default")
+        # Fall back to default
+        default_rt = ResponseTypes.get("default")
+        if isinstance(default_rt, FunctionType):
+            return default_rt(options, quantifier, required_prefix)
+        return default_rt
 
     def typed_completion_with_var(self, items):
         """Handle [[type:var]] - typed completion with explicit variable name.
@@ -797,13 +1054,65 @@ class MindframeTransformer(Transformer):
         return self.sections
 
 
+# Module-level cached Lark parser (compiled once, reused for all parses)
+_cached_lark = None
+
+
+def _get_cached_lark():
+    """Get or create the cached Lark parser.
+
+    The Lark grammar compilation is expensive (~13ms). By caching the compiled
+    parser at module level, subsequent parses only need ~1ms.
+    """
+    global _cached_lark
+    if _cached_lark is None:
+        _cached_lark = Lark(
+            mindframe_grammar,
+            parser="lalr",
+            propagate_positions=True,
+            # No transformer - we'll apply it separately after parsing
+        )
+    return _cached_lark
+
+
+def parser_with_state(initial_globals=None):
+    """Create parser with state tracking for system message globals.
+
+    Args:
+        initial_globals: Optional list of global system message strings to start with.
+            Used when parsing checkpoint segments to maintain globals across segments.
+
+    Returns:
+        Tuple of (CachedParserWrapper, MindframeTransformer instance).
+        The wrapper's parse() method applies the transformer automatically.
+        The transformer can be inspected after parsing to get the final globals state.
+    """
+    transformer = MindframeTransformer()
+    if initial_globals is not None:
+        transformer.globals = list(initial_globals)  # Copy to avoid mutation
+
+    lark = _get_cached_lark()
+
+    # Return a wrapper that combines cached parser with fresh transformer
+    class CachedParserWrapper:
+        def parse(self, text):
+            from lark.exceptions import VisitError
+            tree = lark.parse(text)
+            try:
+                return transformer.transform(tree)
+            except VisitError as e:
+                # Unwrap VisitError to preserve original exception type
+                if e.orig_exc:
+                    raise e.orig_exc from None
+                raise
+
+    return CachedParserWrapper(), transformer
+
+
 def parser():
-    return Lark(
-        mindframe_grammar,
-        parser="lalr",
-        transformer=MindframeTransformer(),
-        propagate_positions=True,
-    )
+    """Create parser (backward compatible wrapper)."""
+    lark, _ = parser_with_state()
+    return lark
 
 
 def resolve_includes(template_text: str, base_path: Path = None, search_paths: list = None) -> str:

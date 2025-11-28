@@ -1,0 +1,144 @@
+/* SD Syntax Highlighting for Quarto */
+
+.sd-code {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.6;
+    background: #f8f8f8;
+    padding: 1em;
+    border-radius: 8px;
+    border: 2px solid #9e9e9e;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+    font-size: 0.85em;
+    overflow-x: auto;
+}
+
+/* placeholder [[...]] - emerald */
+.sd-placeholder {
+    background: rgba(6, 214, 160, 0.3);
+    color: #047857;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 2px 6px;
+    border: 1px solid rgba(6, 214, 160, 0.6);
+}
+
+/* template variables {{...}} - bubblegum pink */
+.sd-template-var {
+    background: rgba(239, 71, 111, 0.25);
+    color: #be3a5a;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 2px 6px;
+    border: 1px solid rgba(239, 71, 111, 0.5);
+}
+
+/* jinja tags {% %} - ocean blue, no bg */
+.sd-jinja-tag {
+    color: #118ab2;
+}
+
+/* system tag line - grey */
+.sd-system-tag-line {
+    background: #e0e0e0;
+    display: block;
+    padding: 4px 12px;
+    margin: 0 -1em;
+    padding-left: 1em;
+    padding-right: 1em;
+    border-left: 4px solid #9e9e9e;
+}
+
+/* system tag text - bold dark */
+.sd-system-tag {
+    font-weight: bold;
+    color: #424242;
+}
+
+/* system content - light grey */
+.sd-system-content {
+    background: #f5f5f5;
+    display: block;
+    padding: 8px 12px;
+    margin: 0 -1em;
+    padding-left: 1em;
+    padding-right: 1em;
+    border-left: 4px solid #bdbdbd;
+}
+
+/* header tag line - faded post-it yellow */
+.sd-header-tag-line {
+    background: #fef9e7;
+    display: block;
+    padding: 4px 12px;
+    margin: 0 -1em;
+    padding-left: 1em;
+    padding-right: 1em;
+    border-left: 4px solid #f5deb3;
+}
+
+/* header tag text - muted brown */
+.sd-header-tag {
+    font-weight: bold;
+    color: #8b7355;
+}
+
+/* header content - very faint yellow */
+.sd-header-content {
+    background: #fffdf5;
+    display: block;
+    padding: 8px 12px;
+    margin: 0 -1em;
+    padding-left: 1em;
+    padding-right: 1em;
+    border-left: 4px solid #f5e6c8;
+}
+
+/* checkpoint - golden pollen */
+.sd-checkpoint {
+    background: #ffd166;
+    color: #073b4c;
+    font-weight: bold;
+    display: block;
+    padding: 6px 8px;
+    margin: 0.5em -1em;
+    padding-left: 1em;
+    padding-right: 1em;
+}
+
+/* obliviate - bubblegum pink */
+.sd-obliviate {
+    background: #ef476f;
+    color: #ffffff;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 2px 8px;
+}
+
+/* include - ocean blue */
+.sd-include {
+    background: rgba(17, 138, 178, 0.2);
+    color: #0d6e8a;
+    font-weight: 500;
+    border-radius: 4px;
+    padding: 2px 6px;
+    border: 1px solid rgba(17, 138, 178, 0.5);
+}
+
+/* comments - muted */
+.sd-comment {
+    color: #888888;
+    font-style: italic;
+    opacity: 0.8;
+}
+
+/* action calls [[@...]] - purple accent */
+.sd-action {
+    background: rgba(139, 92, 246, 0.25);
+    color: #6d28d9;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 2px 6px;
+    border: 1px solid rgba(139, 92, 246, 0.5);
+}

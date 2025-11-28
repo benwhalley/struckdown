@@ -1,7 +1,7 @@
 // Struckdown Grammar v2.0 - XML-style syntax
 // Single-stage parsing of all syntax elements
 
-start: (block_comment | checkpoint_tag | obliviate_tag | system_tag | include_tag | single_completion | placeholder | templatetag | markdown)*
+start: (block_comment | checkpoint_tag | obliviate_tag | system_tag | header_tag | include_tag | single_completion | placeholder | templatetag | markdown)*
 
 // HTML comments (dropped from LLM prompt)
 block_comment: BLOCK_COMMENT_START BLOCK_COMMENT_CONTENT? BLOCK_COMMENT_END
@@ -32,6 +32,14 @@ system_tag: SYSTEM_OPEN SYSTEM_CONTENT? SYSTEM_CLOSE
 SYSTEM_OPEN.2: /<system(?:\s+(?:local|global|append|replace))*\s*>/
 SYSTEM_CLOSE: "</system>"
 
+// Header tags: <header [modifiers]>content</header>
+// Same modifiers as system: local|global, append|replace
+// Content is sent as user role message (appears after system message)
+header_tag: HEADER_OPEN HEADER_CONTENT? HEADER_CLOSE
+
+HEADER_OPEN.2: /<header(?:\s+(?:local|global|append|replace))*\s*>/
+HEADER_CLOSE: "</header>"
+
 // Include tag: <include src="path/to/file.sd"/> or <include src='path/to/file.sd'/>
 // Resolved at parse time (compile-time)
 include_tag: "<include" _WHITESPACE "src=" INCLUDE_SRC _WHITESPACE? "/>"
@@ -39,12 +47,14 @@ include_tag: "<include" _WHITESPACE "src=" INCLUDE_SRC _WHITESPACE? "/>"
 INCLUDE_SRC: /"[^"]*"/ | /'[^']*'/
 
 // Content terminals for tags (must match at least 1 character to avoid zero-width issues)
-SYSTEM_CONTENT: /(.|\n)+?(?=<\/system>)/
+// Negative lookahead (?!\[\[) prevents completion slots [[...]] inside these tags
+SYSTEM_CONTENT: /(?:(?!\[\[)[\s\S])+?(?=<\/system>)/
+HEADER_CONTENT: /(?:(?!\[\[)[\s\S])+?(?=<\/header>)/
 
 // Markdown: everything else (with negative lookahead to exclude our syntax)
 // Matches anything that's NOT our special tags, completions, or variables
 // Note: <break> is now handled as [[@break|msg]] action, so not excluded here
-markdown: /(?:(?!<(?:checkpoint|obliviate|system|include|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
+markdown: /(?:(?!<(?:checkpoint|obliviate|system|header|include|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
 
 // Template variables: {{variable}} or {{variable.path}}
 placeholder: "{{" _WHITESPACE? var_path _WHITESPACE? "}}"

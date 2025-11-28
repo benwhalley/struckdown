@@ -1,0 +1,6 @@
+title: SD Syntax Highlighting
+author: struckdown
+version: 0.1.0
+contributes:
+  filters:
+    - sd-highlight.lua

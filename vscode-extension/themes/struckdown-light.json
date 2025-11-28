@@ -60,6 +60,30 @@
       }
     },
     {
+      "name": "Header tag - content background (faded post-it)",
+      "scope": [
+        "meta.tag.header.struckdown",
+        "meta.content.header.struckdown"
+      ],
+      "settings": {
+        "background": "#FFFDF5",
+        "foreground": "#8B7355"
+      }
+    },
+    {
+      "name": "Header tag - opening and closing tags",
+      "scope": [
+        "entity.name.tag.header.struckdown",
+        "meta.tag.header.struckdown punctuation.definition.tag.begin.struckdown",
+        "meta.tag.header.struckdown punctuation.definition.tag.end.struckdown"
+      ],
+      "settings": {
+        "background": "#FEF3C7",
+        "foreground": "#92400E",
+        "fontStyle": "bold"
+      }
+    },
+    {
       "name": "Checkpoint tag - solid background",
       "scope": [
         "meta.tag.checkpoint.closed.struckdown",

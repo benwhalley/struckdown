@@ -102,6 +102,27 @@
           ]
         },
         {
+          "name": "meta.tag.header.struckdown",
+          "begin": "(<)(header)((?:\\s+(?:local|global|append|replace))*)(\\s*>)",
+          "end": "(</)(header)(>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.header.struckdown" },
+            "3": { "name": "entity.other.attribute-name.struckdown" },
+            "4": { "name": "punctuation.definition.tag.end.struckdown" }
+          },
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.struckdown" },
+            "2": { "name": "entity.name.tag.header.struckdown" },
+            "3": { "name": "punctuation.definition.tag.end.struckdown" }
+          },
+          "contentName": "meta.content.header.struckdown",
+          "patterns": [
+            { "include": "#struckdown-template-variables" },
+            { "include": "#struckdown-django-tags" }
+          ]
+        },
+        {
           "name": "meta.tag.checkpoint.self-closing.struckdown",
           "match": "(<)(checkpoint)(\\s*/?>|\\s*>)",
           "captures": {
