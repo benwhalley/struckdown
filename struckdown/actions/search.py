@@ -94,9 +94,9 @@ def search_and_fetch(
     Returns:
         List of SearchResult objects with fetched content
     """
-    # search using ddgs
-    with DDGS() as ddgs:
-        raw_results = list(ddgs.text(query, max_results=max_results))
+    # search using ddgs (avoid context manager due to curl_cffi malloc bug on macOS)
+    ddgs = DDGS()
+    raw_results = list(ddgs.text(query, max_results=max_results))
 
     results = [
         SearchResult(

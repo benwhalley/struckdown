@@ -2,6 +2,11 @@
 # Changelog
 
 
+### 0.3.1
+
+**Bug Fixes:**
+- Fixed intermittent malloc crash in `@search` action on macOS caused by curl_cffi cleanup in DDGS context manager
+
 ### 0.3.0
 
 **Major Refactor:**
