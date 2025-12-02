@@ -1,6 +1,7 @@
 # struckdown
 
-Markdown-like syntax for structured conversations with language models.
+Markdown-based syntax for ***structured*** conversations with language models.
+
 
 ## QuickStart
 
@@ -89,16 +90,14 @@ Batch operations accept JSON, so you can chain commands:
 - **Simple syntax** -- `[[variable]]` for completions, `{{variable}}` for references
 - **System messages** -- Control LLM behavior with `<system>` tags
 - **Type safety** -- Extract booleans, numbers, dates, or pick from options
-- **Memory management** -- Use `<checkpoint>` to save tokens between steps
+- **Token management** -- Use `<checkpoint>` to save tokens between steps
 - **Batch processing** -- Process hundreds of files with progress bars
 - **Caching** -- Automatic disk caching saves money and time
 - **Custom actions** -- Extend with Python functions (RAG, APIs, databases)
 - **Multiple outputs** -- JSON, CSV, Excel, or stdout
-- **URL fetching** -- Extract data directly from web pages
+- **Web search and URL fetching** -- Extract data directly from web pages
 
-## URL Fetching
 
-Fetch and extract content from URLs directly, with automatic readability processing to reduce tokens.
 
 ### Command Line
 
