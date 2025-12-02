@@ -21,7 +21,6 @@ Struckdown: markdown-like syntax for structured LLM conversations. Uses `[[slot]
 - `sd_cli.py`: Typer CLI (`sd chat`, `sd batch`, `sd check`, `sd graph`, `sd flat`)
 - `actions/`: Extensible action registry (`@action` syntax) -- see `docs/CUSTOM_ACTIONS.md`
 - `types/`: YAML-defined response types (loaded by `type_loader.py`)
-- `tools/`: Tool definitions (loaded by `tools_loader.py`)
 
 ## Key Syntax
 

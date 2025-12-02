@@ -57,3 +57,6 @@ testpaths = ["struckdown/tests"]
 filterwarnings = [
     "ignore::UserWarning:pydantic.main",
 ]
+markers = [
+    "integration: marks tests as integration tests (require network access)",
+]

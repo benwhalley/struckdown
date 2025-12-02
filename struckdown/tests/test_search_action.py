@@ -159,7 +159,7 @@ class TestFetchPageContent:
     @patch("struckdown.actions.search.fetch_url")
     def test_fetch_page_content_success(self, mock_fetch, mock_readable, mock_md):
         """Successfully fetches and converts page content."""
-        mock_fetch.return_value = "<html><body>Content</body></html>"
+        mock_fetch.return_value = ("<html><body>Content</body></html>", "text/html")
         mock_readable.return_value = "<p>Readable content</p>"
         mock_md.return_value = "Markdown content"
 
