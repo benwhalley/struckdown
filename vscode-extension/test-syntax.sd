@@ -13,9 +13,11 @@ Multi-line comment
 can span multiple lines
 -->
 
-## Control Keywords
+## System Messages
 
-¡BEGIN
+<system>
+You are a helpful assistant.
+</system>
 
 This is the beginning of the template.
 
@@ -58,7 +60,7 @@ Complex: The color is {{color}} and choice is {{choice}}
 
 Here's some context that will be forgotten...
 
-¡OBLIVIATE
+<checkpoint>
 
 Now we're in a new context, using previous results like {{response}}.
 
@@ -91,21 +93,21 @@ def example():
 
 ## Complete Workflow Example
 
+<system>
 You are an AI assistant.
-
-¡BEGIN
+</system>
 
 Analyze this data: {{input_data}}
 
 Key findings: [[default{3}:finding]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Based on these findings:
 {{findings}}
 
 Is the data valid? [[bool:is_valid]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Final summary: {{is_valid}} - [[speak:summary]]

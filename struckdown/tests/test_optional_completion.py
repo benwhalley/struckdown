@@ -125,7 +125,8 @@ Tell me a joke"""
 
     def test_parse_complex_multi_segment(self):
         """Test complex scenario with multiple segments and mixed completions"""
-        template = """Generate 3 random topics [[pick+:topics]]
+        # Use default+ instead of pick+ since pick requires options to select from
+        template = """Generate 3 random topics [[default+:topics]]
 
 <checkpoint>
 

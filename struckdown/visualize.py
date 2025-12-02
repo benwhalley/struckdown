@@ -143,7 +143,7 @@ def _escape_for_summary(text: str) -> str:
     """Escape text so it's not interpreted by struckdown when summarizing.
 
     Escapes both:
-    - Struckdown commands (¡SYSTEM, ¡OBLIVIATE, etc.)
+    - Struckdown commands (<system>, <checkpoint>, etc.)
     - Template syntax ({{variables}} and [[slots]])
 
     Args:

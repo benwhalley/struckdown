@@ -65,7 +65,7 @@ Reference previous extractions with `{{variable}}`:
 template = """
 Extract name: [[name]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Greet them: [[@greet:greeting|name={{name}}]]
 """
@@ -109,7 +109,7 @@ template = """
 Name: [[name]]
 Age: [[int:age]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Summary: [[@count_extractions:summary]]
 """
@@ -211,7 +211,7 @@ User question: {{question}}
 Relevant docs:
 [[@search_docs:context|query={{question}},n=5]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Based on this context:
 {{context}}
@@ -248,7 +248,7 @@ def query_users(context, email: str):
 template = """
 Email from logs: [[extract:email]]
 
-¡OBLIVIATE
+<checkpoint>
 
 User info: [[@query_users:user|email={{email}}]]
 
@@ -282,7 +282,7 @@ def get_weather(context, city: str, units: str = "metric"):
 template = """
 Extract city: [[city]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Weather: [[@weather:conditions|city={{city}}]]
 
@@ -315,7 +315,7 @@ def calculate_age(context, birth_date: str):
 template = """
 Extract birth date (ISO format): [[date:birth]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Birth date: [[@format_date:formatted|iso_date={{birth}},format=%d/%m/%Y]]
 Age: [[@calculate_age:age|birth_date={{birth}}]]

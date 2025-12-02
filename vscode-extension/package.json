@@ -49,9 +49,8 @@
     "grammars": [
       {
         "language": "struckdown",
-        "scopeName": "source.struckdown",
+        "scopeName": "text.html.markdown.struckdown",
         "path": "./syntaxes/struckdown.tmLanguage.json",
-        "injectTo": ["text.html.markdown"],
         "embeddedLanguages": {
           "meta.embedded.block.frontmatter": "yaml",
           "meta.embedded.block.html": "html",

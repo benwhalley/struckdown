@@ -67,12 +67,20 @@ def hash_return_type(return_type: Any) -> str:
     """
     Create a stable hash for a return_type (Pydantic model or callable).
 
-    For Pydantic models, we use the schema.
+    For Pydantic models, we use the schema plus llm_config and YAML definition hash.
     For callables, we use the function name and module.
     """
     if hasattr(return_type, "model_json_schema"):
         # Pydantic model - use its schema
         schema_str = str(return_type.model_json_schema())
+        # include llm_config if present (not part of schema but affects LLM behaviour)
+        if hasattr(return_type, "llm_config"):
+            llm_config = return_type.llm_config
+            if llm_config is not None:
+                schema_str += str(llm_config.model_dump())
+        # include YAML definition hash if present (catches any YAML changes)
+        if hasattr(return_type, "_yaml_definition_hash"):
+            schema_str += return_type._yaml_definition_hash
         return hashlib.md5(schema_str.encode()).hexdigest()
     elif callable(return_type):
         # Function - use its qualified name

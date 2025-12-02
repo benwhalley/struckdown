@@ -1,0 +1,13 @@
+name: think
+description: Internal reasoning before responding
+
+llm_config:
+  temperature: 0.5
+
+fields:
+  response:
+    type: str
+    description: |
+      Your internal thoughts and reasoning about the task.
+      Think step by step. This will not be shown to the user.
+      Be concise and on-topic.

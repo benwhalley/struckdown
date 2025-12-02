@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.2.2"
+version = "0.3.0"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -29,14 +29,22 @@ dependencies = [
     "openpyxl>=3.1.0",
     "pandas>=2.0.0",
     "rich>=13.0.0",
+    "requests>=2.28.0",
+    "readability-lxml>=0.8.1",
+    "markdownify>=0.14.1",
+    "validators>=0.35.0",
+    "ddgs>=8.0.0",
 ]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.40.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*", "quarto/**/*"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"
@@ -45,6 +53,7 @@ sd = "struckdown.sd_cli:app"
 package = true
 
 [tool.pytest.ini_options]
+testpaths = ["struckdown/tests"]
 filterwarnings = [
     "ignore::UserWarning:pydantic.main",
 ]

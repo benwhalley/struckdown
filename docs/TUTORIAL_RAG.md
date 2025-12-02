@@ -40,12 +40,12 @@ User question: "How do I treat insomnia?"
 
 Extract topic: [[topic]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Relevant info:
 [[@search_docs:context|query={{topic}},n=3]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Context: {{context}}
 
@@ -66,7 +66,7 @@ Extract topic: [[topic]]
 
 ### Segment 2: Search (No LLM call!)
 ```python
-¡OBLIVIATE
+<checkpoint>
 
 [[@search_docs:context|query={{topic}},n=3]]
 ```
@@ -77,7 +77,7 @@ The function receives `query="insomnia treatment"` and returns docs.
 
 ### Segment 3: Generate
 ```python
-¡OBLIVIATE
+<checkpoint>
 
 Context: {{context}}
 
@@ -107,12 +107,12 @@ Question: {{question}}
 
 Extract key terms: [[terms]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Retrieved docs:
 [[@search:docs|query={{terms}},n=5]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Based on: {{docs}}
 
@@ -120,14 +120,14 @@ Answer: [[answer]]
 """
 ```
 
-## Why Use ¡OBLIVIATE?
+## Why Use Checkpoints?
 
 Saves tokens and cost:
 
-**Without ¡OBLIVIATE**:
+**Without checkpoints**:
 - LLM sees: [Long question (500 tokens]] + [Retrieved docs (1000 tokens]] = 1500 tokens
 
-**With ¡OBLIVIATE**:
+**With checkpoints**:
 - Segment 1: Extract terms (500 tokens) → `[[terms]]`
 - Segment 2: Function call (0 LLM tokens!) → retrieves docs
 - Segment 3: Generate answer (1000 tokens only)

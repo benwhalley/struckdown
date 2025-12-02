@@ -1,0 +1,13 @@
+name: poem
+description: A poetical response
+
+llm_config:
+  temperature: 1.5
+
+fields:
+  response:
+    type: str
+    description: |
+      A creative, poetical response. Use vivid imagery,
+      metaphor, and rhythm where appropriate.
+      Often a haiku or short verse.

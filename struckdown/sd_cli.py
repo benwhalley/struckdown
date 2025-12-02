@@ -19,6 +19,8 @@ from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, StruckdownLLMErr
                StruckdownTemplateError, __version__, chatter, chatter_async,
                progress_tracking)
 from .output_formatters import render_template, write_output
+from .actions import discover_actions, load_actions
+from .type_loader import discover_yaml_types, load_yaml_types
 
 app = typer.Typer(help="struckdown: structured conversations with language models")
 
@@ -173,8 +175,11 @@ def chat(
     prompt_file: Optional[Path] = typer.Option(
         None, "-p", "--prompt-file", help="Path to file containing the prompt"
     ),
-    source_file: Optional[Path] = typer.Option(
-        None, "-s", "--source", help="Source file to include as {{source}} in the template"
+    source: Optional[str] = typer.Option(
+        None, "-s", "--source", help="Source file or URL to include as {{source}} in the template"
+    ),
+    raw_source: bool = typer.Option(
+        False, "--raw", help="When source is a URL, fetch raw HTML instead of extracted markdown"
     ),
     context_vars: Optional[List[str]] = typer.Option(
         None, "-c", "--context", help="Context variable as key=value (can be repeated)"
@@ -202,6 +207,16 @@ def chat(
         "--include-path",
         help="Additional directories to search for includes (can be repeated)",
     ),
+    type_files: Optional[List[Path]] = typer.Option(
+        None,
+        "--type",
+        help="YAML type definition file or directory (can be repeated)",
+    ),
+    tools_files: Optional[List[Path]] = typer.Option(
+        None,
+        "--tools",
+        help="Python tools file or directory (can be repeated)",
+    ),
 ):
     """
     Run a single chatter prompt (interactive mode).
@@ -222,7 +237,27 @@ def chat(
 
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
-    
+
+    # load custom types and actions
+    if type_files:
+        loaded_types = load_yaml_types(type_files)
+        if verbose and loaded_types:
+            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
+
+    if tools_files:
+        loaded_actions = load_actions(tools_files)
+        if verbose and loaded_actions:
+            typer.echo(f"Loaded actions: {', '.join(loaded_actions)}", err=True)
+
+    # auto-discover types/ and actions/ directories
+    discovered_types = discover_yaml_types(template_path=prompt_file)
+    discovered_actions = discover_actions(template_path=prompt_file)
+    if verbose:
+        if discovered_types:
+            typer.echo(f"Discovered types: {', '.join(discovered_types)}", err=True)
+        if discovered_actions:
+            typer.echo(f"Discovered actions: {', '.join(discovered_actions)}", err=True)
+
     # Determine prompt source
     prompt_str = None
 
@@ -256,18 +291,42 @@ def chat(
     if seed is not None:
         extra_kwargs["seed"] = seed
 
-    # build context from source file and context variables
+    # build context from source file/URL and context variables
     context = {}
-    if source_file:
-        if not source_file.exists():
-            typer.echo(f"Error: Source file not found: {source_file}", err=True)
+    if source:
+        from struckdown.actions import is_url, fetch_and_parse
+        from urllib.parse import urlparse
+
+        source_path = Path(source)
+        if source_path.exists():
+            # Treat as local file (prioritise local files over URLs)
+            source_content = source_path.read_text(encoding="utf-8")
+            context["source"] = source_content
+            context["input"] = source_content
+            context["content"] = source_content
+            context["filename"] = str(source_path)
+            context["basename"] = source_path.stem
+        elif is_url(source):
+            # Fetch URL content
+            from struckdown.errors import StruckdownFetchError
+
+            typer.echo(f"Fetching URL: {source}", err=True)
+            try:
+                source_content = fetch_and_parse(source, raw=raw_source)
+            except StruckdownFetchError as e:
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1)
+            context["source"] = source_content
+            context["input"] = source_content
+            context["content"] = source_content
+            context["url"] = source
+            context["filename"] = source
+            # Extract last path component as basename
+            path = urlparse(source).path
+            context["basename"] = path.split('/')[-1] if path else "index"
+        else:
+            typer.echo(f"Error: Source not found: {source}", err=True)
             raise typer.Exit(1)
-        source_content = source_file.read_text(encoding="utf-8")
-        context["source"] = source_content
-        context["input"] = source_content
-        context["content"] = source_content
-        context["filename"] = str(source_file)
-        context["basename"] = source_file.stem
 
     # parse context variables from -c key=value options
     if context_vars:
@@ -783,7 +842,6 @@ def batch(
     ),
     template: Optional[Path] = typer.Option(
         None,
-        "-t",
         "--template",
         help="Jinja2 template file to apply to non-JSON outputs",
     ),
@@ -839,6 +897,17 @@ def batch(
         "--min-n-compare",
         help="Minimum ground truth count for a category to be included in aggregate metrics (macro/weighted F1).",
     ),
+    type_files: Optional[List[Path]] = typer.Option(
+        None,
+        "-t",
+        "--type",
+        help="YAML type definition file or directory (can be repeated)",
+    ),
+    tools_files: Optional[List[Path]] = typer.Option(
+        None,
+        "--tools",
+        help="Python tools file or directory (can be repeated)",
+    ),
 ):
     """
     Process multiple inputs in batch mode.
@@ -861,6 +930,26 @@ def batch(
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
+
+    # load custom types and tools
+    if type_files:
+        loaded_types = load_yaml_types(type_files)
+        if verbose and loaded_types:
+            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
+
+    if tools_files:
+        loaded_actions = load_actions(tools_files)
+        if verbose and loaded_actions:
+            typer.echo(f"Loaded actions: {', '.join(loaded_actions)}", err=True)
+
+    # auto-discover types/ and actions/ directories
+    discovered_types = discover_yaml_types(template_path=prompt_file)
+    discovered_actions = discover_actions(template_path=prompt_file)
+    if verbose:
+        if discovered_types:
+            typer.echo(f"Discovered types: {', '.join(discovered_types)}", err=True)
+        if discovered_actions:
+            typer.echo(f"Discovered actions: {', '.join(discovered_actions)}", err=True)
 
     # Validate --statsonly requires --compare
     if statsonly and not compare:

@@ -1,0 +1,12 @@
+name: speak
+description: Spoken dialogue response
+
+llm_config:
+  temperature: 0.8
+
+fields:
+  response:
+    type: str
+    description: |
+      Speak out loud, in natural conversational style.
+      Don't label the speaker or use quotes, just produce the words spoken.

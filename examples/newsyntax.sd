@@ -44,3 +44,18 @@ Except if the question is about a mountain:
 
 What is the height of Mt. Everest? [[height_real]]
 
+
+
+
+Semantics of system tags
+
+
+- <system> = appends global - default is no system prompt
+- <system local>  appends local
+- <system global> = appends global
+- <system global replace> = replaces global
+- <system global append> = appends global
+- <system local replace> = replaces local
+- <system local append> = appends local
+    
+    

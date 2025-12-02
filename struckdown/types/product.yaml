@@ -1,0 +1,21 @@
+
+name: product
+description: A generic product record for data extraction
+llm_config:
+  temperature: .2
+fields:
+  name:
+    type: str
+    required: true
+    description: The name of the product
+  identifier:
+    type: str
+    description: The unique identifier or SKU of the product
+  price:
+    type: float
+    description: The price of the product (currency is recorded in a separate field)
+  currency:
+    type: str
+    min_length: 3
+    max_length: 3
+    description: The 3 letter currency string denominating the price (e.g. USD, GBP, EUR)

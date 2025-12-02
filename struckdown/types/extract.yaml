@@ -1,0 +1,13 @@
+name: extract
+description: Extract information verbatim from context
+
+llm_config:
+  temperature: 0.0
+
+fields:
+  response:
+    type: str
+    description: |
+      Text extracted verbatim. Copy text exactly as it appears
+      in the context. Never paraphrase or summarize.
+      Never include any additional information.

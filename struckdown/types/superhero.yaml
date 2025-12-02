@@ -1,0 +1,17 @@
+name: superhero
+description: A superhero character
+llm_config:
+  temperature: 1.5
+fields:
+  name:
+    type: str
+    required: true
+  age:
+    type: int
+    ge: 11
+    le: 500
+    required: true
+  skills:
+    type: list[str]
+    description: A list of skills or powers. No more than 10 words each. Normally < 3 skills.
+    required: true

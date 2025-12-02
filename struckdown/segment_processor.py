@@ -96,6 +96,9 @@ def build_slot_info_map(body_template: str) -> Dict[str, PromptPart]:
                     slot_map[key] = part
 
         return slot_map
+    except ValueError:
+        # Re-raise ValueError (e.g. unknown action errors) - these are user errors
+        raise
     except Exception as e:
         logger.warning(f"Failed to parse template for slot info: {e}")
         return {}
@@ -149,14 +152,9 @@ async def process_segment_with_delta(
         ChatterResult with all slot completions
     """
     # Import here to avoid circular imports
-    from . import (
-        ChatterResult,
-        SegmentResult,
-        structured_chat,
-        escape_struckdown_syntax,
-        struckdown_finalize,
-        _progress_callback,
-    )
+    from .results import ChatterResult, SegmentResult, get_progress_callback
+    from .llm import structured_chat
+    from .jinja_utils import escape_struckdown_syntax, struckdown_finalize
     import anyio
 
     # template_str is the body only (system already extracted by caller)
@@ -285,7 +283,7 @@ async def process_segment_with_delta(
         last_slot_end = slot_end
 
         # Fire progress callback
-        callback = _progress_callback.get()
+        callback = get_progress_callback()
         if callback:
             callback()
 

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from .validation import parse_options
 from .response_types import ResponseTypes
 
 # Standard RTs for template syntax
@@ -170,35 +171,9 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
     if not valid_options:
         raise ValueError("valid_options must be a non-empty list of strings")
 
-    # Check for 'required=true/false' or 'optional=true' in options (case-insensitive value)
-    # Default: optional (None allowed)
-    is_required = False
-
-    # ! prefix makes it explicitly required
-    if required_prefix:
-        is_required = True
-
-    selection_options = []
-
-    for opt in valid_options:
-        if "=" in opt:
-            key, value = opt.split("=", 1)
-            key_lower = key.strip().lower()
-            value_lower = value.strip().lower()
-
-            if key_lower == "required":
-                # required=true/false
-                is_required = value_lower in ("true", "t", "1", "yes")
-            elif key_lower == "optional":
-                # optional=true means NOT required (but it's already default)
-                if value_lower in ("true", "t", "1", "yes"):
-                    is_required = False
-            else:
-                # Keep other key=value options (shouldn't happen for pick, but be safe)
-                selection_options.append(opt)
-        else:
-            # Regular option value
-            selection_options.append(opt)
+    opts = parse_options(valid_options)
+    is_required = opts.required or required_prefix
+    selection_options = opts.positional  # non-keyword options are the actual choices
 
     if not selection_options:
         raise ValueError("valid_options must contain at least one selectable option")
@@ -327,20 +302,8 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
     Returns:
         Pydantic model with str or List[str] response field
     """
-    is_required = required_prefix
-
-    # Check for required=true in options
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    is_required = True
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
 
     if quantifier:
         # Multiple items mode - return a list
@@ -415,29 +378,10 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
     Returns:
         Pydantic model with int or List[int] response field
     """
-    min_val = None
-    max_val = None
-    is_required = required_prefix
-
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                key = key.strip().lower()
-                value = value.strip()
-
-                if key == "required" and value.lower() in ("true", "t", "1", "yes"):
-                    is_required = True
-                elif key == "min":
-                    try:
-                        min_val = int(value)
-                    except (ValueError, IndexError):
-                        pass
-                elif key == "max":
-                    try:
-                        max_val = int(value)
-                    except (ValueError, IndexError):
-                        pass
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
+    min_val = int(opts.ge) if opts.ge is not None else None
+    max_val = int(opts.le) if opts.le is not None else None
 
     # Build description with constraints
     constraint_desc = ""
@@ -517,19 +461,8 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
     Returns:
         Pydantic model with bool or List[bool] response field
     """
-    is_required = required_prefix
-
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    is_required = True
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
 
     if quantifier:
         # Multiple items mode
@@ -598,19 +531,8 @@ def extracted_response_model(options=None, quantifier=None, required_prefix=Fals
     Returns:
         Pydantic model with str or List[str] response field for verbatim extraction
     """
-    is_required = required_prefix
-
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    is_required = True
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
 
     if quantifier:
         # Multiple items mode
@@ -681,19 +603,8 @@ def internal_thoughts_response_model(
     Returns:
         Pydantic model with str or List[str] response field for reasoning
     """
-    is_required = required_prefix
-
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    is_required = True
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
 
     if quantifier:
         # Multiple items mode
@@ -762,19 +673,8 @@ def spoken_response_model(options=None, quantifier=None, required_prefix=False):
     Returns:
         Pydantic model with str or List[str] response field for spoken dialogue
     """
-    is_required = required_prefix
-
-    if options:
-        for opt in options:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    is_required = True
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
 
     if quantifier:
         # Multiple items mode
@@ -845,32 +745,10 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
     Returns:
         Pydantic model with Union[int, float] field that can be validated post-extraction
     """
-    # Parse min/max constraints and required flag from options
-    min_val = None
-    max_val = None
-    is_required = required_prefix  # ! prefix takes precedence
-
-    if options:
-        for opt in options:
-            # Handle key=value pairs
-            if "=" in opt:
-                # Check for required=true
-                key, value = opt.split("=", 1)
-                key = key.strip().lower()
-                value = value.strip()
-
-                if key == "required" and value.lower() in ("true", "t", "1", "yes"):
-                    is_required = True
-                elif key == "min":
-                    try:
-                        min_val = float(value)
-                    except (ValueError, IndexError):
-                        pass
-                elif key == "max":
-                    try:
-                        max_val = float(value)
-                    except (ValueError, IndexError):
-                        pass
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
+    min_val = opts.ge
+    max_val = opts.le
 
     # Build description with constraints as hints
     constraint_desc = ""
@@ -1147,28 +1025,12 @@ def date_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for date response models.
 
     Args:
-        options: List that may contain 'required=true' key-value
+        options: List that may contain 'required=true' key-value or bare 'required'
         quantifier: Optional tuple of (min_items, max_items) for extracting multiple dates
         required_prefix: Boolean indicating if ! prefix was used
     """
-    # Check for required=true or just 'required' in options (case-insensitive)
-    required = False
-    if options:
-        for opt in options:
-            if opt.strip().lower() == "required":
-                # Bare "required" keyword
-                required = True
-                break
-            elif "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    required = True
-                    break
+    opts = parse_options(options)
+    required = opts.is_required_flag_set()
 
     return temporal_response_model(
         date,
@@ -1185,28 +1047,12 @@ def datetime_response_model(options=None, quantifier=None, required_prefix=False
     """Factory for datetime response models.
 
     Args:
-        options: List that may contain 'required=true' key-value
+        options: List that may contain 'required=true' key-value or bare 'required'
         quantifier: Optional tuple of (min_items, max_items) for extracting multiple datetimes
         required_prefix: Boolean indicating if ! prefix was used
     """
-    # Check for required=true or just 'required' in options (case-insensitive)
-    required = False
-    if options:
-        for opt in options:
-            if opt.strip().lower() == "required":
-                # Bare "required" keyword
-                required = True
-                break
-            elif "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    required = True
-                    break
+    opts = parse_options(options)
+    required = opts.is_required_flag_set()
 
     return temporal_response_model(
         datetime,
@@ -1223,28 +1069,12 @@ def time_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory for time response models.
 
     Args:
-        options: List that may contain 'required=true' key-value
+        options: List that may contain 'required=true' key-value or bare 'required'
         quantifier: Optional tuple of (min_items, max_items) for extracting multiple times
         required_prefix: Boolean indicating if ! prefix was used
     """
-    # Check for required=true or just 'required' in options (case-insensitive)
-    required = False
-    if options:
-        for opt in options:
-            if opt.strip().lower() == "required":
-                # Bare "required" keyword
-                required = True
-                break
-            elif "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    required = True
-                    break
+    opts = parse_options(options)
+    required = opts.is_required_flag_set()
 
     return temporal_response_model(
         time,
@@ -1261,28 +1091,12 @@ def duration_response_model(options=None, quantifier=None, required_prefix=False
     """Factory for duration response models.
 
     Args:
-        options: List that may contain 'required=true' key-value
+        options: List that may contain 'required=true' key-value or bare 'required'
         quantifier: Optional tuple of (min_items, max_items) for extracting multiple durations
         required_prefix: Boolean indicating if ! prefix was used
     """
-    # Check for required=true or just 'required' in options (case-insensitive)
-    required = False
-    if options:
-        for opt in options:
-            if opt.strip().lower() == "required":
-                # Bare "required" keyword
-                required = True
-                break
-            elif "=" in opt:
-                key, value = opt.split("=", 1)
-                if key.strip().lower() == "required" and value.strip().lower() in (
-                    "true",
-                    "t",
-                    "1",
-                    "yes",
-                ):
-                    required = True
-                    break
+    opts = parse_options(options)
+    required = opts.is_required_flag_set()
 
     return temporal_response_model(
         timedelta,

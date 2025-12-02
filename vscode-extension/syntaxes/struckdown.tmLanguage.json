@@ -1,7 +1,6 @@
 {
   "name": "Struckdown",
-  "scopeName": "source.struckdown",
-  "injectionSelector": "L:text.html.markdown",
+  "scopeName": "text.html.markdown.struckdown",
   "patterns": [
     {
       "include": "#yaml-frontmatter"
@@ -23,6 +22,9 @@
     },
     {
       "include": "#struckdown-django-tags"
+    },
+    {
+      "include": "text.html.markdown"
     }
   ],
   "repository": {

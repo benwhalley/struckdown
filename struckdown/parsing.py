@@ -312,8 +312,8 @@ class MindframeTransformer(Transformer):
             self.pending_segment_name = None
         self.current_buf = []
         self.current_parts = []
-        self.locals = []  # Clear locals after each checkpoint
-        self.header_locals = []  # Clear header locals after each checkpoint
+        self.locals = [] 
+        self.header_locals = [] 
         self.completions_in_current_checkpoint = []
 
     def _extract_line_number(self, items):
@@ -855,48 +855,53 @@ class MindframeTransformer(Transformer):
         Examples: [[response]], [[summary]], [[!answer]]
         Raises ValueError if name matches a registered type (ambiguous).
         """
+
+        def parse_prefix(items: list) -> tuple[bool, list]:
+            """Extract optional '!' prefix, returning (required_prefix, remaining)."""
+            match items:
+                case ["!", *rest]:
+                    return (True, rest)
+                case [first, *rest] if str(first) == "!":
+                    return (True, rest)
+                case _:
+                    return (False, list(items))
+
+        def parse_name_and_quantifier(items: list) -> tuple[str, tuple | None, list]:
+            """Extract name and optional quantifier, returning (name, quantifier, remaining)."""
+            match items:
+                case [name, (_, _) as quant, *rest]:
+                    return (str(name), quant, rest)
+                case [name, *rest]:
+                    return (str(name), None, rest)
+                case _:
+                    return ("", None, [])
+
+        def validate_name(name: str) -> bool:
+            """Check if name conflicts with registered types. Returns is_function flag."""
+            is_function = Actions.is_registered(name)
+            is_registered_type = is_function or ResponseTypes.get(name) is not None
+            if is_registered_type:
+                raise ValueError(
+                    f"Ambiguous completion [[{name}]]: '{name}' is a registered completion type. "
+                    f"Please be explicit:\n"
+                    f"  - For a variable named '{name}': Not recommended, choose a different name\n"
+                    f"  - For type '{name}' with explicit variable: [[{name}:myvar]]\n"
+                    f"  - For type '{name}' with auto-generated variable: [[{name}:]]"
+                )
+            return is_function
+
         line_number = self._extract_line_number(items)
-
-        idx = 0
-        required_prefix = False
-
-        if items and str(items[0]) == "!":
-            required_prefix = True
-            idx = 1
-
-        type_name = str(items[idx])
-        idx += 1
-
-        if idx < len(items) and isinstance(items[idx], tuple):
-            quantifier = items[idx]
-            idx += 1
-        else:
-            quantifier = None
-
-        options = items[idx] if idx < len(items) else []
-
-        is_function = Actions.is_registered(type_name)
-        is_registered_type = is_function or ResponseTypes.get(type_name) is not None
-
-        if is_registered_type:
-            raise ValueError(
-                f"Ambiguous completion [[{type_name}]]: '{type_name}' is a registered completion type. "
-                f"Please be explicit:\n"
-                f"  - For a variable named '{type_name}': Not recommended, choose a different name\n"
-                f"  - For type '{type_name}' with explicit variable: [[{type_name}:myvar]]\n"
-                f"  - For type '{type_name}' with auto-generated variable: [[{type_name}:]]"
-            )
-
-        var_name = type_name
+        required_prefix, after_prefix = parse_prefix(items)
+        name, quantifier, after_name = parse_name_and_quantifier(after_prefix)
+        is_function = validate_name(name)
+        options = after_name[0] if after_name else []
 
         return {
-            "return_type": self._lookup_rt(
-                type_name, options, quantifier, required_prefix
-            ),
-            "key": var_name,
+            "return_type": self._lookup_rt(name, options, quantifier, required_prefix),
+            "key": name,
             "options": options,
             "quantifier": quantifier,
-            "action_type": type_name,
+            "action_type": name,
             "required_prefix": required_prefix,
             "is_function": is_function,
             "has_explicit_var": False,
@@ -920,6 +925,13 @@ class MindframeTransformer(Transformer):
         action_name = str(items[0])
         var_name = str(items[1])
         options = items[2] if len(items) > 2 else []
+
+        if not Actions.is_registered(action_name):
+            raise ValueError(
+                f"Unknown action '@{action_name}' at line {line_number}. "
+                f"Actions must be registered via @Actions.register(). "
+                f"Available actions: {Actions.list_registered() or ['(none)']}"
+            )
 
         return {
             "return_type": self._lookup_rt(action_name, options, None, False),
@@ -946,6 +958,13 @@ class MindframeTransformer(Transformer):
 
         action_name = str(items[0])
         options = items[1] if len(items) > 1 else []
+
+        if not Actions.is_registered(action_name):
+            raise ValueError(
+                f"Unknown action '@{action_name}' at line {line_number}. "
+                f"Actions must be registered via @Actions.register(). "
+                f"Available actions: {Actions.list_registered() or ['(none)']}"
+            )
 
         if action_name not in self.action_counters:
             self.action_counters[action_name] = 0
@@ -976,6 +995,13 @@ class MindframeTransformer(Transformer):
 
         action_name = str(items[0])
         options = items[1] if len(items) > 1 else []
+
+        if not Actions.is_registered(action_name):
+            raise ValueError(
+                f"Unknown action '@{action_name}' at line {line_number}. "
+                f"Actions must be registered via @Actions.register(). "
+                f"Available actions: {Actions.list_registered() or ['(none)']}"
+            )
 
         return {
             "return_type": self._lookup_rt(action_name, options, None, False),

@@ -73,7 +73,7 @@ Use `{{variable}}` to reference previous results:
 ```bash
 sd chat "Name a fruit: [[fruit]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Tell me a joke about {{fruit}}: [[joke]]"
 ```
@@ -94,21 +94,21 @@ sd batch *.txt "Extract name: [[name]]" | \
   sd batch "Generate email for {{name}}: [[email]]" -k
 ```
 
-## Memory Management with ¡OBLIVIATE
+## Memory Management with Checkpoints
 
-Use `¡OBLIVIATE` to create memory boundaries and save tokens:
+Use `<checkpoint>` to create memory boundaries and save tokens:
 
 ```bash
 sd chat "Long context...
 
 Generate summary: [[summary]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Translate {{summary}} to Spanish: [[translation]]"
 ```
 
-Everything before `¡OBLIVIATE` is forgotten -- only the extracted variables (`{{summary}}`) are available in the next section.
+Everything before `<checkpoint>` is forgotten -- only the extracted variables (`{{summary}}`) are available in the next section.
 
 ## Next Steps
 
@@ -141,7 +141,7 @@ def hello(): print('hi')
 
 Issues: [[issues]]
 
-¡OBLIVIATE
+<checkpoint>
 
 Issues found: {{issues}}
 

@@ -35,9 +35,9 @@ Complete documentation for Struckdown.
 [[variable]]                    # Basic completion
 [[type:variable]]               # Typed completion
 {{variable}}                    # Reference previous extraction
-¡OBLIVIATE                      # Memory boundary (or ¡SEGMENT)
-¡SYSTEM ... /END                # System message block
-¡HEADER ... /END                # Header block (prepended to segments)
+<checkpoint>                    # Memory boundary
+<system>...</system>            # System message block
+<system local>...</system>      # System message (segment-scoped)
 ```
 
 ### Types
@@ -120,21 +120,21 @@ sd batch *.txt -p prompt.sd -o results.csv
 ### Memory Model
 
 ```
-¡SYSTEM / ¡HEADER (persistent across segments)
+<system> (global system prompt, persistent across segments)
     ↓
 Segment 1: prompt → [[var1]]
     ↓
-¡OBLIVIATE (memory boundary)
+<checkpoint> (memory boundary)
     ↓
 Segment 2: {{var1}} → [[var2]]
     ↓
-¡OBLIVIATE
+<checkpoint>
     ↓
 Segment 3: {{var1}} {{var2}} → [[var3]]
 ```
 
-System messages and headers persist across `¡OBLIVIATE` boundaries.
-Only user/assistant message history is cleared.
+Global system messages persist across `<checkpoint>` boundaries.
+Only user/assistant message history is cleared. Local system prompts (`<system local>`) are cleared at each checkpoint.
 
 ### Caching
 
@@ -221,7 +221,7 @@ export STRUCKDOWN_CACHE=0
 **Template parsing errors**
 - Ensure `[[completions]]` are at the end of segments
 - Check for matching `{{` and `}}`
-- Verify `¡OBLIVIATE` is on its own line
+- Verify `<checkpoint>` is on its own line
 
 ## Contributing
 

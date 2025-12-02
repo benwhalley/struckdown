@@ -27,6 +27,7 @@ class EscapingTestCase(unittest.TestCase):
     def test_escape_all_keywords(self):
         """Test that all dangerous keywords are escaped"""
         keywords = [
+            # Old syntax
             '¡SYSTEM',
             '¡SYSTEM+',
             '¡IMPORTANT',
@@ -37,6 +38,16 @@ class EscapingTestCase(unittest.TestCase):
             '¡SEGMENT',
             '¡BEGIN',
             '/END',
+            # New XML syntax
+            '<system>',
+            '<system local>',
+            '</system>',
+            '<checkpoint>',
+            '</checkpoint>',
+            '<obliviate>',
+            '</obliviate>',
+            '<break>',
+            '</break>',
         ]
 
         for keyword in keywords:
@@ -46,6 +57,26 @@ class EscapingTestCase(unittest.TestCase):
             self.assertTrue(was_escaped, f"Failed to escape: {keyword}")
             self.assertIn('\u200b', escaped)
             self.assertNotIn(keyword, escaped)
+
+    def test_escape_xml_system_variants(self):
+        """Test that all <system> variants are escaped"""
+        variants = [
+            '<system>content</system>',
+            '<system local>content</system>',
+            '<system global>content</system>',
+            '<system global replace>content</system>',
+        ]
+        for text in variants:
+            escaped, was_escaped = escape_struckdown_syntax(text)
+            self.assertTrue(was_escaped, f"Failed to escape: {text}")
+            self.assertNotIn('<system', escaped)
+
+    def test_escape_xml_checkpoint(self):
+        """Test that <checkpoint> is escaped"""
+        text = "<checkpoint>\n\nNew segment starts here"
+        escaped, was_escaped = escape_struckdown_syntax(text)
+        self.assertTrue(was_escaped)
+        self.assertNotIn('<checkpoint>', escaped)
 
     def test_escape_multiple_keywords(self):
         """Test escaping multiple keywords in same string"""

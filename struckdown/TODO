@@ -1,6 +1,16 @@
+
+# SHORT TERM
+
+# LONGER TERM
 See the todo/ folder for ideas for new features to be given to claude.
 
 
 - Security audit on auto-escaping
 - Non-litellm LLM providers
 - Support for streaming responses
+
+
+
+in structured_chat
+prompt: (Deprecated) Single prompt string. Use messages parameter instead.
+get rid?

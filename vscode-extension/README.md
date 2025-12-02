@@ -20,8 +20,8 @@ Then reload VSCode: **Cmd/Ctrl+Shift+P** → "Reload Window"
 Both themes include:
 - `[[slots]]` → Yellow background, black bold text
 - `{{vars}}` → Green background, black bold text
-- `¡OBLIVIATE` → Red bold
-- `¡BEGIN` → Cyan bold
+- `<checkpoint>` → Red bold
+- `<system>` → Cyan bold
 - Full markdown support
 
 ## Don't Want to Change Themes?

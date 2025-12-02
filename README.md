@@ -16,6 +16,17 @@ export LLM_API_BASE="https://api.openai.com/v1"
 sd chat "Tell me a joke: [[joke]]"
 ```
 
+
+# Using a prompt file with actions
+
+```
+# sets a config variable to run a web search for "oranges" and 
+# summarise the results
+uv run sd chat -p examples/search_and_summarise.sd -c q=oranges
+```
+
+
+
 **[→ Full QuickStart Guide](docs/QUICKSTART.md)**
 
 ## What is Struckdown?
@@ -24,7 +35,7 @@ Struckdown makes it easy to extract structured data from text using LLMs with a 
 
 ### Example: Batch Processing
 
-Imagine you have product descriptions:
+Imagine you have unstructured data stored in free text. You can make it structured like this:
 
 ```bash
 % sd batch *.txt "Purpose, <5 words: [[purpose]]"
@@ -83,6 +94,60 @@ Batch operations accept JSON, so you can chain commands:
 - **Caching** -- Automatic disk caching saves money and time
 - **Custom actions** -- Extend with Python functions (RAG, APIs, databases)
 - **Multiple outputs** -- JSON, CSV, Excel, or stdout
+- **URL fetching** -- Extract data directly from web pages
+
+## URL Fetching
+
+Fetch and extract content from URLs directly, with automatic readability processing to reduce tokens.
+
+### Command Line
+
+```bash
+# Extract product data from a web page
+sd chat "{{source}} Extract the product name and price [[product:data]]" \
+  -s https://www.example.com/product/12345
+
+# Fetch raw HTML (no readability processing)
+sd chat "{{source}} Analyze the HTML structure [[analysis]]" \
+  -s https://example.com --raw
+```
+
+### In Templates (for Batch Processing)
+
+Use the `@fetch` action to fetch URLs dynamically within templates:
+
+```
+[[@fetch:page_content|{{product_url}}]]
+
+Based on this product page:
+{{page_content}}
+
+Extract:
+- Product name: [[name]]
+- Price: [[number:price]]
+```
+
+With an input spreadsheet containing a `product_url` column:
+
+```bash
+sd batch products.xlsx template.sd -o results.xlsx
+```
+
+Each row's URL will be fetched, processed with readability to extract the main content, and converted to markdown before being passed to the LLM.
+
+#### @fetch Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `url` | required | URL to fetch (can use `{{variable}}`) |
+| `raw` | `false` | Return raw HTML instead of markdown |
+| `timeout` | `30` | Request timeout in seconds |
+| `max_chars` | `32000` | Max characters (0 = no limit) |
+
+Example with parameters:
+```
+[[@fetch:content|{{url}},raw=true,timeout=60,max_chars=0]]
+```
 
 ## Documentation
 

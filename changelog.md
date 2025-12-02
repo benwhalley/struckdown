@@ -2,7 +2,34 @@
 # Changelog
 
 
-### 0.1.8 (in progress)
+### 0.3.0
+
+**Major Refactor:**
+- Refactored monolithic codebase into focused modules:
+  - `actions/` package with individual action files (break, fetch, search, set, timestamp, markdownify)
+  - New modules: `execution.py`, `llm.py`, `jinja_utils.py`, `results.py`, `errors.py`, `validation.py`
+  - `type_loader.py` and `tools_loader.py` for YAML-based definitions
+
+**New Actions:**
+- Web search action (`@search`) using DuckDuckGo
+- URL fetching action (`@fetch`) with readability processing
+- HTML-to-markdown action (`@markdownify`)
+- Timestamp action (`@timestamp`)
+
+**New Features:**
+- YAML-based type definitions in `types/` directory (extract, poem, product, speak, superhero, think)
+- CLAUDE.md for Claude Code integration guidance
+- Comprehensive test coverage for new features
+
+**Syntax Updates:**
+- Updated documentation to use `<checkpoint>` syntax instead of `¡OBLIVIATE`
+
+**Dependencies:**
+- Added: requests, readability-lxml, markdownify, validators, ddgs
+- Optional: playwright for enhanced web fetching
+
+
+### 0.1.8 (skipped)
 
 
 
@@ -41,7 +68,4 @@
     - SpokenResponse: 0.8 (natural variation)
     - DefaultResponse: 0.7 (balanced)
     - Support for model and temperature overrides per response type
-
-**Migration:**
-- `chatter run "prompt"` → `sd chat "prompt"` (identical functionality)
 
