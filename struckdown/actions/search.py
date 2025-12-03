@@ -135,7 +135,7 @@ def search_and_fetch(
     return results
 
 
-@Actions.register("search")
+@Actions.register("search", allow_remote_use=False)
 def search_action(
     context: dict,
     query: str,

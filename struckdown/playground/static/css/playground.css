@@ -1,0 +1,376 @@
+/* Struckdown Playground Styles */
+
+/* Remove default container padding for full-width layout */
+.container-fluid {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+/* Keep padding on navbar content */
+.navbar .container-fluid {
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+/* Panel Tabs */
+.panel-tab {
+    border: none;
+    background: transparent;
+    padding: 0.6rem 1rem;
+    font-size: 0.875rem;
+    color: #6c757d;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+}
+
+.panel-tab:hover {
+    color: #495057;
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+/* Inputs tab active state - coral */
+.panel-tab.active[data-tab="inputs"] {
+    color: #fff;
+    background-color: #FF6B6B;
+    border-bottom-color: #FF6B6B;
+}
+
+/* Settings tab active state - grey */
+.panel-tab.active[data-tab="settings"] {
+    color: #fff;
+    background-color: #6c757d;
+    border-bottom-color: #6c757d;
+}
+
+/* Tab panel container */
+#tab-panel {
+    overflow-y: auto;
+    max-height: 300px;
+    background-color: #fff;
+    border-top: 3px solid transparent;
+    margin-top: -1px;
+}
+
+/* Tab content accent borders */
+#tab-panel.tab-inputs {
+    border-top-color: #FF6B6B;
+}
+
+#tab-panel.tab-settings {
+    border-top-color: #6c757d;
+}
+
+/* Panel headers (Editor/Outputs) */
+.panel-header {
+    min-height: 62px;
+}
+
+/* Editor container */
+#editor-container {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    font-size: 18pt !important;
+}
+
+#editor-container .cm-editor {
+    height: 100%;
+}
+
+#editor-container .cm-scroller {
+    overflow: auto;
+}
+
+/* Output cards */
+.output-card {
+    transition: box-shadow 0.2s;
+}
+
+.output-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.output-card .slot-name {
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+.output-card .output-value {
+    font-size: 0.95em;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.output-card.pinned {
+    border-color: #0d6efd;
+    border-width: 2px;
+    order: -1;
+}
+
+/* Pin button */
+.pin-btn {
+    color: #adb5bd;
+    padding: 0.15rem 0.35rem;
+    line-height: 1;
+    border: none;
+    background: transparent;
+}
+
+.pin-btn:hover {
+    color: #0d6efd;
+    background: rgba(13, 110, 253, 0.1);
+}
+
+.pin-btn.active,
+.pin-btn:active {
+    color: #0d6efd;
+}
+
+.output-card.pinned .slot-name {
+    color: #0d6efd;
+}
+
+/* Error banner */
+#error-banner.show {
+    display: flex !important;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Panels */
+#inputs-container {
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+/* Batch table */
+#batch-table {
+    font-size: 0.85em;
+}
+
+#batch-table th {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 1;
+}
+
+#batch-table td {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#batch-table td:hover {
+    white-space: normal;
+    word-break: break-word;
+}
+
+.batch-cell-input {
+    background-color: #f8f9fa;
+}
+
+.batch-cell-output {
+    background-color: #fff;
+}
+
+.batch-cell-pending {
+    color: #6c757d;
+    font-style: italic;
+}
+
+.batch-cell-error {
+    color: #dc3545;
+}
+
+/* Column toggles */
+#column-toggles .form-check {
+    margin-right: 0;
+}
+
+#column-toggles .form-check-input {
+    margin-top: 0.2em;
+}
+
+#column-toggles .form-check-label {
+    font-size: 0.8em;
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+}
+
+#column-toggles .form-check-label.col-input {
+    background-color: #e9ecef;
+}
+
+#column-toggles .form-check-label.col-output {
+    background-color: #d1e7dd;
+}
+
+/* Status bar */
+.status-running {
+    color: #0d6efd;
+}
+
+.status-error {
+    color: #dc3545;
+}
+
+.status-success {
+    color: #198754;
+}
+
+/* Loading spinner */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #editor-column,
+    #outputs-column {
+        height: 50vh;
+    }
+
+    .row.flex-grow-1 {
+        flex-direction: column;
+    }
+}
+
+/* Cost display */
+#cost-display {
+    font-family: 'SF Mono', monospace;
+}
+
+/* Input fields */
+.input-field {
+    font-family: inherit;
+    resize: vertical;
+    min-height: 60px;
+}
+
+/* Settings panel inputs */
+#panel-settings input[type="text"],
+#panel-settings input[type="password"],
+#panel-settings input[type="url"] {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.85em;
+}
+
+/* Side Strips (Settings and Help) */
+.side-strip {
+    position: fixed;
+    right: 0;
+    background: #6c757d;
+    color: #fff;
+    padding: 12px 6px;
+    cursor: pointer;
+    z-index: 1040;
+    border-radius: 4px 0 0 4px;
+    transition: background-color 0.15s ease, padding-right 0.15s ease;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+}
+
+#settings-strip {
+    position: fixed;
+    right: 0;
+    top: calc(50% - 50px);
+    background: #6c757d;
+    color: #fff;
+    padding: 12px 6px;
+    cursor: pointer;
+    z-index: 1040;
+    border-radius: 4px 0 0 4px;
+    transition: background-color 0.15s ease, padding-right 0.15s ease;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+}
+
+#settings-strip:hover {
+    background: #5a6268;
+    padding-right: 10px;
+}
+
+#help-strip {
+    position: fixed;
+    right: 0;
+    top: calc(50% + 50px);
+    background: #6c757d;
+    color: #fff;
+    padding: 12px 6px;
+    cursor: pointer;
+    z-index: 1040;
+    border-radius: 4px 0 0 4px;
+    transition: background-color 0.15s ease, padding-right 0.15s ease;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+}
+
+#help-strip:hover {
+    background: #5a6268;
+    padding-right: 10px;
+}
+
+.side-strip-text {
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+/* Offcanvas panels */
+#help-offcanvas,
+#settings-offcanvas {
+    width: 340px;
+}
+
+.cheatsheet-table {
+    font-size: 0.85rem;
+}
+
+.cheatsheet-table td:first-child {
+    white-space: nowrap;
+    width: 1%;
+}
+
+.cheatsheet-table code {
+    background-color: rgba(0, 0, 0, 0.05);
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 0.85em;
+}
+
+/* Keyboard shortcuts styling */
+kbd {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 3px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    color: #495057;
+    font-family: 'SF Mono', monospace;
+    font-size: 0.75em;
+    padding: 2px 6px;
+}
+
+/* Cheatsheet examples */
+.cheatsheet-example {
+    margin-bottom: 12px;
+}
+
+.example-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+    margin-bottom: 4px;
+}
+
+.example-code {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

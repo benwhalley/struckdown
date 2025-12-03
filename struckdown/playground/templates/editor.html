@@ -1,0 +1,472 @@
+{% extends "base.html" %}
+
+{% block title %}
+{% if filename %}{{ filename }} - {% endif %}Struckdown Playground
+{% endblock %}
+
+{% block body %}
+<div class="container-fluid vh-100 d-flex flex-column">
+    <!-- Header with Tabs -->
+    <nav class="navbar navbar-light bg-light border-bottom py-0">
+        <div class="container-fluid d-flex align-items-stretch">
+            <!-- Tab button on left (Inputs only) -->
+            <div class="d-flex" id="panel-tabs">
+                <button class="panel-tab" id="tab-inputs" type="button" data-tab="inputs">
+                    <i class="bi bi-input-cursor-text"></i> Inputs
+                </button>
+            </div>
+
+            <!-- Title and filename on right -->
+            <div class="d-flex align-items-center ms-auto py-2">
+                {% if filename %}
+                <span class="text-muted me-3">
+                    <i class="bi bi-file-earmark-code"></i> {{ filename }}
+                </span>
+                {% endif %}
+                <span class="navbar-brand mb-0 h6">
+                    <i class="bi bi-code-square"></i> Struckdown
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Error Banner -->
+    <div id="error-banner" class="alert alert-danger alert-dismissible fade m-2 mb-0" role="alert" style="display: none;">
+        <i class="bi bi-exclamation-triangle"></i>
+        <span id="error-message"></span>
+        <button type="button" class="btn-close" onclick="hideError()"></button>
+    </div>
+
+    <!-- Tab Content Panel (Inputs only now) -->
+    <div id="tab-panel" class="border-bottom" style="display: none;">
+        <!-- Inputs Content -->
+        <div id="panel-inputs" class="tab-content p-3" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="mode" id="mode-single" value="single" checked>
+                    <label class="btn btn-outline-secondary btn-sm" for="mode-single">Interactive</label>
+                    <input type="radio" class="btn-check" name="mode" id="mode-file" value="file">
+                    <label class="btn btn-outline-secondary btn-sm" for="mode-file">File</label>
+                    <input type="radio" class="btn-check" name="mode" id="mode-batch" value="batch">
+                    <label class="btn btn-outline-secondary btn-sm" for="mode-batch">Batch</label>
+                </div>
+            </div>
+
+            <!-- Single mode: individual inputs -->
+            <div id="single-inputs-section">
+                <div id="inputs-container">
+                    <p class="text-muted small mb-0">
+                        Input fields will appear here based on <code>{{ "{{variables}}" }}</code> in your prompt.
+                    </p>
+                </div>
+            </div>
+
+            <!-- File mode: single file upload as {{source}} -->
+            <div id="file-upload-section" style="display: none;">
+                <label for="source-file" class="form-label">Upload source file</label>
+                <input type="file" class="form-control form-control-sm" id="source-file"
+                       accept="*/*">
+                <div id="source-file-info" class="mt-2" style="display: none;">
+                    <span class="badge bg-primary"><i class="bi bi-file-earmark-text"></i>
+                        <span id="source-filename"></span>
+                    </span>
+                    <span class="text-muted ms-2"><span id="source-file-size"></span></span>
+                    <button class="btn btn-link btn-sm text-danger" onclick="clearSourceFile()">
+                        <i class="bi bi-x"></i> Remove
+                    </button>
+                </div>
+                <p class="text-muted small mt-2 mb-0">
+                    File content will be available as <code>{{ "{{source}}" }}</code> in your prompt.
+                </p>
+            </div>
+
+            <!-- Batch mode: xlsx/csv/zip file upload -->
+            <div id="batch-upload-section" style="display: none;">
+                <label for="batch-file" class="form-label">Upload xlsx/csv or zip archive</label>
+                <input type="file" class="form-control form-control-sm" id="batch-file"
+                       accept=".xlsx,.csv,.xls,.zip">
+                <div id="batch-file-info" class="mt-2" style="display: none;">
+                    <span class="badge bg-success"><i class="bi bi-file-earmark-spreadsheet"></i>
+                        <span id="batch-filename"></span>
+                    </span>
+                    <span class="text-muted ms-2"><span id="batch-row-count"></span> rows</span>
+                    <button class="btn btn-link btn-sm text-danger" onclick="clearBatchFile()">
+                        <i class="bi bi-x"></i> Remove
+                    </button>
+                </div>
+                <p class="text-muted small mt-2 mb-0">
+                    Upload xlsx/csv with columns matching <code>{{ "{{variables}}" }}</code>, or a zip of files (each available as <code>{{ "{{source}}" }}</code>).
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="row flex-grow-1 g-0 overflow-hidden">
+        <!-- Editor Panel -->
+        <div class="col-md-6 d-flex flex-column border-end" id="editor-column">
+            <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
+                <span class="small text-muted">Editor</span>
+                <div>
+                    <button class="btn btn-primary btn-sm" id="save-run-btn" onclick="saveAndRun()">
+                        <i class="bi bi-play-fill"></i> Save & Run
+                    </button>
+                </div>
+            </div>
+            <div class="flex-grow-1 overflow-hidden position-relative">
+                <div id="editor-container" class="h-100"></div>
+                <textarea id="syntax-source" style="display: none;">{{ syntax }}</textarea>
+            </div>
+        </div>
+
+        <!-- Outputs Panel -->
+        <div class="col-md-6 d-flex flex-column overflow-hidden" id="outputs-column">
+            <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
+                <span class="small text-muted">Outputs</span>
+                <div id="cost-display" class="small text-muted" style="display: none;">
+                    <span id="cost-tokens"></span> tokens |
+                    <span id="cost-amount"></span>
+                </div>
+            </div>
+            <div class="flex-grow-1 overflow-auto p-3" id="outputs-container">
+                <p class="text-muted text-center mt-5">
+                    <i class="bi bi-arrow-left-circle"></i>
+                    Edit your prompt and click "Save & Run" to see outputs
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="border-top bg-light py-1 px-3 d-flex justify-content-between align-items-center small">
+        <span id="status-text" class="text-muted">Ready</span>
+        <span class="text-muted">
+            Struckdown Playground
+            {% if remote_mode %}<span class="badge bg-info ms-2">Remote</span>{% endif %}
+        </span>
+    </div>
+</div>
+
+<!-- Hidden data -->
+<input type="hidden" id="remote-mode" value="{{ 'true' if remote_mode else 'false' }}">
+<input type="hidden" id="current-file-id" value="">
+<input type="hidden" id="current-source-file-id" value="">
+<input type="hidden" id="current-task-id" value="">
+
+<!-- Settings Strip (right edge trigger) -->
+<div id="settings-strip" data-bs-toggle="offcanvas" data-bs-target="#settings-offcanvas" aria-controls="settings-offcanvas">
+    <span class="side-strip-text"><i class="bi bi-gear"></i> Settings</span>
+</div>
+
+<!-- Help Strip (right edge trigger) -->
+<div id="help-strip" data-bs-toggle="offcanvas" data-bs-target="#help-offcanvas" aria-controls="help-offcanvas">
+    <span class="side-strip-text">Help ?</span>
+</div>
+
+<!-- Settings Offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="settings-offcanvas" aria-labelledby="settings-offcanvas-label">
+    <div class="offcanvas-header border-bottom">
+        <h5 class="offcanvas-title" id="settings-offcanvas-label">
+            <i class="bi bi-gear"></i> Settings
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <div class="mb-3">
+            <label for="model-input" class="form-label">Model</label>
+            <input type="text" class="form-control form-control-sm" id="model-input"
+                   value="{{ model or '' }}" placeholder="e.g. gpt-4o">
+            <div class="form-text">LLM model identifier</div>
+        </div>
+        {% if remote_mode %}
+        <div class="mb-3">
+            <label for="api-base-input" class="form-label">API Base URL</label>
+            <input type="url" class="form-control form-control-sm" id="api-base-input"
+                   >
+                   <!-- placeholder="https://api.openai.com/v1" -->
+            <div class="form-text">OpenAI-compatible endpoint</div>
+        </div>
+        <div class="mb-3">
+            <label for="api-key-input" class="form-label">API Key</label>
+            <input type="password" class="form-control form-control-sm" id="api-key-input"
+                   placeholder="sk-...">
+            <div class="form-text">Stored in browser only</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Help Offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="help-offcanvas" aria-labelledby="help-offcanvas-label">
+    <div class="offcanvas-header border-bottom">
+        <h5 class="offcanvas-title" id="help-offcanvas-label">
+            <i class="bi bi-question-circle"></i> Struckdown Cheatsheet
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <!-- Syntax Reference -->
+        <h6 class="text-muted mb-2">Syntax</h6>
+        <table class="table table-sm cheatsheet-table">
+            <tbody>
+                <tr>
+                    <td><code>[[slot]]</code></td>
+                    <td>LLM completion</td>
+                </tr>
+                <tr>
+                    <td><code>[[type:name]]</code></td>
+                    <td>Typed slot (bool, number, pick...)</td>
+                </tr>
+                <tr>
+                    <td><code>{{ "{{var}}" }}</code></td>
+                    <td>Input variable</td>
+                </tr>
+                <tr>
+                    <td><code>[[@action|params]]</code></td>
+                    <td>Action call</td>
+                </tr>
+                <tr>
+                    <td><code>&lt;system&gt;...&lt;/system&gt;</code></td>
+                    <td>System message</td>
+                </tr>
+                <tr>
+                    <td><code>&lt;checkpoint&gt;</code></td>
+                    <td>Memory boundary</td>
+                </tr>
+                <tr>
+                    <td><code>{% raw %}{% if %}...{% endif %}{% endraw %}</code></td>
+                    <td>Jinja conditional</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Keyboard Shortcuts -->
+        <h6 class="text-muted mb-2 mt-4">Keyboard Shortcuts</h6>
+        <table class="table table-sm cheatsheet-table">
+            <tbody>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>I</kbd></td>
+                    <td>Toggle Inputs</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>,</kbd></td>
+                    <td>Toggle Settings</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>S</kbd></td>
+                    <td>Save & Run</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td>
+                    <td>Save & Run</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>?</kbd></td>
+                    <td>Toggle Help</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Examples -->
+        <h6 class="text-muted mb-2 mt-4">Examples</h6>
+        <div class="cheatsheet-example">
+            <div class="example-label">Simple completion:</div>
+            <pre class="example-code">Tell me a joke about {{ "{{topic}}" }}
+
+[[joke]]</pre>
+        </div>
+        <div class="cheatsheet-example">
+            <div class="example-label">Typed extraction:</div>
+            <pre class="example-code">{{ "{{text}}" }}
+
+[[bool:is_positive]] Is sentiment positive?
+[[pick:category|tech,sports,other]]</pre>
+        </div>
+        <div class="cheatsheet-example">
+            <div class="example-label">With system message:</div>
+            <pre class="example-code">&lt;system&gt;You are a helpful assistant.&lt;/system&gt;
+
+{{ "{{question}}" }}
+
+[[answer]]</pre>
+        </div>
+
+        <!-- Documentation Links -->
+        <h6 class="text-muted mb-2 mt-4">Documentation</h6>
+        <ul class="list-unstyled">
+            <li>
+                <a href="https://benwhalley.github.io/struckdown/" target="_blank" class="text-decoration-none">
+                    <i class="bi bi-box-arrow-up-right"></i> Full Documentation
+                </a>
+            </li>
+            <li class="mt-1">
+                <a href="https://benwhalley.github.io/struckdown/examples.html" target="_blank" class="text-decoration-none">
+                    <i class="bi bi-box-arrow-up-right"></i> More Examples
+                </a>
+            </li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Wait for CodeMirror module to load, with timeout fallback
+function waitForCodeMirror(callback, timeout) {
+    const start = Date.now();
+    function check() {
+        if (window.StruckdownEditor) {
+            callback();
+        } else if (Date.now() - start < timeout) {
+            setTimeout(check, 50);
+        } else {
+            // Timeout - proceed without CodeMirror
+            callback();
+        }
+    }
+    check();
+}
+
+// Inputs panel state
+let inputsPanelExpanded = false;
+
+function toggleInputsPanel() {
+    const tabPanel = document.getElementById('tab-panel');
+    const tabInputs = document.getElementById('tab-inputs');
+    const panelInputs = document.getElementById('panel-inputs');
+
+    if (inputsPanelExpanded) {
+        // Collapse
+        tabPanel.style.display = 'none';
+        panelInputs.style.display = 'none';
+        tabInputs.classList.remove('active');
+        inputsPanelExpanded = false;
+    } else {
+        // Expand
+        tabPanel.style.display = 'block';
+        panelInputs.style.display = 'block';
+        tabPanel.classList.add('tab-inputs');
+        tabInputs.classList.add('active');
+        inputsPanelExpanded = true;
+    }
+}
+
+// Toggle settings offcanvas
+function toggleSettings() {
+    const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('settings-offcanvas'));
+    offcanvas.toggle();
+}
+
+// Toggle help offcanvas
+function toggleHelp() {
+    const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('help-offcanvas'));
+    offcanvas.toggle();
+}
+
+// Global keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    // Check for Ctrl (or Cmd on Mac)
+    const modifier = e.ctrlKey || e.metaKey;
+    if (!modifier) return;
+
+    // Ctrl+I - Toggle Inputs panel
+    if (e.key === 'i' || e.key === 'I') {
+        e.preventDefault();
+        toggleInputsPanel();
+        return;
+    }
+
+    // Ctrl+, - Toggle Settings offcanvas
+    if (e.key === ',') {
+        e.preventDefault();
+        toggleSettings();
+        return;
+    }
+
+    // Ctrl+S or Ctrl+Enter - Save & Run
+    if (e.key === 's' || e.key === 'S' || e.key === 'Enter') {
+        e.preventDefault();
+        saveAndRun();
+        return;
+    }
+
+    // Ctrl+? or Ctrl+/ - Toggle Help
+    if (e.key === '?' || e.key === '/') {
+        e.preventDefault();
+        toggleHelp();
+        return;
+    }
+});
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize session for localStorage persistence
+    initSession();
+
+    // Wait for CodeMirror (up to 2 seconds), then init editor
+    waitForCodeMirror(initEditor, 2000);
+
+    // Tab click handler (inputs only now)
+    document.getElementById('tab-inputs').addEventListener('click', toggleInputsPanel);
+
+    // Load API credentials from localStorage if remote mode
+    if (document.getElementById('remote-mode').value === 'true') {
+        const savedKey = localStorage.getItem('struckdown_api_key');
+        if (savedKey) {
+            document.getElementById('api-key-input').value = savedKey;
+        }
+        const savedBase = localStorage.getItem('struckdown_api_base');
+        if (savedBase) {
+            document.getElementById('api-base-input').value = savedBase;
+        }
+    }
+
+    // Mode toggle - switch between single, file, and batch modes
+    document.querySelectorAll('input[name="mode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const singleSection = document.getElementById('single-inputs-section');
+            const fileSection = document.getElementById('file-upload-section');
+            const batchSection = document.getElementById('batch-upload-section');
+
+            singleSection.style.display = 'none';
+            fileSection.style.display = 'none';
+            batchSection.style.display = 'none';
+
+            if (this.value === 'single') {
+                singleSection.style.display = 'block';
+            } else if (this.value === 'file') {
+                fileSection.style.display = 'block';
+            } else if (this.value === 'batch') {
+                batchSection.style.display = 'block';
+            }
+        });
+    });
+
+    // Source file upload (file mode)
+    document.getElementById('source-file').addEventListener('change', handleSourceFileUpload);
+
+    // Batch file upload
+    document.getElementById('batch-file').addEventListener('change', handleBatchFileUpload);
+
+    // API credentials save on change
+    const apiKeyInput = document.getElementById('api-key-input');
+    if (apiKeyInput) {
+        apiKeyInput.addEventListener('change', function() {
+            localStorage.setItem('struckdown_api_key', this.value);
+        });
+    }
+    const apiBaseInput = document.getElementById('api-base-input');
+    if (apiBaseInput) {
+        apiBaseInput.addEventListener('change', function() {
+            localStorage.setItem('struckdown_api_base', this.value);
+        });
+    }
+
+    // Model input save on change
+    const modelInput = document.getElementById('model-input');
+    if (modelInput) {
+        modelInput.addEventListener('input', debounce(saveInputsToStorage, 500));
+    }
+});
+</script>
+{% endblock %}

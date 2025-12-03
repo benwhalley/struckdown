@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.3.0"
+version = "0.3.1"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -34,6 +34,10 @@ dependencies = [
     "markdownify>=0.14.1",
     "validators>=0.35.0",
     "ddgs>=8.0.0",
+    "flask>=3.0.0",
+    "flask-limiter>=3.5.0",
+    "pytest-xdist>=3.8.0",
+    "gunicorn>=21.0.0",
 ]
 
 [project.optional-dependencies]
@@ -44,7 +48,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"

@@ -76,7 +76,8 @@ class Actions:
         # [[@expertise:guidance|query="insomnia",n=5]]
     """
 
-    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any]] = {}
+    # Registry stores: (func, on_error, default_save, return_type, default, allow_remote_use)
+    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any, bool]] = {}
 
     @classmethod
     def register(
@@ -86,6 +87,7 @@ class Actions:
         default_save: bool = True,
         return_type: type | None = None,
         default: Any = "",
+        allow_remote_use: bool = True,
     ):
         """Decorator to register a function as a custom action.
 
@@ -105,6 +107,9 @@ class Actions:
             default: Default value to return when on_error='return_default' (default: "")
                 - Only used when on_error='return_default'
                 - Can be any type, but should be serializable to string
+            allow_remote_use: Whether this action is allowed in remote/hosted mode.
+                - True: Action can be used in remote playground (default)
+                - False: Action is blocked in remote mode (e.g., fetch, search)
 
         Returns:
             Decorator function
@@ -114,7 +119,7 @@ class Actions:
             def search_memory(context, query, n=3):
                 return results
 
-            @Actions.register('search', on_error='return_default', default='No results found')
+            @Actions.register('search', on_error='return_default', default='No results found', allow_remote_use=False)
             def search_db(context, query):
                 return database.search(query)
 
@@ -130,9 +135,10 @@ class Actions:
                 default_save,
                 return_type,
                 default,
+                allow_remote_use,
             )
             logger.debug(
-                f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}"
+                f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}, allow_remote_use={allow_remote_use}"
             )
             return func
 
@@ -164,7 +170,7 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save, return_type, default_value = cls._registry[
+        func, on_error, default_save, return_type, default_value, allow_remote_use = cls._registry[
             action_name
         ]
 
@@ -406,10 +412,37 @@ class Actions:
             default_save,
             return_type,
             default_value,
+            allow_remote_use,
         ) in cls._registry.values():
             if return_type is not None and return_type not in types:
                 types.append(return_type)
         return types
+
+    @classmethod
+    def is_allowed_remote(cls, action_name: str) -> bool:
+        """Check if an action is allowed in remote/hosted mode.
+
+        Args:
+            action_name: Action name to check
+
+        Returns:
+            True if allowed in remote mode, False otherwise
+        """
+        if action_name not in cls._registry:
+            return False  # unknown actions not allowed in remote
+        return cls._registry[action_name][5]  # sixth element is allow_remote_use
+
+    @classmethod
+    def get_remote_allowed_actions(cls) -> list[str]:
+        """Get list of action names allowed in remote mode.
+
+        Returns:
+            List of action names with allow_remote_use=True
+        """
+        return [
+            name for name, reg in cls._registry.items()
+            if reg[5]  # sixth element is allow_remote_use
+        ]
 
 
 # =============================================================================

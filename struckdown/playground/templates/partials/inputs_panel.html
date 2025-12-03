@@ -1,0 +1,19 @@
+<h6 class="mb-3"><i class="bi bi-input-cursor-text"></i> Inputs</h6>
+{% if inputs_required %}
+<div class="row g-2">
+    {% for input_name in inputs_required %}
+    <div class="col-md-6">
+        <label for="input-{{ input_name }}" class="form-label small">
+            <code>{{ "{{" }}{{ input_name }}{{ "}}" }}</code>
+        </label>
+        <textarea class="form-control form-control-sm input-field" id="input-{{ input_name }}"
+                  name="{{ input_name }}" rows="2"
+                  placeholder="Enter value for {{ input_name }}">{{ current_values.get(input_name, '') }}</textarea>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-muted small mb-0">
+    No input variables detected. Add <code>{{ "{{variable}}" }}</code> to your prompt to create input fields.
+</p>
+{% endif %}

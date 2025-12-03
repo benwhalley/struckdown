@@ -3,7 +3,7 @@
 from . import Actions, fetch_and_parse, is_url, DEFAULT_MAX_CHARS, DEFAULT_TIMEOUT
 
 
-@Actions.register("fetch", on_error="propagate", default_save=True)
+@Actions.register("fetch", on_error="propagate", default_save=True, allow_remote_use=False)
 def fetch_action(
     context: dict,
     url: str = "",

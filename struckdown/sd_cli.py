@@ -1490,5 +1490,158 @@ def flat(
         raise typer.Exit(1)
 
 
+@app.command()
+def edit(
+    file: Optional[Path] = typer.Argument(
+        None,
+        help="Struckdown file to edit (default: untitled.sd in cwd)"
+    ),
+    port: Optional[int] = typer.Option(
+        None, "-p", "--port",
+        help="Port to run server on (default: auto-select from 9000+)"
+    ),
+    no_browser: bool = typer.Option(
+        False, "--no-browser",
+        help="Don't open browser automatically"
+    ),
+    include: List[Path] = typer.Option(
+        [], "-I", "--include",
+        help="Additional include paths for actions and types"
+    ),
+    reload: bool = typer.Option(
+        False, "--reload", "-r",
+        help="Auto-reload server on file changes (development mode)"
+    ),
+):
+    """Open interactive playground for editing struckdown prompts.
+
+    Starts a local web server with a browser-based editor for creating
+    and testing struckdown prompts interactively.
+
+    Examples:
+        sd edit                     # Create/edit untitled.sd
+        sd edit myfile.sd           # Edit existing file
+        sd edit -p 8080             # Use specific port
+        sd edit -I ./custom         # Include custom actions/types
+        sd edit --reload            # Auto-reload on file changes
+    """
+    import threading
+    import webbrowser
+
+    from struckdown.playground import create_app, find_available_port
+
+    console = Console()
+
+    # Resolve file path
+    if file is None:
+        file = Path.cwd() / "untitled.sd"
+
+    if not file.exists():
+        file.write_text("# Your struckdown prompt\n\n[[response]]\n")
+        console.print(f"[green]Created[/green] {file}")
+
+    # Resolve include paths
+    include_paths = [p.resolve() for p in include if p.exists()]
+    include_paths.append(Path.cwd())
+
+    # Find available port
+    if port is None:
+        try:
+            port = find_available_port()
+        except RuntimeError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+    # Create Flask app
+    flask_app = create_app(
+        prompt_file=file.resolve(),
+        include_paths=include_paths,
+        remote_mode=False,
+    )
+
+    url = f"http://localhost:{port}"
+    console.print(f"[green]Playground:[/green] {url}")
+    console.print(f"[dim]Editing: {file}[/dim]")
+    if reload:
+        console.print("[dim]Auto-reload enabled - watching for file changes[/dim]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+
+    if not no_browser:
+        # Delay browser open slightly to let server start
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+
+    # Run Flask app (blocks until Ctrl+C)
+    try:
+        flask_app.run(
+            host='localhost',
+            port=port,
+            debug=reload,
+            use_reloader=reload,
+            threaded=True
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped[/dim]")
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(
+        8000, "-p", "--port",
+        help="Port to run server on"
+    ),
+    host: str = typer.Option(
+        "0.0.0.0", "-h", "--host",
+        help="Host to bind to"
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key",
+        help="Server-side API key (if not set, users must provide their own)"
+    ),
+):
+    """Run playground in remote/server mode for deployment.
+
+    This starts the playground without local file access, suitable for
+    hosting as a public web service.
+
+    By default, users must provide their own API keys via the settings panel.
+    Use --api-key to provide a server-side key (e.g. for internal deployments).
+
+    Examples:
+        sd serve                              # Users provide their own keys
+        sd serve --api-key=$MY_API_KEY        # Use server-side key
+        sd serve -p 9000                      # Use specific port
+        sd serve -h 127.0.0.1                 # Bind to localhost only
+
+    For production, use with gunicorn:
+        gunicorn -w 4 -b 0.0.0.0:8000 \\
+            "struckdown.playground:create_app(remote_mode=True)"
+    """
+    from struckdown.playground import create_app
+
+    console = Console()
+
+    # Create Flask app in remote mode
+    flask_app = create_app(
+        prompt_file=None,
+        include_paths=[],
+        remote_mode=True,
+        server_api_key=api_key,
+    )
+
+    url = f"http://{host}:{port}"
+    console.print(f"[green]Playground (remote mode):[/green] {url}")
+    if api_key:
+        console.print("[dim]Using server-side API key[/dim]")
+    else:
+        console.print("[dim]Users must provide their own API keys[/dim]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+
+    # Run Flask app (blocks until Ctrl+C)
+    try:
+        flask_app.run(host=host, port=port, debug=False, threaded=True)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped[/dim]")
+
+
 if __name__ == "__main__":
     app()

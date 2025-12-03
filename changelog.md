@@ -4,6 +4,12 @@
 
 ### 0.3.1
 
+**New Features:**
+- **Playground**: Web-based editor for testing and developing struckdown templates
+  - `sd play [file.sd]` -- local mode with file watching and auto-save
+  - `sd serve` -- remote/hosted mode for deployment
+  - Syntax highlighting with CodeMirror
+  
 **Bug Fixes:**
 - Fixed intermittent malloc crash in `@search` action on macOS caused by curl_cffi cleanup in DDGS context manager
 
