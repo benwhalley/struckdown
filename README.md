@@ -23,10 +23,8 @@ sd chat "Tell me a joke: [[joke]]"
 ```
 # sets a config variable to run a web search for "oranges" and 
 # summarise the results
-uv run sd chat -p examples/search_and_summarise.sd -c q=oranges
+sd chat "[[@search|oranges]]  Provide a 2-3 sentence summary [[summary]]"
 ```
-
-
 
 **[→ Full QuickStart Guide](docs/QUICKSTART.md)**
 
