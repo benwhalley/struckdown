@@ -1,8 +1,19 @@
 
 # Changelog
 
+### 0.3.2
+
+- **Local file sync**: when editing a local file, the playground now detects external changes and prompts to reload -- useful when editing the same file in another editor
+- **Improved editor UI**: better styling for the code editor and output panels
+- **File validation**: batch uploads now validate file extensions (.xlsx, .csv, .zip only); source uploads reject binary file types
+- **Tests**: added test coverage for playground Flask app
+
+
+
 
 ### 0.3.1
+
+### Playground UI improvements
 
 **New Features:**
 - **Playground**: Web-based editor for testing and developing struckdown templates
