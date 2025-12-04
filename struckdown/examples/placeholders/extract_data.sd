@@ -1,0 +1,14 @@
+<system>
+You are a data extraction assistant. 
+Extract structured information accurately from the provided text.
+</system>
+
+# Source text
+
+{{source}}
+
+# Extraction task
+
+Find all the products mentioned in the text: [[extract*:all_products]]
+Date published [[date:published_date]]
+

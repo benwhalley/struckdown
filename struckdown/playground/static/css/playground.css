@@ -74,15 +74,17 @@
     width: 100%;
 }
 
-/* Main container offset for inputs strip */
+/* Main container offset for side strips */
 .container-fluid.vh-100 {
     padding-left: 28px;
+    padding-right: 28px;
 }
 
 /* But navbar should span full width */
 #top-navbar.navbar {
     margin-left: -28px;
-    width: calc(100% + 28px);
+    margin-right: -28px;
+    width: calc(100% + 56px);
 }
 
 /* Panel headers (Editor/Outputs) */
@@ -309,70 +311,49 @@
     font-size: 0.85em;
 }
 
-/* Side Strips (Settings and Help) */
-.side-strip {
+/* Right side strip (single strip for Settings/Help panel) */
+#right-strip {
     position: fixed;
     right: 0;
-    background: #6c757d;
-    color: #fff;
-    padding: 12px 6px;
-    cursor: pointer;
+    top: 32px;
+    bottom: 0;
+    width: 28px;
+    background: #f8f9fa;
+    color: #6c757d;
     z-index: 1040;
-    border-radius: 4px 0 0 4px;
-    transition: background-color 0.15s ease, padding-right 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 20px;
+    gap: 20px;
+    transition: right 0.3s ease;
+    border-left: 1px solid #dee2e6;
+}
+
+#right-strip.offcanvas-open {
+    right: 340px;
+}
+
+.right-strip-link {
     writing-mode: vertical-rl;
     text-orientation: mixed;
-}
-
-#settings-strip {
-    position: fixed;
-    right: 0;
-    top: calc(50% - 50px);
-    background: #6c757d;
-    color: #fff;
-    padding: 12px 6px;
-    cursor: pointer;
-    z-index: 1040;
-    border-radius: 4px 0 0 4px;
-    transition: background-color 0.15s ease, padding-right 0.15s ease;
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-}
-
-#settings-strip:hover {
-    background: #5a6268;
-    padding-right: 10px;
-}
-
-#help-strip {
-    position: fixed;
-    right: 0;
-    top: calc(50% + 50px);
-    background: #6c757d;
-    color: #fff;
-    padding: 12px 6px;
-    cursor: pointer;
-    z-index: 1040;
-    border-radius: 4px 0 0 4px;
-    transition: background-color 0.15s ease, padding-right 0.15s ease;
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-}
-
-#help-strip:hover {
-    background: #5a6268;
-    padding-right: 10px;
-}
-
-.side-strip-text {
     font-size: 0.8rem;
     font-weight: 500;
     letter-spacing: 0.5px;
+    white-space: nowrap;
+    cursor: pointer;
+    padding: 8px 4px;
+    border-radius: 3px;
 }
 
-/* Offcanvas panels */
-#help-offcanvas,
-#settings-offcanvas {
+.right-strip-link:hover {
+    background: #e9ecef;
+    color: #495057;
+}
+
+/* Right offcanvas panels */
+#settings-offcanvas,
+#help-offcanvas {
     width: 340px;
     top: 32px;
     height: calc(100% - 32px);

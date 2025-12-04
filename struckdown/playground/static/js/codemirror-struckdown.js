@@ -43,6 +43,21 @@ function escapeHtml(text) {
         .replace(/"/g, '&quot;');
 }
 
+// Check if cursor is inside a {{var}} and return the variable name
+function getVariableAtPosition(text, position) {
+    const before = text.slice(0, position);
+    const after = text.slice(position);
+
+    const openMatch = before.match(/\{\{([^}]*)$/);
+    const closeMatch = after.match(/^([^}]*)\}\}/);
+
+    if (openMatch && closeMatch) {
+        const varName = (openMatch[1] + closeMatch[1]).trim();
+        return varName || null;
+    }
+    return null;
+}
+
 function highlightSyntax(text) {
     // Collect all matches with their positions
     const matches = [];
@@ -204,6 +219,29 @@ function createStruckdownEditor(container, initialContent = '', options = {}) {
             if (onChange) {
                 onChange(textarea.value);
             }
+        }
+    });
+
+    // Double-click on {{var}} to open inputs panel and focus the field
+    textarea.addEventListener('dblclick', (e) => {
+        const position = textarea.selectionStart;
+        const varName = getVariableAtPosition(textarea.value, position);
+
+        if (varName) {
+            // Open inputs panel
+            const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(
+                document.getElementById('inputs-offcanvas')
+            );
+            offcanvas.show();
+
+            // Focus the corresponding input field after panel opens
+            setTimeout(() => {
+                const input = document.querySelector(`.input-field[name="${varName}"]`);
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 300);
         }
     });
 

@@ -240,22 +240,18 @@
     </div>
 </div>
 
-<!-- Settings Strip (right edge trigger) -->
-<div id="settings-strip" data-bs-toggle="offcanvas" data-bs-target="#settings-offcanvas" aria-controls="settings-offcanvas">
-    <span class="side-strip-text"><i class="bi bi-gear"></i> Settings</span>
-</div>
-
-<!-- Help Strip (right edge trigger) -->
-<div id="help-strip" data-bs-toggle="offcanvas" data-bs-target="#help-offcanvas" aria-controls="help-offcanvas">
-    <span class="side-strip-text">Help ?</span>
+<!-- Right Strip (triggers for Settings/Help panel) -->
+<div id="right-strip">
+    <span class="right-strip-link" id="settings-link"><i class="bi bi-gear"></i> Settings</span>
+    <span class="right-strip-link" id="help-link"><i class="bi bi-question-circle"></i> Help</span>
 </div>
 
 <!-- Settings Offcanvas -->
 <div class="offcanvas offcanvas-end" tabindex="-1" id="settings-offcanvas" aria-labelledby="settings-offcanvas-label">
-    <div class="offcanvas-header border-bottom">
-        <h5 class="offcanvas-title" id="settings-offcanvas-label">
+    <div class="offcanvas-header border-bottom py-2">
+        <h6 class="offcanvas-title mb-0" id="settings-offcanvas-label">
             <i class="bi bi-gear"></i> Settings
-        </h5>
+        </h6>
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
     <div class="offcanvas-body">
@@ -276,9 +272,7 @@
         {% if remote_mode %}
         <div class="mb-3">
             <label for="api-base-input" class="form-label">API Base URL</label>
-            <input type="url" class="form-control form-control-sm" id="api-base-input"
-                   >
-                   <!-- placeholder="https://api.openai.com/v1" -->
+            <input type="url" class="form-control form-control-sm" id="api-base-input">
             <div class="form-text">OpenAI-compatible endpoint</div>
         </div>
         <div class="mb-3">
@@ -293,10 +287,10 @@
 
 <!-- Help Offcanvas -->
 <div class="offcanvas offcanvas-end" tabindex="-1" id="help-offcanvas" aria-labelledby="help-offcanvas-label">
-    <div class="offcanvas-header border-bottom">
-        <h5 class="offcanvas-title" id="help-offcanvas-label">
-            <i class="bi bi-question-circle"></i> Struckdown Cheatsheet
-        </h5>
+    <div class="offcanvas-header border-bottom py-2">
+        <h6 class="offcanvas-title mb-0" id="help-offcanvas-label">
+            <i class="bi bi-question-circle"></i> Help
+        </h6>
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
     <div class="offcanvas-body">
@@ -357,11 +351,11 @@
                 </tr>
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>,</kbd></td>
-                    <td>Toggle Settings</td>
+                    <td>Settings</td>
                 </tr>
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>?</kbd></td>
-                    <td>Toggle Help</td>
+                    <td>Help</td>
                 </tr>
             </tbody>
         </table>
@@ -432,16 +426,24 @@ function toggleInputs() {
     offcanvas.toggle();
 }
 
-// Toggle settings offcanvas
+// Toggle settings offcanvas (closes help if open)
 function toggleSettings() {
-    const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('settings-offcanvas'));
-    offcanvas.toggle();
+    const settingsOffcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('settings-offcanvas'));
+    const helpOffcanvas = bootstrap.Offcanvas.getInstance(document.getElementById('help-offcanvas'));
+    if (helpOffcanvas) {
+        helpOffcanvas.hide();
+    }
+    settingsOffcanvas.toggle();
 }
 
-// Toggle help offcanvas
+// Toggle help offcanvas (closes settings if open)
 function toggleHelp() {
-    const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('help-offcanvas'));
-    offcanvas.toggle();
+    const helpOffcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('help-offcanvas'));
+    const settingsOffcanvas = bootstrap.Offcanvas.getInstance(document.getElementById('settings-offcanvas'));
+    if (settingsOffcanvas) {
+        settingsOffcanvas.hide();
+    }
+    helpOffcanvas.toggle();
 }
 
 // Global keyboard shortcuts
@@ -520,6 +522,34 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     inputsOffcanvas.addEventListener('hide.bs.offcanvas', function() {
         document.getElementById('inputs-strip').classList.remove('offcanvas-open');
+    });
+
+    // Right strip link handlers
+    document.getElementById('settings-link').addEventListener('click', toggleSettings);
+    document.getElementById('help-link').addEventListener('click', toggleHelp);
+
+    // Move right strip when either offcanvas opens/closes
+    const settingsOffcanvas = document.getElementById('settings-offcanvas');
+    const helpOffcanvas = document.getElementById('help-offcanvas');
+
+    settingsOffcanvas.addEventListener('show.bs.offcanvas', function() {
+        document.getElementById('right-strip').classList.add('offcanvas-open');
+    });
+    settingsOffcanvas.addEventListener('hide.bs.offcanvas', function() {
+        // Only remove if help is also closed
+        if (!document.getElementById('help-offcanvas').classList.contains('show')) {
+            document.getElementById('right-strip').classList.remove('offcanvas-open');
+        }
+    });
+
+    helpOffcanvas.addEventListener('show.bs.offcanvas', function() {
+        document.getElementById('right-strip').classList.add('offcanvas-open');
+    });
+    helpOffcanvas.addEventListener('hide.bs.offcanvas', function() {
+        // Only remove if settings is also closed
+        if (!document.getElementById('settings-offcanvas').classList.contains('show')) {
+            document.getElementById('right-strip').classList.remove('offcanvas-open');
+        }
     });
 
     // Load API credentials from localStorage if remote mode

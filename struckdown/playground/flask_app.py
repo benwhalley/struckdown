@@ -9,6 +9,7 @@ Security considerations for remote mode:
 
 import json
 import os
+import random
 import socket
 import tempfile
 import threading
@@ -123,6 +124,47 @@ def find_available_port(start: int = 9000, max_attempts: int = 100) -> int:
     raise RuntimeError(f"No available port found in range {start}-{start + max_attempts - 1}")
 
 
+def get_random_placeholder() -> str:
+    """Get a random placeholder prompt from bundled examples."""
+    placeholders_dir = Path(__file__).parent.parent / "examples" / "placeholders"
+    if not placeholders_dir.exists():
+        return "# Your prompt here\n\n[[response]]\n"
+
+    sd_files = list(placeholders_dir.glob("*.sd"))
+    if not sd_files:
+        return "# Your prompt here\n\n[[response]]\n"
+
+    chosen = random.choice(sd_files)
+    try:
+        return chosen.read_text()
+    except Exception:
+        return "# Your prompt here\n\n[[response]]\n"
+
+
+def _create_untitled_file(workspace_dir: Path, content: str) -> Optional[Path]:
+    """Create an untitled.sd file in the workspace, adding numbers if needed."""
+    # Try untitled.sd first
+    candidate = workspace_dir / "untitled.sd"
+    if not candidate.exists():
+        try:
+            candidate.write_text(content)
+            return candidate
+        except Exception:
+            return None
+
+    # Try untitled-1.sd, untitled-2.sd, etc.
+    for i in range(1, 100):
+        candidate = workspace_dir / f"untitled-{i}.sd"
+        if not candidate.exists():
+            try:
+                candidate.write_text(content)
+                return candidate
+            except Exception:
+                return None
+
+    return None
+
+
 # In-memory storage for batch tasks and uploaded files
 # These are request-scoped and cleaned up after use or on timeout
 _batch_tasks: Dict[str, Dict] = {}
@@ -229,8 +271,11 @@ def create_app(
         """Render the main editor page."""
         syntax = ""
         current_file_path = ""
+        filename = None
+
         if prompt_file and prompt_file.exists():
             syntax = prompt_file.read_text()
+            filename = prompt_file.name
             # Get path relative to workspace
             if workspace_dir:
                 try:
@@ -239,11 +284,21 @@ def create_app(
                     current_file_path = prompt_file.name
             else:
                 current_file_path = prompt_file.name
+        elif not remote_mode and workspace_dir:
+            # No file specified but we have a workspace - create untitled.sd
+            syntax = get_random_placeholder()
+            untitled_path = _create_untitled_file(workspace_dir, syntax)
+            if untitled_path:
+                current_file_path = untitled_path.name
+                filename = untitled_path.name
+        else:
+            # Remote mode - just use placeholder without file
+            syntax = get_random_placeholder()
 
         return render_template(
             "editor.html",
             syntax=syntax,
-            filename=prompt_file.name if prompt_file else None,
+            filename=filename,
             current_file_path=current_file_path,
             remote_mode=remote_mode,
             has_server_api_key=bool(server_api_key),

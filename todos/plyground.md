@@ -379,3 +379,54 @@ can we implement shortcuts for
 the popover should have links to the documentation for more advanced usage
 make a plan.
 
+
+
+
+
+
+
+
+
+another UI change.
+I would like the "inputs" panel to be another offcanvas, but this time coming from the left of the window, and triggered by a full-height button/tab/target on the left of the page. I would like the button to be styled simply, but a bit like a control panel in a desktop app - the label should persist as it slides right, revealing the inputs panel. Make the label appear near the top of the page.
+reduce the height of the top menu bar/brand bar to save height. reduce the struckown logo height if needed to save space. make the top bar dark grey or near-black to make it contrast
+does that make sense?
+
+
+
+
+
+
+
+listen for changes in the local file being edited. if it has been edited, reload the changes. if we have local edits since the last save which would be lost, then warn before saving with a popup message. give user option to save anyway, or to discard changes. make sure neither is a defautl option and user must select one explicitly.
+when we make changes to the file, we shoul also give an indicator that something has been editoed to the user. I like the convention of having a small dot in the top right of the editor pane header. Or just tp the right of the word "Header"
+
+
+
+
+
+
+
+
+how well does the system work with multiple files. can we edit more than one file at a time/support multiple editor sessions with a single server?
+
+
+
+
+
+in playground/ `sd edit` and `sd serve` can we allow user to specify a ist of allowed models when the invoke the command? e.g.
+  --models="gpt-4.1,gpt-4.1-mini"
+  this is a comma sep list
+if specificed, then the models field would be a pulldown with only those models. if not specified, then revert back to a charfield
+for the server, we could also check for STRUCKDOWN_ALLOWED_MODELS env var and use that if set
+
+
+
+
+when I open a file, the url or #hash part should be changed so that when I reload the page, it will load the same file. how would we arrange for that to happen in local editing mode?
+
+
+
+can we make button/target/tab for the offcanvas panels for the help and settings  look the same as the inputs panel buttn? they would be on the right, and go full height(exlcuding the top menu bar)
+can we have the stacked, so we could open both at the same time?
+how does that work with bootstrap offcanvas?

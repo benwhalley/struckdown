@@ -430,6 +430,12 @@ function getInputValues() {
     return values;
 }
 
+// Get list of required inputs that have empty values
+function getMissingInputs() {
+    const values = getInputValues();
+    return currentInputs.filter(name => !values[name] || values[name].trim() === '');
+}
+
 // Show error banner
 function showError(message) {
     const banner = document.getElementById('error-banner');
@@ -546,6 +552,21 @@ function runSingle(syntax) {
     const inputs = getInputValues();
     const model = document.getElementById('model-input').value;
     const remoteMode = document.getElementById('remote-mode').value === 'true';
+
+    // Check for missing required inputs
+    const missing = getMissingInputs();
+    if (missing.length > 0) {
+        // Open inputs panel
+        const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(
+            document.getElementById('inputs-offcanvas')
+        );
+        offcanvas.show();
+
+        // Show error message
+        setStatus('error', 'Missing inputs: ' + missing.join(', '));
+        disableSaveButton(false);
+        return Promise.resolve();
+    }
 
     const body = {
         syntax: syntax,

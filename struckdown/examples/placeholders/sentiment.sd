@@ -1,0 +1,16 @@
+# Text to analyse
+
+{{text}}
+
+
+# Sentiment analysis
+
+Make some notes on what the text means, and clues as to the sentiment it expresses [[clues]]
+
+Is the overall sentiment positive?  [[bool:is_positive]] 
+
+List up to 3 emotions that are potentially relevant: [[pick{3}:emotion_top3|joy,sadness,anger,fear,surprise,neutral]] 
+
+Primary emotion detected: [[pick:emotion|joy,sadness,anger,fear,surprise,neutral]] 
+
+
