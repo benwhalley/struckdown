@@ -5,6 +5,13 @@ let analyseTimeout = null;
 let currentInputs = [];
 let sessionId = null;
 
+// File watching and dirty state
+let lastKnownMtime = null;
+let lastSavedContent = null;
+let isDirty = false;
+let fileWatchInterval = null;
+let pendingConflict = null;
+
 // Session management - persist inputs per session
 function getSessionId() {
     // Check URL hash first
@@ -53,6 +60,134 @@ function loadPinnedSlots() {
         }
     }
     return [];
+}
+
+// Dirty state management
+function setDirty(dirty) {
+    isDirty = dirty;
+    updateDirtyIndicator();
+}
+
+function updateDirtyIndicator() {
+    const indicator = document.getElementById('dirty-indicator');
+    if (indicator) {
+        indicator.style.display = isDirty ? 'inline-block' : 'none';
+    }
+}
+
+function markEditorDirty() {
+    if (!isDirty) {
+        setDirty(true);
+    }
+}
+
+// File watching
+function startFileWatching() {
+    // Only in local mode
+    if (document.getElementById('remote-mode').value === 'true') {
+        console.log('File watching disabled (remote mode)');
+        return;
+    }
+
+    console.log('Starting file watching...');
+
+    // Poll every 2 seconds
+    fileWatchInterval = setInterval(function() {
+        checkFileStatus(false);
+    }, 2000);
+
+    // Get initial file state
+    checkFileStatus(true);
+}
+
+function stopFileWatching() {
+    if (fileWatchInterval) {
+        clearInterval(fileWatchInterval);
+        fileWatchInterval = null;
+    }
+}
+
+function checkFileStatus(isInitial) {
+    fetch('/api/file-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.log('File status error:', data.error);
+                return;
+            }
+
+            if (isInitial === true) {
+                // Initial load - just store the mtime and content
+                lastKnownMtime = data.mtime;
+                lastSavedContent = data.content;
+                console.log('File watching initialized, mtime:', lastKnownMtime);
+                return;
+            }
+
+            // Check if file changed externally
+            if (lastKnownMtime !== null && data.mtime !== lastKnownMtime) {
+                console.log('File changed externally, old mtime:', lastKnownMtime, 'new mtime:', data.mtime);
+                handleExternalFileChange(data);
+            } else {
+                // Uncomment for verbose logging:
+                // console.log('File check: no change, mtime:', data.mtime);
+            }
+        })
+        .catch(err => {
+            console.log('File status fetch error:', err);
+        });
+}
+
+function handleExternalFileChange(data) {
+    const currentContent = getSyntax();
+
+    // If we have unsaved local changes
+    if (isDirty && currentContent !== data.content) {
+        // Show conflict modal
+        pendingConflict = data;
+        showConflictModal();
+    } else {
+        // No local changes or content is the same - just reload
+        reloadFromFile(data);
+    }
+}
+
+function reloadFromFile(data) {
+    lastKnownMtime = data.mtime;
+    lastSavedContent = data.content;
+
+    // Update editor content
+    if (editor._isCodeMirror && editor.setValue) {
+        editor.setValue(data.content);
+    } else if (editor.value !== undefined) {
+        editor.value = data.content;
+    }
+
+    setDirty(false);
+    analyseTemplate();
+}
+
+function showConflictModal() {
+    const modal = new bootstrap.Modal(document.getElementById('conflict-modal'));
+    modal.show();
+}
+
+function handleConflictKeepLocal() {
+    // User wants to keep local changes - just update mtime so we don't warn again
+    if (pendingConflict) {
+        lastKnownMtime = pendingConflict.mtime;
+    }
+    pendingConflict = null;
+    bootstrap.Modal.getInstance(document.getElementById('conflict-modal')).hide();
+}
+
+function handleConflictLoadExternal() {
+    // User wants to discard local changes and load external version
+    if (pendingConflict) {
+        reloadFromFile(pendingConflict);
+    }
+    pendingConflict = null;
+    bootstrap.Modal.getInstance(document.getElementById('conflict-modal')).hide();
 }
 
 function saveInputsToStorage() {
@@ -107,8 +242,9 @@ function initEditor() {
                 onChange: function(content) {
                     clearTimeout(analyseTimeout);
                     analyseTimeout = setTimeout(analyseTemplate, 500);
+                    markEditorDirty();
                 },
-                onSave: saveAndRun
+                onSave: saveOnly
             });
             editor._isCodeMirror = true;
 
@@ -137,6 +273,7 @@ function initEditor() {
     textarea.addEventListener('input', function() {
         clearTimeout(analyseTimeout);
         analyseTimeout = setTimeout(analyseTemplate, 500);
+        markEditorDirty();
     });
 
     // Initial analysis
@@ -264,6 +401,44 @@ function hideError() {
     banner.style.display = 'none';
 }
 
+// Save only (without running)
+function saveOnly() {
+    const syntax = getSyntax();
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+
+    if (remoteMode) {
+        // In remote mode, just clear dirty state (nothing to save to disk)
+        setDirty(false);
+        setStatus('success', 'Saved');
+        return;
+    }
+
+    setStatus('running', 'Saving...');
+
+    fetch('/api/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({syntax: syntax})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            if (data.mtime) {
+                lastKnownMtime = data.mtime;
+            }
+            lastSavedContent = syntax;
+            setDirty(false);
+            setStatus('success', 'Saved');
+        } else {
+            setStatus('error', 'Save failed');
+        }
+    })
+    .catch(err => {
+        console.error('Save error:', err);
+        setStatus('error', 'Save failed: ' + err.message);
+    });
+}
+
 // Save and run the prompt
 function saveAndRun() {
     const syntax = getSyntax();
@@ -280,6 +455,15 @@ function saveAndRun() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({syntax: syntax})
+        }).then(response => response.json()).then(data => {
+            if (data.success) {
+                // Update mtime and clear dirty state after successful save
+                if (data.mtime) {
+                    lastKnownMtime = data.mtime;
+                }
+                lastSavedContent = syntax;
+                setDirty(false);
+            }
         });
 
     savePromise

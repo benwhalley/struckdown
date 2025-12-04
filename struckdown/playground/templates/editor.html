@@ -5,28 +5,93 @@
 {% endblock %}
 
 {% block body %}
-<div class="container-fluid vh-100 d-flex flex-column">
-    <!-- Header with Tabs -->
-    <nav class="navbar navbar-light bg-light border-bottom py-0">
-        <div class="container-fluid d-flex align-items-stretch">
-            <!-- Tab button on left (Inputs only) -->
-            <div class="d-flex" id="panel-tabs">
-                <button class="panel-tab" id="tab-inputs" type="button" data-tab="inputs">
-                    <i class="bi bi-input-cursor-text"></i> Inputs
+<!-- Inputs Strip (left edge trigger) -->
+<div id="inputs-strip">
+    <span class="inputs-strip-text"><i class="bi bi-sliders"></i> Inputs</span>
+</div>
+
+<!-- Inputs Offcanvas (left side) -->
+<div class="offcanvas offcanvas-start" tabindex="-1" id="inputs-offcanvas" aria-labelledby="inputs-offcanvas-label">
+    <div class="offcanvas-header border-bottom py-2">
+        <h6 class="offcanvas-title mb-0" id="inputs-offcanvas-label">
+            <i class="bi bi-sliders"></i> Inputs
+        </h6>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="btn-group" role="group">
+                <input type="radio" class="btn-check" name="mode" id="mode-single" value="single" checked>
+                <label class="btn btn-outline-secondary btn-sm" for="mode-single">Interactive</label>
+                <input type="radio" class="btn-check" name="mode" id="mode-file" value="file">
+                <label class="btn btn-outline-secondary btn-sm" for="mode-file">File</label>
+                <input type="radio" class="btn-check" name="mode" id="mode-batch" value="batch">
+                <label class="btn btn-outline-secondary btn-sm" for="mode-batch">Batch</label>
+            </div>
+        </div>
+
+        <!-- Single mode: individual inputs -->
+        <div id="single-inputs-section">
+            <div id="inputs-container">
+                <p class="text-muted small mb-0">
+                    Input fields will appear here based on <code>{{ "{{variables}}" }}</code> in your prompt.
+                </p>
+            </div>
+        </div>
+
+        <!-- File mode: single file upload as {{source}} -->
+        <div id="file-upload-section" style="display: none;">
+            <label for="source-file" class="form-label">Upload source file</label>
+            <input type="file" class="form-control form-control-sm" id="source-file"
+                   accept="*/*">
+            <div id="source-file-info" class="mt-2" style="display: none;">
+                <span class="badge bg-primary"><i class="bi bi-file-earmark-text"></i>
+                    <span id="source-filename"></span>
+                </span>
+                <span class="text-muted ms-2"><span id="source-file-size"></span></span>
+                <button class="btn btn-link btn-sm text-danger" onclick="clearSourceFile()">
+                    <i class="bi bi-x"></i> Remove
                 </button>
             </div>
+            <p class="text-muted small mt-2 mb-0">
+                File content will be available as <code>{{ "{{source}}" }}</code> in your prompt.
+            </p>
+        </div>
 
-            <!-- Title and filename on right -->
-            <div class="d-flex align-items-center ms-auto py-2">
-                {% if filename %}
-                <span class="text-muted me-3">
-                    <i class="bi bi-file-earmark-code"></i> {{ filename }}
+        <!-- Batch mode: xlsx/csv/zip file upload -->
+        <div id="batch-upload-section" style="display: none;">
+            <label for="batch-file" class="form-label">Upload xlsx/csv or zip archive</label>
+            <input type="file" class="form-control form-control-sm" id="batch-file"
+                   accept=".xlsx,.csv,.xls,.zip">
+            <div id="batch-file-info" class="mt-2" style="display: none;">
+                <span class="badge bg-success"><i class="bi bi-file-earmark-spreadsheet"></i>
+                    <span id="batch-filename"></span>
                 </span>
-                {% endif %}
-                <span class="navbar-brand mb-0 h6">
-                    <i class="bi bi-code-square"></i> Struckdown
-                </span>
+                <span class="text-muted ms-2"><span id="batch-row-count"></span> rows</span>
+                <button class="btn btn-link btn-sm text-danger" onclick="clearBatchFile()">
+                    <i class="bi bi-x"></i> Remove
+                </button>
             </div>
+            <p class="text-muted small mt-2 mb-0">
+                Upload xlsx/csv with columns matching <code>{{ "{{variables}}" }}</code>, or a zip of files (each available as <code>{{ "{{source}}" }}</code>).
+            </p>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid vh-100 d-flex flex-column">
+    <!-- Compact Header -->
+    <nav class="navbar navbar-dark py-0" id="top-navbar">
+        <div class="container-fluid d-flex align-items-center">
+            <!-- Title and filename -->
+            <span class="navbar-brand mb-0 py-1">
+                <i class="bi bi-code-square"></i> Struckdown
+            </span>
+            {% if filename %}
+            <span class="text-light opacity-75 small ms-2">
+                <i class="bi bi-file-earmark-code"></i> {{ filename }}
+            </span>
+            {% endif %}
         </div>
     </nav>
 
@@ -37,77 +102,16 @@
         <button type="button" class="btn-close" onclick="hideError()"></button>
     </div>
 
-    <!-- Tab Content Panel (Inputs only now) -->
-    <div id="tab-panel" class="border-bottom" style="display: none;">
-        <!-- Inputs Content -->
-        <div id="panel-inputs" class="tab-content p-3" style="display: none;">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div class="btn-group" role="group">
-                    <input type="radio" class="btn-check" name="mode" id="mode-single" value="single" checked>
-                    <label class="btn btn-outline-secondary btn-sm" for="mode-single">Interactive</label>
-                    <input type="radio" class="btn-check" name="mode" id="mode-file" value="file">
-                    <label class="btn btn-outline-secondary btn-sm" for="mode-file">File</label>
-                    <input type="radio" class="btn-check" name="mode" id="mode-batch" value="batch">
-                    <label class="btn btn-outline-secondary btn-sm" for="mode-batch">Batch</label>
-                </div>
-            </div>
-
-            <!-- Single mode: individual inputs -->
-            <div id="single-inputs-section">
-                <div id="inputs-container">
-                    <p class="text-muted small mb-0">
-                        Input fields will appear here based on <code>{{ "{{variables}}" }}</code> in your prompt.
-                    </p>
-                </div>
-            </div>
-
-            <!-- File mode: single file upload as {{source}} -->
-            <div id="file-upload-section" style="display: none;">
-                <label for="source-file" class="form-label">Upload source file</label>
-                <input type="file" class="form-control form-control-sm" id="source-file"
-                       accept="*/*">
-                <div id="source-file-info" class="mt-2" style="display: none;">
-                    <span class="badge bg-primary"><i class="bi bi-file-earmark-text"></i>
-                        <span id="source-filename"></span>
-                    </span>
-                    <span class="text-muted ms-2"><span id="source-file-size"></span></span>
-                    <button class="btn btn-link btn-sm text-danger" onclick="clearSourceFile()">
-                        <i class="bi bi-x"></i> Remove
-                    </button>
-                </div>
-                <p class="text-muted small mt-2 mb-0">
-                    File content will be available as <code>{{ "{{source}}" }}</code> in your prompt.
-                </p>
-            </div>
-
-            <!-- Batch mode: xlsx/csv/zip file upload -->
-            <div id="batch-upload-section" style="display: none;">
-                <label for="batch-file" class="form-label">Upload xlsx/csv or zip archive</label>
-                <input type="file" class="form-control form-control-sm" id="batch-file"
-                       accept=".xlsx,.csv,.xls,.zip">
-                <div id="batch-file-info" class="mt-2" style="display: none;">
-                    <span class="badge bg-success"><i class="bi bi-file-earmark-spreadsheet"></i>
-                        <span id="batch-filename"></span>
-                    </span>
-                    <span class="text-muted ms-2"><span id="batch-row-count"></span> rows</span>
-                    <button class="btn btn-link btn-sm text-danger" onclick="clearBatchFile()">
-                        <i class="bi bi-x"></i> Remove
-                    </button>
-                </div>
-                <p class="text-muted small mt-2 mb-0">
-                    Upload xlsx/csv with columns matching <code>{{ "{{variables}}" }}</code>, or a zip of files (each available as <code>{{ "{{source}}" }}</code>).
-                </p>
-            </div>
-        </div>
-    </div>
-
     <!-- Main Content -->
     <div class="row flex-grow-1 g-0 overflow-hidden">
         <!-- Editor Panel -->
         <div class="col-md-6 d-flex flex-column border-end" id="editor-column">
             <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
-                <span class="small text-muted">Editor</span>
+                <span class="small text-muted">Editor <span id="dirty-indicator" class="dirty-dot" style="display: none;" title="Unsaved changes"></span></span>
                 <div>
+                    <button class="btn btn-secondary btn-sm me-1" id="save-btn" onclick="saveOnly()">
+                        <i class="bi bi-check2"></i> Save
+                    </button>
                     <button class="btn btn-primary btn-sm" id="save-run-btn" onclick="saveAndRun()">
                         <i class="bi bi-play-fill"></i> Save & Run
                     </button>
@@ -152,6 +156,31 @@
 <input type="hidden" id="current-file-id" value="">
 <input type="hidden" id="current-source-file-id" value="">
 <input type="hidden" id="current-task-id" value="">
+
+<!-- File Conflict Modal -->
+<div class="modal fade" id="conflict-modal" tabindex="-1" aria-labelledby="conflict-modal-label" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title" id="conflict-modal-label">
+                    <i class="bi bi-exclamation-triangle"></i> File Changed Externally
+                </h5>
+            </div>
+            <div class="modal-body">
+                <p>The file has been modified outside the editor. You have unsaved changes that would be lost.</p>
+                <p class="mb-0"><strong>What would you like to do?</strong></p>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-outline-secondary" onclick="handleConflictKeepLocal()">
+                    <i class="bi bi-pencil"></i> Keep My Changes
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="handleConflictLoadExternal()">
+                    <i class="bi bi-arrow-clockwise"></i> Load External Version
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Settings Strip (right edge trigger) -->
 <div id="settings-strip" data-bs-toggle="offcanvas" data-bs-target="#settings-offcanvas" aria-controls="settings-offcanvas">
@@ -245,20 +274,20 @@
         <table class="table table-sm cheatsheet-table">
             <tbody>
                 <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>S</kbd></td>
+                    <td>Save</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td>
+                    <td>Save & Run</td>
+                </tr>
+                <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>I</kbd></td>
                     <td>Toggle Inputs</td>
                 </tr>
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>,</kbd></td>
                     <td>Toggle Settings</td>
-                </tr>
-                <tr>
-                    <td><kbd>Ctrl</kbd> + <kbd>S</kbd></td>
-                    <td>Save & Run</td>
-                </tr>
-                <tr>
-                    <td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td>
-                    <td>Save & Run</td>
                 </tr>
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>?</kbd></td>
@@ -327,28 +356,10 @@ function waitForCodeMirror(callback, timeout) {
     check();
 }
 
-// Inputs panel state
-let inputsPanelExpanded = false;
-
-function toggleInputsPanel() {
-    const tabPanel = document.getElementById('tab-panel');
-    const tabInputs = document.getElementById('tab-inputs');
-    const panelInputs = document.getElementById('panel-inputs');
-
-    if (inputsPanelExpanded) {
-        // Collapse
-        tabPanel.style.display = 'none';
-        panelInputs.style.display = 'none';
-        tabInputs.classList.remove('active');
-        inputsPanelExpanded = false;
-    } else {
-        // Expand
-        tabPanel.style.display = 'block';
-        panelInputs.style.display = 'block';
-        tabPanel.classList.add('tab-inputs');
-        tabInputs.classList.add('active');
-        inputsPanelExpanded = true;
-    }
+// Toggle inputs offcanvas
+function toggleInputs() {
+    const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('inputs-offcanvas'));
+    offcanvas.toggle();
 }
 
 // Toggle settings offcanvas
@@ -369,10 +380,10 @@ document.addEventListener('keydown', function(e) {
     const modifier = e.ctrlKey || e.metaKey;
     if (!modifier) return;
 
-    // Ctrl+I - Toggle Inputs panel
+    // Ctrl+I - Toggle Inputs
     if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
-        toggleInputsPanel();
+        toggleInputs();
         return;
     }
 
@@ -383,8 +394,15 @@ document.addEventListener('keydown', function(e) {
         return;
     }
 
-    // Ctrl+S or Ctrl+Enter - Save & Run
-    if (e.key === 's' || e.key === 'S' || e.key === 'Enter') {
+    // Ctrl+S - Save only
+    if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        saveOnly();
+        return;
+    }
+
+    // Ctrl+Enter - Save & Run
+    if (e.key === 'Enter') {
         e.preventDefault();
         saveAndRun();
         return;
@@ -404,10 +422,23 @@ document.addEventListener('DOMContentLoaded', function() {
     initSession();
 
     // Wait for CodeMirror (up to 2 seconds), then init editor
-    waitForCodeMirror(initEditor, 2000);
+    waitForCodeMirror(function() {
+        initEditor();
+        // Start file watching after editor is ready
+        startFileWatching();
+    }, 2000);
 
-    // Tab click handler (inputs only now)
-    document.getElementById('tab-inputs').addEventListener('click', toggleInputsPanel);
+    // Inputs strip click handler
+    document.getElementById('inputs-strip').addEventListener('click', toggleInputs);
+
+    // Move inputs strip when offcanvas opens/closes
+    const inputsOffcanvas = document.getElementById('inputs-offcanvas');
+    inputsOffcanvas.addEventListener('show.bs.offcanvas', function() {
+        document.getElementById('inputs-strip').classList.add('offcanvas-open');
+    });
+    inputsOffcanvas.addEventListener('hide.bs.offcanvas', function() {
+        document.getElementById('inputs-strip').classList.remove('offcanvas-open');
+    });
 
     // Load API credentials from localStorage if remote mode
     if (document.getElementById('remote-mode').value === 'true') {

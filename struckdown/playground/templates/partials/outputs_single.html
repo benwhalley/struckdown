@@ -24,19 +24,7 @@
             </button>
         </div>
         <div class="card-body py-2">
-            <div class="output-value" id="output-{{ slot_name }}">
-                {% if outputs[slot_name] is mapping %}
-                <pre class="mb-0 small">{{ outputs[slot_name] | tojson(indent=2) }}</pre>
-                {% elif outputs[slot_name] is iterable and outputs[slot_name] is not string %}
-                <ul class="mb-0 small">
-                    {% for item in outputs[slot_name] %}
-                    <li>{{ item }}</li>
-                    {% endfor %}
-                </ul>
-                {% else %}
-                {{ outputs[slot_name] }}
-                {% endif %}
-            </div>
+            <div class="output-value" id="output-{{ slot_name }}">{% if outputs[slot_name] is mapping %}<pre class="mb-0 small">{{ outputs[slot_name] | tojson(indent=2) }}</pre>{% elif outputs[slot_name] is iterable and outputs[slot_name] is not string %}<ul class="mb-0 small">{% for item in outputs[slot_name] %}<li>{{ item }}</li>{% endfor %}</ul>{% else %}{{ outputs[slot_name] }}{% endif %}</div>
         </div>
     </div>
     {% endif %}

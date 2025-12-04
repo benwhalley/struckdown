@@ -41,6 +41,11 @@ STRUCKDOWN_ZIP_MAX_FILES = int(os.environ.get("STRUCKDOWN_ZIP_MAX_FILES", "500")
 # Threshold for spooling to disk (files smaller than this stay in memory)
 STRUCKDOWN_SPOOL_THRESHOLD = int(os.environ.get("STRUCKDOWN_SPOOL_THRESHOLD", "1048576"))  # 1MB
 
+# Allowed file extensions
+ALLOWED_BATCH_EXTENSIONS = {".xlsx", ".csv", ".zip"}
+# Binary file types that should be rejected for source upload
+BINARY_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".exe", ".dll", ".so", ".dylib", ".bin", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg", ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flv", ".ogg", ".woff", ".woff2", ".ttf", ".otf", ".eot"}
+
 
 def safe_error_message(e: Exception, remote_mode: bool) -> str:
     """
@@ -253,9 +258,24 @@ def create_app(
 
         if prompt_file:
             prompt_file.write_text(syntax)
-            return jsonify({"success": True})
+            # Return the new modification time
+            mtime = prompt_file.stat().st_mtime
+            return jsonify({"success": True, "mtime": mtime})
 
         return jsonify({"error": "No file specified"}), 400
+
+    @app.route("/api/file-status")
+    def file_status():
+        """Get file modification time and content (local mode only)."""
+        if remote_mode:
+            return jsonify({"error": "Not available in remote mode"}), 400
+
+        if not prompt_file or not prompt_file.exists():
+            return jsonify({"error": "No file"}), 400
+
+        mtime = prompt_file.stat().st_mtime
+        content = prompt_file.read_text()
+        return jsonify({"mtime": mtime, "content": content})
 
     @app.route("/api/analyse", methods=["POST"])
     def analyse():
@@ -378,9 +398,14 @@ def create_app(
         if not file.filename:
             return jsonify({"error": "No file selected"}), 400
 
+        # Validate file extension
+        suffix = Path(file.filename).suffix.lower()
+        if suffix not in ALLOWED_BATCH_EXTENSIONS:
+            allowed = ", ".join(sorted(ALLOWED_BATCH_EXTENSIONS))
+            return jsonify({"error": f"File type '{suffix}' not allowed. Allowed types: {allowed}"}), 400
+
         # Generate unique file ID
         file_id = str(uuid.uuid4())
-        suffix = Path(file.filename).suffix.lower()
 
         # Use SpooledTemporaryFile: stays in memory up to threshold, auto-deletes
         try:
@@ -437,6 +462,11 @@ def create_app(
         file = request.files["file"]
         if not file.filename:
             return jsonify({"error": "No file selected"}), 400
+
+        # Reject binary file types
+        suffix = Path(file.filename).suffix.lower()
+        if suffix in BINARY_EXTENSIONS:
+            return jsonify({"error": f"Binary file type '{suffix}' not supported. Please upload a text-based file."}), 400
 
         # Generate unique file ID
         file_id = str(uuid.uuid4())

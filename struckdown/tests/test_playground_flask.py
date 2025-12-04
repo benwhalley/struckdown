@@ -179,6 +179,77 @@ class TestUploadEndpoint:
         response = client.post("/api/upload")
         assert response.status_code == 400
 
+    def test_upload_rejects_invalid_extension(self, client, tmp_path):
+        """Upload rejects files with unsupported extensions."""
+        txt_file = tmp_path / "test.txt"
+        txt_file.write_text("some content")
+
+        with open(txt_file, "rb") as f:
+            response = client.post(
+                "/api/upload",
+                data={"file": (f, "test.txt")},
+                content_type="multipart/form-data",
+            )
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "not allowed" in data["error"]
+        assert ".csv" in data["error"]
+
+    def test_upload_rejects_pdf(self, client, tmp_path):
+        """Upload rejects PDF files."""
+        pdf_file = tmp_path / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake pdf content")
+
+        with open(pdf_file, "rb") as f:
+            response = client.post(
+                "/api/upload",
+                data={"file": (f, "test.pdf")},
+                content_type="multipart/form-data",
+            )
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "not allowed" in data["error"]
+
+
+class TestUploadSourceEndpoint:
+    """Tests for the /api/upload-source endpoint."""
+
+    def test_upload_source_text_file(self, client, tmp_path):
+        """Upload text file for source mode."""
+        txt_file = tmp_path / "document.txt"
+        txt_file.write_text("This is the document content.")
+
+        with open(txt_file, "rb") as f:
+            response = client.post(
+                "/api/upload-source",
+                data={"file": (f, "document.txt")},
+                content_type="multipart/form-data",
+            )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "file_id" in data
+        assert data["filename"] == "document.txt"
+
+    def test_upload_source_rejects_binary(self, client, tmp_path):
+        """Upload source rejects binary file types."""
+        img_file = tmp_path / "image.png"
+        img_file.write_bytes(b"\x89PNG\r\n\x1a\n fake image")
+
+        with open(img_file, "rb") as f:
+            response = client.post(
+                "/api/upload-source",
+                data={"file": (f, "image.png")},
+                content_type="multipart/form-data",
+            )
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "not supported" in data["error"]
+        assert ".png" in data["error"]
+
 
 class TestEncodeStateEndpoint:
     """Tests for the /api/encode-state endpoint."""
