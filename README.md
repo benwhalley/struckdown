@@ -218,6 +218,12 @@ sd chat "Price: $19.99 [[number:price]]"
 
 # Dates
 sd chat "Meeting on Jan 15, 2024 [[date:meeting]]"
+
+# JSON (any valid JSON value)
+sd chat "Return data as JSON [[json:data]]"
+
+# Record (JSON object with string keys)
+sd chat "Extract as key-value pairs [[record:info]]"
 ```
 
 ### Variables

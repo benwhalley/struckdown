@@ -53,6 +53,8 @@ Complete documentation for Struckdown.
 | DateTime | `[[datetime:timestamp]]` | DateTime with timezone |
 | Time | `[[time:meeting]]` | Time extraction |
 | Duration | `[[duration:length]]` | Time spans |
+| JSON | `[[json:data]]` | Any valid JSON value |
+| Record | `[[record:info]]` | JSON object (string keys) |
 
 ### Quantifiers
 

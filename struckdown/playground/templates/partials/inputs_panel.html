@@ -1,12 +1,12 @@
 <h6 class="mb-3"><i class="bi bi-input-cursor-text"></i> Inputs</h6>
 {% if inputs_required %}
-<div class="row g-2">
+<div class="d-flex flex-column gap-2">
     {% for input_name in inputs_required %}
-    <div class="col-md-6">
-        <label for="input-{{ input_name }}" class="form-label small">
+    <div>
+        <label for="input-{{ input_name }}" class="form-label small mb-1">
             <code>{{ "{{" }}{{ input_name }}{{ "}}" }}</code>
         </label>
-        <textarea class="form-control form-control-sm input-field" id="input-{{ input_name }}"
+        <textarea class="form-control form-control-sm input-field w-100" id="input-{{ input_name }}"
                   name="{{ input_name }}" rows="2"
                   placeholder="Enter value for {{ input_name }}">{{ current_values.get(input_name, '') }}</textarea>
     </div>

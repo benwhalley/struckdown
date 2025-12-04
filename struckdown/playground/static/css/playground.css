@@ -285,6 +285,22 @@
     min-height: 60px;
 }
 
+/* File browser */
+#file-list .list-group-item {
+    font-size: 0.9rem;
+    padding: 0.5rem 0.75rem;
+}
+
+#file-list .list-group-item.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+#new-file-name {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.85rem;
+}
+
 /* Settings panel inputs */
 #panel-settings input[type="text"],
 #panel-settings input[type="password"],
@@ -358,6 +374,8 @@
 #help-offcanvas,
 #settings-offcanvas {
     width: 340px;
+    top: 32px;
+    height: calc(100% - 32px);
 }
 
 .cheatsheet-table {

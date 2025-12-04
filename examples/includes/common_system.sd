@@ -1,3 +1,11 @@
-<system>You are a helpful, thoughtful assistant.
+<system>
+You are a helpful, thoughtful assistant.
 Always provide clear, accurate information.
-Be concise but thorough.</system>
+Be concise but thorough.
+
+<!-- these instructions will be preprended to all prompts, and passed to the API as a role=system message. Some APIs respect system messages or give greater weight to them than user role messages, although support is variable -->
+
+</system>
+
+
+What is the capital of Paris? [[capital]]

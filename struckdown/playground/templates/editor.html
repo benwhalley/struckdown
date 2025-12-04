@@ -109,6 +109,11 @@
             <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
                 <span class="small text-muted">Editor <span id="dirty-indicator" class="dirty-dot" style="display: none;" title="Unsaved changes"></span></span>
                 <div>
+                    {% if not remote_mode %}
+                    <button class="btn btn-outline-secondary btn-sm me-1" id="open-btn" onclick="showFileBrowser()">
+                        <i class="bi bi-folder2-open"></i> Open
+                    </button>
+                    {% endif %}
                     <button class="btn btn-secondary btn-sm me-1" id="save-btn" onclick="saveOnly()">
                         <i class="bi bi-check2"></i> Save
                     </button>
@@ -153,6 +158,7 @@
 
 <!-- Hidden data -->
 <input type="hidden" id="remote-mode" value="{{ 'true' if remote_mode else 'false' }}">
+<input type="hidden" id="current-file-path" value="{{ current_file_path or '' }}">
 <input type="hidden" id="current-file-id" value="">
 <input type="hidden" id="current-source-file-id" value="">
 <input type="hidden" id="current-task-id" value="">
@@ -182,6 +188,58 @@
     </div>
 </div>
 
+<!-- File Browser Modal -->
+<div class="modal fade" id="file-browser-modal" tabindex="-1" aria-labelledby="file-browser-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="file-browser-modal-label">
+                    <i class="bi bi-folder2-open"></i> Open File
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- New file creation -->
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control form-control-sm" id="new-file-name" placeholder="new-file.sd">
+                    <button class="btn btn-outline-primary btn-sm" type="button" onclick="createNewFile()">
+                        <i class="bi bi-plus-lg"></i> New
+                    </button>
+                </div>
+                <!-- File list -->
+                <div id="file-list" class="list-group" style="max-height: 300px; overflow-y: auto;">
+                    <div class="text-muted text-center py-3">Loading files...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Unsaved Changes Modal (for file switching) -->
+<div class="modal fade" id="unsaved-changes-modal" tabindex="-1" aria-labelledby="unsaved-changes-modal-label" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title" id="unsaved-changes-modal-label">
+                    <i class="bi bi-exclamation-triangle"></i> Unsaved Changes
+                </h5>
+            </div>
+            <div class="modal-body">
+                <p>You have unsaved changes that will be lost if you switch files.</p>
+                <p class="mb-0"><strong>What would you like to do?</strong></p>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-outline-secondary" onclick="handleFileSwitchCancel()">
+                    <i class="bi bi-x"></i> Cancel
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="handleFileSwitchConfirm()">
+                    <i class="bi bi-arrow-right"></i> Discard & Switch
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Settings Strip (right edge trigger) -->
 <div id="settings-strip" data-bs-toggle="offcanvas" data-bs-target="#settings-offcanvas" aria-controls="settings-offcanvas">
     <span class="side-strip-text"><i class="bi bi-gear"></i> Settings</span>
@@ -203,8 +261,16 @@
     <div class="offcanvas-body">
         <div class="mb-3">
             <label for="model-input" class="form-label">Model</label>
+            {% if allowed_models %}
+            <select class="form-select form-select-sm" id="model-input">
+                {% for m in allowed_models %}
+                <option value="{{ m }}" {% if m == model %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
             <input type="text" class="form-control form-control-sm" id="model-input"
                    value="{{ model or '' }}" placeholder="e.g. gpt-4o">
+            {% endif %}
             <div class="form-text">LLM model identifier</div>
         </div>
         {% if remote_mode %}
@@ -280,6 +346,10 @@
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td>
                     <td>Save & Run</td>
+                </tr>
+                <tr>
+                    <td><kbd>Ctrl</kbd> + <kbd>O</kbd></td>
+                    <td>Open file</td>
                 </tr>
                 <tr>
                     <td><kbd>Ctrl</kbd> + <kbd>I</kbd></td>
@@ -387,6 +457,15 @@ document.addEventListener('keydown', function(e) {
         return;
     }
 
+    // Ctrl+O - Open file browser (local mode only)
+    if (e.key === 'o' || e.key === 'O') {
+        if (document.getElementById('remote-mode').value !== 'true') {
+            e.preventDefault();
+            showFileBrowser();
+            return;
+        }
+    }
+
     // Ctrl+, - Toggle Settings offcanvas
     if (e.key === ',') {
         e.preventDefault();
@@ -420,6 +499,9 @@ document.addEventListener('keydown', function(e) {
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize session for localStorage persistence
     initSession();
+
+    // Initialize file browser (sets currentFilePath)
+    initFileBrowser();
 
     // Wait for CodeMirror (up to 2 seconds), then init editor
     waitForCodeMirror(function() {
@@ -493,10 +575,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Model input save on change
+    // Model input save on change (works for both input and select)
     const modelInput = document.getElementById('model-input');
     if (modelInput) {
-        modelInput.addEventListener('input', debounce(saveInputsToStorage, 500));
+        const eventType = modelInput.tagName === 'SELECT' ? 'change' : 'input';
+        modelInput.addEventListener(eventType, debounce(saveInputsToStorage, 500));
     }
 });
 </script>

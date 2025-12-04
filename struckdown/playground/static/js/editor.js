@@ -12,25 +12,55 @@ let isDirty = false;
 let fileWatchInterval = null;
 let pendingConflict = null;
 
-// Session management - persist inputs per session
-function getSessionId() {
-    // Check URL hash first
-    let hash = window.location.hash.slice(1);
-    if (hash && hash.startsWith('s=')) {
-        return hash.slice(2);
-    }
+// Multi-file support
+let currentFilePath = null;
+let fileBrowserModal = null;
+let pendingFileSwitchPath = null;
 
+// Session management - persist inputs per session
+function getHashParams() {
+    const hash = window.location.hash.slice(1);
+    const params = {};
+    hash.split('&').forEach(part => {
+        const [key, value] = part.split('=');
+        if (key && value) {
+            params[key] = decodeURIComponent(value);
+        }
+    });
+    return params;
+}
+
+function setHashParams(params) {
+    const parts = [];
+    for (const [key, value] of Object.entries(params)) {
+        if (value) {
+            parts.push(key + '=' + encodeURIComponent(value));
+        }
+    }
+    window.location.hash = parts.join('&');
+}
+
+function getSessionId() {
+    const params = getHashParams();
+    if (params.s) {
+        return params.s;
+    }
     // Generate new session ID
     return 'sd_' + Math.random().toString(36).substring(2, 10);
 }
 
 function initSession() {
     sessionId = getSessionId();
+    updateHashWithCurrentState();
+}
 
-    // Update URL hash if not already set
-    if (!window.location.hash.includes('s=' + sessionId)) {
-        window.location.hash = 's=' + sessionId;
+function updateHashWithCurrentState() {
+    const params = getHashParams();
+    params.s = sessionId;
+    if (currentFilePath) {
+        params.f = currentFilePath;
     }
+    setHashParams(params);
 }
 
 function getStorageKey() {
@@ -75,6 +105,15 @@ function updateDirtyIndicator() {
     }
 }
 
+// Warn before leaving page with unsaved changes
+window.addEventListener('beforeunload', function(e) {
+    if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+    }
+});
+
 function markEditorDirty() {
     if (!isDirty) {
         setDirty(true);
@@ -108,7 +147,13 @@ function stopFileWatching() {
 }
 
 function checkFileStatus(isInitial) {
-    fetch('/api/file-status')
+    // Skip if no file is open
+    if (!currentFilePath) {
+        return;
+    }
+
+    // Use the file-specific endpoint
+    fetch('/api/files/' + encodeURIComponent(currentFilePath))
         .then(response => response.json())
         .then(data => {
             if (data.error) {
@@ -413,9 +458,16 @@ function saveOnly() {
         return;
     }
 
+    // Check if we have a file to save to
+    if (!currentFilePath) {
+        setStatus('error', 'No file open');
+        return;
+    }
+
     setStatus('running', 'Saving...');
 
-    fetch('/api/save', {
+    // Use the new file-specific save endpoint
+    fetch('/api/files/' + encodeURIComponent(currentFilePath), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({syntax: syntax})
@@ -430,7 +482,7 @@ function saveOnly() {
             setDirty(false);
             setStatus('success', 'Saved');
         } else {
-            setStatus('error', 'Save failed');
+            setStatus('error', 'Save failed: ' + (data.error || 'Unknown error'));
         }
     })
     .catch(err => {
@@ -449,15 +501,17 @@ function saveAndRun() {
     disableSaveButton(true);
 
     // Save first (local mode only)
-    const savePromise = remoteMode ?
-        Promise.resolve() :
-        fetch('/api/save', {
+    let savePromise;
+    if (remoteMode) {
+        savePromise = Promise.resolve();
+    } else if (currentFilePath) {
+        // Use file-specific save endpoint
+        savePromise = fetch('/api/files/' + encodeURIComponent(currentFilePath), {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({syntax: syntax})
         }).then(response => response.json()).then(data => {
             if (data.success) {
-                // Update mtime and clear dirty state after successful save
                 if (data.mtime) {
                     lastKnownMtime = data.mtime;
                 }
@@ -465,6 +519,10 @@ function saveAndRun() {
                 setDirty(false);
             }
         });
+    } else {
+        // No file to save - skip save step
+        savePromise = Promise.resolve();
+    }
 
     savePromise
     .then(() => {
@@ -831,5 +889,225 @@ function runBatch(syntax) {
 
         document.getElementById('current-task-id').value = data.task_id;
         initBatchStream(data.task_id);
+    });
+}
+
+// ============================================
+// Multi-file support functions
+// ============================================
+
+function initFileBrowser() {
+    // Initialize current file path from hidden input (server-provided initial file)
+    const pathInput = document.getElementById('current-file-path');
+    const initialFilePath = pathInput && pathInput.value ? pathInput.value : null;
+    currentFilePath = initialFilePath;
+
+    // Initialize Bootstrap modal
+    const modalEl = document.getElementById('file-browser-modal');
+    if (modalEl) {
+        fileBrowserModal = new bootstrap.Modal(modalEl);
+    }
+
+    // Check if URL hash specifies a different file to load
+    const params = getHashParams();
+    if (params.f && params.f !== initialFilePath) {
+        // Hash has a file path - load it after editor is ready
+        setTimeout(() => {
+            switchToFile(params.f);
+        }, 100);
+    } else {
+        // Update hash with current file
+        updateHashWithCurrentState();
+    }
+}
+
+function showFileBrowser() {
+    if (!fileBrowserModal) {
+        initFileBrowser();
+    }
+    loadFileList();
+    fileBrowserModal.show();
+}
+
+function loadFileList() {
+    const fileListEl = document.getElementById('file-list');
+    fileListEl.innerHTML = '<div class="text-muted text-center py-3"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+
+    fetch('/api/files')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                fileListEl.innerHTML = '<div class="text-danger text-center py-3">' + data.error + '</div>';
+                return;
+            }
+
+            if (!data.files || data.files.length === 0) {
+                fileListEl.innerHTML = '<div class="text-muted text-center py-3">No .sd files found</div>';
+                return;
+            }
+
+            // Render file list
+            fileListEl.innerHTML = data.files.map(file => {
+                const isActive = file.path === currentFilePath;
+                return `
+                    <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${isActive ? 'active' : ''}"
+                       onclick="selectFile('${escapeHtml(file.path)}'); return false;">
+                        <span><i class="bi bi-file-earmark-code me-2"></i>${escapeHtml(file.path)}</span>
+                        ${isActive ? '<i class="bi bi-check2"></i>' : ''}
+                    </a>
+                `;
+            }).join('');
+        })
+        .catch(err => {
+            fileListEl.innerHTML = '<div class="text-danger text-center py-3">Error loading files</div>';
+            console.error('Error loading file list:', err);
+        });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function selectFile(filepath) {
+    // Check for unsaved changes
+    if (isDirty) {
+        pendingFileSwitchPath = filepath;
+        showFileSwitchWarning();
+        return;
+    }
+
+    switchToFile(filepath);
+}
+
+function showFileSwitchWarning() {
+    // Hide file browser modal, show unsaved changes modal
+    fileBrowserModal.hide();
+    const modal = new bootstrap.Modal(document.getElementById('unsaved-changes-modal'));
+    modal.show();
+}
+
+function handleFileSwitchCancel() {
+    pendingFileSwitchPath = null;
+    bootstrap.Modal.getInstance(document.getElementById('unsaved-changes-modal')).hide();
+
+    // Reopen file browser
+    setTimeout(() => showFileBrowser(), 300);
+}
+
+function handleFileSwitchConfirm() {
+    const filepath = pendingFileSwitchPath;
+    pendingFileSwitchPath = null;
+    bootstrap.Modal.getInstance(document.getElementById('unsaved-changes-modal')).hide();
+
+    // Switch to the file
+    switchToFile(filepath);
+}
+
+function switchToFile(filepath) {
+    setStatus('running', 'Loading file...');
+
+    fetch('/api/files/' + encodeURIComponent(filepath))
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                setStatus('error', 'Error: ' + data.error);
+                return;
+            }
+
+            // Update current file path
+            currentFilePath = filepath;
+            document.getElementById('current-file-path').value = filepath;
+
+            // Update URL hash so page reload opens same file
+            updateHashWithCurrentState();
+
+            // Update editor content
+            if (editor._isCodeMirror && editor.setValue) {
+                editor.setValue(data.content);
+            } else if (editor.value !== undefined) {
+                editor.value = data.content;
+            }
+
+            // Update file watching state
+            lastKnownMtime = data.mtime;
+            lastSavedContent = data.content;
+            setDirty(false);
+
+            // Update displayed filename in navbar
+            updateNavbarFilename(filepath);
+
+            // Re-analyse template
+            analyseTemplate();
+
+            setStatus('success', 'Opened: ' + filepath);
+
+            // Hide file browser modal
+            if (fileBrowserModal) {
+                fileBrowserModal.hide();
+            }
+        })
+        .catch(err => {
+            setStatus('error', 'Error loading file: ' + err.message);
+            console.error('Error switching file:', err);
+        });
+}
+
+function updateNavbarFilename(filepath) {
+    // Update filename display in navbar
+    const filenameEl = document.querySelector('#top-navbar .text-light.opacity-75');
+    if (filenameEl) {
+        filenameEl.innerHTML = '<i class="bi bi-file-earmark-code"></i> ' + escapeHtml(filepath);
+    } else {
+        // Create filename element if it doesn't exist
+        const brand = document.querySelector('#top-navbar .navbar-brand');
+        if (brand) {
+            const span = document.createElement('span');
+            span.className = 'text-light opacity-75 small ms-2';
+            span.innerHTML = '<i class="bi bi-file-earmark-code"></i> ' + escapeHtml(filepath);
+            brand.after(span);
+        }
+    }
+}
+
+function createNewFile() {
+    const input = document.getElementById('new-file-name');
+    let filename = input.value.trim();
+
+    if (!filename) {
+        input.classList.add('is-invalid');
+        return;
+    }
+    input.classList.remove('is-invalid');
+
+    // Ensure .sd extension
+    if (!filename.endsWith('.sd')) {
+        filename += '.sd';
+    }
+
+    setStatus('running', 'Creating file...');
+
+    fetch('/api/files/new', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: filename})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            setStatus('error', 'Error: ' + data.error);
+            return;
+        }
+
+        // Clear input
+        input.value = '';
+
+        // Switch to the new file
+        selectFile(data.path);
+    })
+    .catch(err => {
+        setStatus('error', 'Error creating file: ' + err.message);
+        console.error('Error creating file:', err);
     });
 }

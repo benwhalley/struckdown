@@ -415,12 +415,19 @@ def chat(
                     typer.echo()
 
                 # Completion in red at the end
-                typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {seg_result.output}\033[0m\n")
+                if isinstance(seg_result.output, (dict, list)):
+                    formatted = json.dumps(seg_result.output, indent=2, default=str)
+                    typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {formatted}\033[0m\n")
+                else:
+                    typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {seg_result.output}\033[0m\n")
 
                 
             else:
                 # Fallback if messages not available
-                typer.echo(f"Output: {seg_result.output}")
+                if isinstance(seg_result.output, (dict, list)):
+                    typer.echo(f"Output: {json.dumps(seg_result.output, indent=2, default=str)}")
+                else:
+                    typer.echo(f"Output: {seg_result.output}")
 
             typer.echo()  # Blank line after segment
 
@@ -444,7 +451,12 @@ def chat(
             # Skip break action (control flow, not a completion)
             if v.action == 'break':
                 continue
-            typer.echo(f"\033[1m{k}\033[0m: {v.output}")
+            # Format dict/list as JSON for valid output
+            if isinstance(v.output, (dict, list)):
+                formatted = json.dumps(v.output, indent=2, default=str)
+                typer.echo(f"\033[1m{k}\033[0m: {formatted}")
+            else:
+                typer.echo(f"\033[1m{k}\033[0m: {v.output}")
 
         # Show break notice if execution was terminated
         if break_result:
@@ -1492,9 +1504,9 @@ def flat(
 
 @app.command()
 def edit(
-    file: Optional[Path] = typer.Argument(
+    path: Optional[Path] = typer.Argument(
         None,
-        help="Struckdown file to edit (default: untitled.sd in cwd)"
+        help="File or directory to edit (default: current directory as workspace)"
     ),
     port: Optional[int] = typer.Option(
         None, "-p", "--port",
@@ -1512,6 +1524,10 @@ def edit(
         False, "--reload", "-r",
         help="Auto-reload server on file changes (development mode)"
     ),
+    models: Optional[str] = typer.Option(
+        None, "--models", "-m",
+        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini')"
+    ),
 ):
     """Open interactive playground for editing struckdown prompts.
 
@@ -1519,11 +1535,13 @@ def edit(
     and testing struckdown prompts interactively.
 
     Examples:
-        sd edit                     # Create/edit untitled.sd
-        sd edit myfile.sd           # Edit existing file
+        sd edit                     # Open workspace browser for current dir
+        sd edit myfile.sd           # Edit specific file
+        sd edit ./prompts/          # Open workspace browser for prompts/
         sd edit -p 8080             # Use specific port
         sd edit -I ./custom         # Include custom actions/types
         sd edit --reload            # Auto-reload on file changes
+        sd edit --models=gpt-4o,gpt-4o-mini  # Restrict model selector
     """
     import threading
     import webbrowser
@@ -1532,13 +1550,24 @@ def edit(
 
     console = Console()
 
-    # Resolve file path
-    if file is None:
-        file = Path.cwd() / "untitled.sd"
+    # Determine workspace_dir and prompt_file based on path
+    if path is None:
+        # No path: use current directory as workspace, no initial file
+        workspace_dir = Path.cwd()
+        prompt_file = None
+    elif path.is_dir():
+        # Directory: use as workspace, no initial file
+        workspace_dir = path.resolve()
+        prompt_file = None
+    else:
+        # File: use parent as workspace, file as initial
+        workspace_dir = path.parent.resolve()
+        prompt_file = path.resolve()
 
-    if not file.exists():
-        file.write_text("# Your struckdown prompt\n\n[[response]]\n")
-        console.print(f"[green]Created[/green] {file}")
+        # Create file if it doesn't exist
+        if not prompt_file.exists():
+            prompt_file.write_text("# Your struckdown prompt\n\n[[response]]\n")
+            console.print(f"[green]Created[/green] {prompt_file}")
 
     # Resolve include paths
     include_paths = [p.resolve() for p in include if p.exists()]
@@ -1552,16 +1581,25 @@ def edit(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
+    # Parse allowed models
+    allowed_models = None
+    if models:
+        allowed_models = [m.strip() for m in models.split(",") if m.strip()]
+
     # Create Flask app
     flask_app = create_app(
-        prompt_file=file.resolve(),
+        prompt_file=prompt_file,
+        workspace_dir=workspace_dir,
         include_paths=include_paths,
         remote_mode=False,
+        allowed_models=allowed_models,
     )
 
     url = f"http://localhost:{port}"
     console.print(f"[green]Playground:[/green] {url}")
-    console.print(f"[dim]Editing: {file}[/dim]")
+    console.print(f"[dim]Workspace: {workspace_dir}[/dim]")
+    if prompt_file:
+        console.print(f"[dim]Editing: {prompt_file.name}[/dim]")
     if reload:
         console.print("[dim]Auto-reload enabled - watching for file changes[/dim]")
     console.print("[dim]Press Ctrl+C to stop[/dim]")
@@ -1597,6 +1635,10 @@ def serve(
         None, "--api-key",
         help="Server-side API key (if not set, users must provide their own)"
     ),
+    models: Optional[str] = typer.Option(
+        None, "--models", "-m",
+        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini'). Falls back to STRUCKDOWN_ALLOWED_MODELS env var."
+    ),
 ):
     """Run playground in remote/server mode for deployment.
 
@@ -1611,14 +1653,26 @@ def serve(
         sd serve --api-key=$MY_API_KEY        # Use server-side key
         sd serve -p 9000                      # Use specific port
         sd serve -h 127.0.0.1                 # Bind to localhost only
+        sd serve --models=gpt-4o,gpt-4o-mini  # Restrict to specific models
+
+    Environment variables:
+        STRUCKDOWN_ALLOWED_MODELS: Comma-separated list of allowed models
+                                   (fallback if --models not provided)
 
     For production, use with gunicorn:
         gunicorn -w 4 -b 0.0.0.0:8000 \\
             "struckdown.playground:create_app(remote_mode=True)"
     """
+    import os
     from struckdown.playground import create_app
 
     console = Console()
+
+    # Parse allowed models (CLI option takes precedence over env var)
+    allowed_models = None
+    models_str = models or os.environ.get("STRUCKDOWN_ALLOWED_MODELS")
+    if models_str:
+        allowed_models = [m.strip() for m in models_str.split(",") if m.strip()]
 
     # Create Flask app in remote mode
     flask_app = create_app(
@@ -1626,6 +1680,7 @@ def serve(
         include_paths=[],
         remote_mode=True,
         server_api_key=api_key,
+        allowed_models=allowed_models,
     )
 
     url = f"http://{host}:{port}"

@@ -1108,6 +1108,35 @@ def duration_response_model(options=None, quantifier=None, required_prefix=False
     )
 
 
+# --- JSON types for arbitrary structured data ---
+
+
+@ResponseTypes.register("json")
+class JsonResponse(ResponseModel):
+    """Return arbitrary valid JSON data."""
+
+    response: Any = Field(
+        ...,
+        description="Valid JSON data. Can be an object, array, string, number, boolean, or null.",
+    )
+
+
+JsonResponse.llm_config = LLMConfig(temperature=0.0, model=None)
+
+
+@ResponseTypes.register("record")
+class RecordResponse(ResponseModel):
+    """Return a JSON object with string keys and any values."""
+
+    response: Dict[str, Any] = Field(
+        ...,
+        description="A JSON object with string keys. Values can be any JSON type.",
+    )
+
+
+RecordResponse.llm_config = LLMConfig(temperature=0.0, model=None)
+
+
 # --- Job and JobGroup schemas for API output ---
 
 

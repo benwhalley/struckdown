@@ -165,19 +165,24 @@ def _cleanup_old_files():
 
 def create_app(
     prompt_file: Optional[Path] = None,
+    workspace_dir: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     remote_mode: bool = False,
     server_api_key: Optional[str] = None,
+    allowed_models: Optional[List[str]] = None,
 ) -> Flask:
     """
     Create Flask application for the playground.
 
     Args:
-        prompt_file: Local mode - path to the .sd file being edited
+        prompt_file: Local mode - path to the initial .sd file to open
+        workspace_dir: Local mode - directory containing .sd files (for multi-file support)
         include_paths: Directories to search for includes/actions/types
         remote_mode: True for hosted service (no file access, URL-encoded state)
         server_api_key: Optional server-side API key for remote mode
                         (if not set, users must provide their own)
+        allowed_models: Optional list of allowed model names. If provided,
+                        the UI shows a dropdown instead of free text input.
     """
     app = Flask(
         __name__,
@@ -187,9 +192,11 @@ def create_app(
 
     # Store config
     app.config["PROMPT_FILE"] = prompt_file
+    app.config["WORKSPACE_DIR"] = workspace_dir
     app.config["INCLUDE_PATHS"] = include_paths or []
     app.config["REMOTE_MODE"] = remote_mode
     app.config["SERVER_API_KEY"] = server_api_key
+    app.config["ALLOWED_MODELS"] = allowed_models
     app.config["MAX_CONTENT_LENGTH"] = STRUCKDOWN_MAX_UPLOAD_SIZE
 
     # Rate limiting (only in remote mode)
@@ -221,15 +228,26 @@ def create_app(
     def index():
         """Render the main editor page."""
         syntax = ""
+        current_file_path = ""
         if prompt_file and prompt_file.exists():
             syntax = prompt_file.read_text()
+            # Get path relative to workspace
+            if workspace_dir:
+                try:
+                    current_file_path = str(prompt_file.resolve().relative_to(workspace_dir.resolve()))
+                except ValueError:
+                    current_file_path = prompt_file.name
+            else:
+                current_file_path = prompt_file.name
 
         return render_template(
             "editor.html",
             syntax=syntax,
             filename=prompt_file.name if prompt_file else None,
+            current_file_path=current_file_path,
             remote_mode=remote_mode,
             has_server_api_key=bool(server_api_key),
+            allowed_models=allowed_models,
         )
 
     @app.route("/e/<encoded_state>")
@@ -245,6 +263,7 @@ def create_app(
             remote_mode=True,
             has_server_api_key=bool(server_api_key),
             encoded_state=encoded_state,
+            allowed_models=allowed_models,
         )
 
     @app.route("/api/save", methods=["POST"])
@@ -276,6 +295,125 @@ def create_app(
         mtime = prompt_file.stat().st_mtime
         content = prompt_file.read_text()
         return jsonify({"mtime": mtime, "content": content})
+
+    @app.route("/api/files")
+    def list_files():
+        """List all .sd files in the workspace directory."""
+        if remote_mode:
+            return jsonify({"error": "Not available in remote mode"}), 400
+
+        workspace = app.config.get("WORKSPACE_DIR")
+        if not workspace or not workspace.is_dir():
+            return jsonify({"files": [], "workspace": None})
+
+        files = []
+        for sd_file in sorted(workspace.rglob("*.sd")):
+            # Skip hidden files/directories
+            if any(part.startswith(".") for part in sd_file.relative_to(workspace).parts):
+                continue
+            rel_path = str(sd_file.relative_to(workspace))
+            files.append({
+                "path": rel_path,
+                "name": sd_file.name,
+                "mtime": sd_file.stat().st_mtime,
+            })
+
+        return jsonify({"files": files, "workspace": str(workspace)})
+
+    def _validate_workspace_path(filepath: str) -> Optional[Path]:
+        """Validate and resolve a file path within the workspace. Returns None if invalid."""
+        workspace = app.config.get("WORKSPACE_DIR")
+        if not workspace:
+            return None
+
+        # Resolve the path and check it's within workspace
+        try:
+            file_path = (workspace / filepath).resolve()
+            workspace_resolved = workspace.resolve()
+            if not str(file_path).startswith(str(workspace_resolved)):
+                return None  # Directory traversal attempt
+            return file_path
+        except (ValueError, OSError):
+            return None
+
+    @app.route("/api/files/<path:filepath>")
+    def get_file(filepath: str):
+        """Read content of a specific file in the workspace."""
+        if remote_mode:
+            return jsonify({"error": "Not available in remote mode"}), 400
+
+        file_path = _validate_workspace_path(filepath)
+        if not file_path:
+            return jsonify({"error": "Invalid path"}), 400
+
+        if not file_path.exists():
+            return jsonify({"error": "File not found"}), 404
+
+        return jsonify({
+            "content": file_path.read_text(),
+            "mtime": file_path.stat().st_mtime,
+            "path": filepath
+        })
+
+    @app.route("/api/files/<path:filepath>", methods=["POST"])
+    def save_file(filepath: str):
+        """Save content to a specific file in the workspace."""
+        if remote_mode:
+            return jsonify({"error": "Not available in remote mode"}), 400
+
+        file_path = _validate_workspace_path(filepath)
+        if not file_path:
+            return jsonify({"error": "Invalid path"}), 400
+
+        data = request.get_json()
+        syntax = data.get("syntax", "")
+
+        # Create parent directories if needed
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(syntax)
+
+        return jsonify({
+            "success": True,
+            "mtime": file_path.stat().st_mtime
+        })
+
+    @app.route("/api/files/new", methods=["POST"])
+    def create_file():
+        """Create a new .sd file in the workspace."""
+        if remote_mode:
+            return jsonify({"error": "Not available in remote mode"}), 400
+
+        workspace = app.config.get("WORKSPACE_DIR")
+        if not workspace:
+            return jsonify({"error": "No workspace configured"}), 400
+
+        data = request.get_json()
+        filename = data.get("filename", "").strip()
+
+        if not filename:
+            return jsonify({"error": "Filename required"}), 400
+
+        # Ensure .sd extension
+        if not filename.endswith(".sd"):
+            filename += ".sd"
+
+        # Validate the path
+        file_path = _validate_workspace_path(filename)
+        if not file_path:
+            return jsonify({"error": "Invalid filename"}), 400
+
+        if file_path.exists():
+            return jsonify({"error": "File already exists"}), 400
+
+        # Create with default content
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("# LLM Instructions\n\nUse markdown-style syntax (see the help tab for details) \n\n[[response]]\n")
+
+        return jsonify({
+            "success": True,
+            "path": filename,
+            "mtime": file_path.stat().st_mtime
+        })
 
     @app.route("/api/analyse", methods=["POST"])
     def analyse():

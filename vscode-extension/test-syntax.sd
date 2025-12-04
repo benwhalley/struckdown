@@ -50,9 +50,8 @@ Use previous values: {{response}}
 Interpolate data: {{count}} items found
 Complex: The color is {{color}} and choice is {{choice}}
 
-## Django Tags (Optional)
+## Jinja Tags (Optional)
 
-{% csrf_token %}
 {% if condition %}
 {% endif %}
 

@@ -782,6 +782,13 @@ class MindframeTransformer(Transformer):
 
         is_function = Actions.is_registered(type_name)
 
+        # Validate that the explicit type is registered
+        if not is_function and not ResponseTypes.is_registered(type_name):
+            raise ValueError(
+                f"Unknown type '{type_name}' in [[{type_name}:{var_name}]] at line {line_number}. "
+                f"Available types: {sorted(ResponseTypes.list_registered())}"
+            )
+
         return {
             "return_type": self._lookup_rt(
                 type_name, options, quantifier, required_prefix
@@ -831,6 +838,13 @@ class MindframeTransformer(Transformer):
         var_name = f"_{type_name}_{self.completion_counters[type_name]:02d}"
 
         is_function = Actions.is_registered(type_name)
+
+        # Validate that the explicit type is registered
+        if not is_function and not ResponseTypes.is_registered(type_name):
+            raise ValueError(
+                f"Unknown type '{type_name}' in [[{type_name}:]] at line {line_number}. "
+                f"Available types: {sorted(ResponseTypes.list_registered())}"
+            )
 
         return {
             "return_type": self._lookup_rt(
