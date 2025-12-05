@@ -312,14 +312,30 @@ async def run_batch_streaming(
     include_paths: List[Path] = None,
     max_concurrent: int = 10,
     on_row_complete=None,
+    slot_level: bool = False,
 ) -> AsyncGenerator[Dict, None]:
     """
     Execute template for each row, yielding results as they complete.
 
-    Yields dicts with:
+    When slot_level=False (default), yields row-level events:
+        type: "row"
         index: row index
         inputs: original input values
         outputs: slot values
+        status: "complete" | "error"
+        error: error message if status is "error"
+
+    When slot_level=True, yields slot-level events as well:
+        type: "slot"
+        row_index: row index
+        slot_key: slot name
+        value: slot output value
+        elapsed_ms: time for this slot
+        was_cached: whether result was cached
+
+        type: "row_complete"
+        row_index: row index
+        outputs: all slot values for this row
         status: "complete" | "error"
         error: error message if status is "error"
 
@@ -331,53 +347,113 @@ async def run_batch_streaming(
         include_paths: Paths for includes
         max_concurrent: Max concurrent executions
         on_row_complete: Optional callback called with result dict
+        slot_level: If True, yield slot-level events for incremental updates
     """
+    from struckdown import chatter_incremental_async
+
     model = LLM(model_name=model_name) if model_name else LLM()
     semaphore = anyio.Semaphore(max_concurrent)
 
-    # Use a memory channel for streaming results
-    send_channel, receive_channel = anyio.create_memory_object_stream(max_buffer_size=len(rows))
+    # Use a larger buffer for slot-level events
+    buffer_size = len(rows) * 20 if slot_level else len(rows)
+    send_channel, receive_channel = anyio.create_memory_object_stream(max_buffer_size=buffer_size)
 
     async def process_row(index: int, row: Dict):
         async with semaphore:
-            try:
-                result = await chatter_async(
-                    syntax,
-                    model=model,
-                    credentials=credentials,
-                    context=row,
-                    include_paths=include_paths,
-                )
-                row_result = {
-                    "index": index,
-                    "inputs": row,
-                    "outputs": result.outputs,
-                    "status": "complete",
-                    "error": None,
-                }
-            except Exception as e:
-                row_result = {
-                    "index": index,
-                    "inputs": row,
-                    "outputs": {},
-                    "status": "error",
-                    "error": str(e),
-                }
+            if slot_level:
+                # Use incremental mode for slot-level events
+                outputs = {}
+                try:
+                    async for event in chatter_incremental_async(
+                        syntax,
+                        model=model,
+                        credentials=credentials,
+                        context=row,
+                        include_paths=include_paths,
+                    ):
+                        if event.type == "slot_completed":
+                            outputs[event.slot_key] = event.result.output
+                            await send_channel.send({
+                                "type": "slot",
+                                "row_index": index,
+                                "slot_key": event.slot_key,
+                                "value": event.result.output,
+                                "elapsed_ms": event.elapsed_ms,
+                                "was_cached": event.was_cached,
+                            })
+                        elif event.type == "complete":
+                            row_result = {
+                                "type": "row_complete",
+                                "row_index": index,
+                                "inputs": row,
+                                "outputs": outputs,
+                                "status": "complete",
+                                "error": None,
+                            }
+                            await send_channel.send(row_result)
+                            if on_row_complete:
+                                on_row_complete(row_result)
+                        elif event.type == "error":
+                            row_result = {
+                                "type": "row_complete",
+                                "row_index": index,
+                                "inputs": row,
+                                "outputs": outputs,
+                                "status": "error",
+                                "error": event.error_message,
+                            }
+                            await send_channel.send(row_result)
+                            if on_row_complete:
+                                on_row_complete(row_result)
+                except Exception as e:
+                    row_result = {
+                        "type": "row_complete",
+                        "row_index": index,
+                        "inputs": row,
+                        "outputs": outputs,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                    await send_channel.send(row_result)
+                    if on_row_complete:
+                        on_row_complete(row_result)
+            else:
+                # Original row-level mode
+                try:
+                    result = await chatter_async(
+                        syntax,
+                        model=model,
+                        credentials=credentials,
+                        context=row,
+                        include_paths=include_paths,
+                    )
+                    row_result = {
+                        "type": "row",
+                        "index": index,
+                        "inputs": row,
+                        "outputs": result.outputs,
+                        "status": "complete",
+                        "error": None,
+                    }
+                except Exception as e:
+                    row_result = {
+                        "type": "row",
+                        "index": index,
+                        "inputs": row,
+                        "outputs": {},
+                        "status": "error",
+                        "error": str(e),
+                    }
 
-            await send_channel.send(row_result)
-            if on_row_complete:
-                on_row_complete(row_result)
+                await send_channel.send(row_result)
+                if on_row_complete:
+                    on_row_complete(row_result)
 
     async def producer():
         async with anyio.create_task_group() as tg:
             for i, row in enumerate(rows):
                 tg.start_soon(process_row, i, row)
         await send_channel.aclose()
-
-    async def consumer():
-        async with receive_channel:
-            async for result in receive_channel:
-                yield result
 
     # Start producer in background
     async with anyio.create_task_group() as tg:

@@ -606,6 +606,124 @@ def create_app(
     if limiter:
         run = limiter.limit(STRUCKDOWN_RATE_LIMIT)(run)
 
+    @app.route("/api/run-incremental", methods=["POST"])
+    def run_incremental():
+        """Execute template with inputs, streaming incremental results via SSE.
+
+        Returns Server-Sent Events with event types:
+        - slot_completed: individual slot result
+        - checkpoint: checkpoint boundary reached
+        - complete: final result
+        - error: processing error
+        """
+        import asyncio
+        from struckdown import LLMCredentials, chatter_incremental_async
+
+        data = get_json_safe()
+        syntax = data.get("syntax", "")
+        inputs = data.get("inputs", {})
+        model_name = data.get("model")
+
+        # Validate syntax length
+        if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
+            def error_gen():
+                yield f'event: error\ndata: {json.dumps({"error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"})}\n\n'
+            return Response(
+                stream_with_context(error_gen()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # Check for disallowed actions in remote mode
+        if remote_mode:
+            disallowed = core.check_disallowed_actions(syntax)
+            if disallowed:
+                def error_gen():
+                    yield f'event: error\ndata: {json.dumps({"error": f"Actions not allowed in remote mode: {", ".join(disallowed)}"})}\n\n'
+                return Response(
+                    stream_with_context(error_gen()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
+        # Determine credentials (same as /api/run)
+        credentials = None
+        if remote_mode:
+            user_api_key = data.get("api_key")
+            user_api_base = data.get("api_base")
+
+            if server_api_key:
+                credentials = LLMCredentials(api_key=server_api_key)
+            elif user_api_key:
+                api_base = user_api_base or os.environ.get("LLM_API_BASE")
+                if not api_base:
+                    def error_gen():
+                        yield f'event: error\ndata: {json.dumps({"error": "API base URL required."})}\n\n'
+                    return Response(
+                        stream_with_context(error_gen()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    )
+                credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
+            else:
+                def error_gen():
+                    yield f'event: error\ndata: {json.dumps({"error": "API key required."})}\n\n'
+                return Response(
+                    stream_with_context(error_gen()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
+        def generate():
+            """Generator that streams incremental events."""
+            from struckdown import LLM
+
+            async def stream_events():
+                """Async generator to collect events."""
+                model = LLM(model_name=model_name) if model_name else LLM()
+                try:
+                    async for event in chatter_incremental_async(
+                        syntax,
+                        model=model,
+                        credentials=credentials,
+                        context=inputs,
+                    ):
+                        yield event
+                except Exception as e:
+                    # Yield error event
+                    from struckdown import ProcessingError, ChatterResult
+                    yield ProcessingError(
+                        segment_index=0,
+                        slot_key=None,
+                        error_message=safe_error_message(e, remote_mode),
+                        partial_results=ChatterResult(),
+                    )
+
+            # Run the async generator synchronously
+            loop = asyncio.new_event_loop()
+            try:
+                gen = stream_events()
+                while True:
+                    try:
+                        event = loop.run_until_complete(gen.__anext__())
+                        # Serialise and yield as SSE
+                        event_data = event.model_dump_json()
+                        yield f"event: {event.type}\ndata: {event_data}\n\n"
+                    except StopAsyncIteration:
+                        break
+            finally:
+                loop.close()
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Apply rate limiting to run-incremental endpoint in remote mode
+    if limiter:
+        run_incremental = limiter.limit(STRUCKDOWN_RATE_LIMIT)(run_incremental)
+
     @app.route("/api/upload", methods=["POST"])
     def upload():
         """Upload files for batch processing.
@@ -944,6 +1062,7 @@ def create_app(
             "rows": rows,
             "model": model_name,
             "results": [],
+            "events": [],  # slot-level events for incremental updates
             "completed": 0,
             "created_at": time.time(),
             "total": len(rows),
@@ -959,7 +1078,15 @@ def create_app(
             task["start_time"] = time.time()
 
             def on_row_complete(result):
-                task["results"].append(result)
+                # Convert to row event format for SSE
+                row_event = {
+                    "index": result["row_index"],
+                    "inputs": result["inputs"],
+                    "outputs": result["outputs"],
+                    "status": result["status"],
+                    "error": result["error"],
+                }
+                task["results"].append(row_event)
                 task["completed"] += 1
                 # Check timeout on each row completion
                 elapsed = time.time() - task["start_time"]
@@ -970,15 +1097,18 @@ def create_app(
                 # Run with timeout using anyio
                 async def run_with_timeout():
                     with anyio.fail_after(STRUCKDOWN_BATCH_TIMEOUT):
-                        async for result in core.run_batch_streaming(
+                        async for event in core.run_batch_streaming(
                             syntax=syntax,
                             rows=rows,
                             model_name=model_name,
                             credentials=credentials,
                             include_paths=app.config["INCLUDE_PATHS"],
                             on_row_complete=on_row_complete,
+                            slot_level=True,
                         ):
-                            pass  # Results handled by on_row_complete
+                            # Store slot events for SSE streaming
+                            if event.get("type") == "slot":
+                                task["events"].append(event)
 
                 anyio.run(run_with_timeout)
                 task["status"] = "complete"
@@ -1000,20 +1130,27 @@ def create_app(
 
     @app.route("/api/batch-stream/<task_id>")
     def batch_stream(task_id: str):
-        """SSE stream for batch progress."""
+        """SSE stream for batch progress with slot-level updates."""
         if task_id not in _batch_tasks:
             return jsonify({"error": "Task not found"}), 404
 
         def generate():
             task = _batch_tasks[task_id]
-            last_sent = 0
+            last_row_sent = 0
+            last_event_sent = 0
 
             while True:
-                # Send any new results
-                while last_sent < len(task["results"]):
-                    result = task["results"][last_sent]
+                # Send any new slot events (for cell-level updates)
+                while last_event_sent < len(task.get("events", [])):
+                    event = task["events"][last_event_sent]
+                    yield f"event: slot\ndata: {json.dumps(event)}\n\n"
+                    last_event_sent += 1
+
+                # Send any new row results (for row completion)
+                while last_row_sent < len(task["results"]):
+                    result = task["results"][last_row_sent]
                     yield f"event: row\ndata: {json.dumps(result)}\n\n"
-                    last_sent += 1
+                    last_row_sent += 1
 
                 # Send progress update
                 yield f"event: progress\ndata: {json.dumps({'completed': task['completed'], 'total': task['total']})}\n\n"

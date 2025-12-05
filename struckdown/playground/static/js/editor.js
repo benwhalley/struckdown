@@ -3,6 +3,7 @@
 let editor = null;
 let analyseTimeout = null;
 let currentInputs = [];
+let currentSlots = [];
 let sessionId = null;
 
 // CSRF protection
@@ -386,6 +387,9 @@ function analyseTemplate() {
             currentInputs = newInputs;
             updateInputsPanel(newInputs);
         }
+
+        // Store slots for incremental rendering
+        currentSlots = data.slots_defined || [];
     })
     .catch(err => {
         console.error('Analysis error:', err);
@@ -597,7 +601,9 @@ function saveAndRun() {
         } else if (mode === 'file') {
             return runFile(syntax);
         } else {
-            return runSingle(syntax);
+            // Use incremental mode by default for single execution
+            // This shows slot results as they complete
+            return runSingleIncremental(syntax);
         }
     })
     .catch(err => {
@@ -662,6 +668,303 @@ function runSingle(syntax) {
             updateCostDisplay(data.cost);
         }
     });
+}
+
+// Run single mode with incremental (streaming) results
+function runSingleIncremental(syntax) {
+    const inputs = getInputValues();
+    const model = document.getElementById('model-input').value;
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+
+    // Check for missing required inputs
+    const missing = getMissingInputs();
+    if (missing.length > 0) {
+        highlightMissingInputs(missing);
+        const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(
+            document.getElementById('inputs-offcanvas')
+        );
+        offcanvas.show();
+        setStatus('error', 'Missing inputs: ' + missing.join(', '));
+        disableSaveButton(false);
+        return Promise.resolve();
+    }
+
+    const body = {
+        syntax: syntax,
+        inputs: inputs,
+        model: model || null
+    };
+
+    if (remoteMode) {
+        const apiKey = document.getElementById('api-key-input').value;
+        const apiBase = document.getElementById('api-base-input').value;
+        if (apiKey) body.api_key = apiKey;
+        if (apiBase) body.api_base = apiBase;
+    }
+
+    // Track incremental results
+    const incrementalResults = {
+        outputs: {},
+        cost: null,
+        error: null,
+        slotsCompleted: []
+    };
+
+    // Clear previous outputs and show placeholders for expected slots
+    const container = document.getElementById('outputs-container');
+    container.innerHTML = '';
+
+    if (currentSlots.length > 0) {
+        currentSlots.forEach(slotKey => {
+            createPendingSlotCard(slotKey);
+        });
+    } else {
+        container.innerHTML = `
+            <p class="text-muted text-center mt-5">
+                <i class="bi bi-hourglass-split"></i> Processing...
+            </p>
+        `;
+    }
+
+    // Show initial pending state
+    setStatus('running', 'Processing...');
+
+    // Use POST to start the stream, passing data as query params is not ideal for large payloads
+    // So we'll use the existing CSRF token approach
+    return fetch('/api/run-incremental', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCsrfToken()
+        },
+        body: JSON.stringify(body)
+    }).then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to start incremental run');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function processStream() {
+            return reader.read().then(({done, value}) => {
+                if (done) {
+                    disableSaveButton(false);
+                    return;
+                }
+
+                buffer += decoder.decode(value, {stream: true});
+
+                // Process complete SSE events
+                const lines = buffer.split('\n');
+                buffer = '';
+
+                let eventType = null;
+                let eventData = null;
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.substring(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        eventData = line.substring(6);
+                        // Process the event
+                        if (eventType && eventData) {
+                            try {
+                                const data = JSON.parse(eventData);
+                                handleIncrementalEvent(eventType, data, incrementalResults);
+                            } catch (e) {
+                                console.error('Failed to parse event data:', e);
+                            }
+                        }
+                        eventType = null;
+                        eventData = null;
+                    } else if (line.trim() === '' && eventType === null) {
+                        // Empty line between events, ignore
+                    } else {
+                        // Incomplete line, keep in buffer
+                        buffer = line;
+                    }
+                }
+
+                return processStream();
+            });
+        }
+
+        return processStream();
+    }).catch(error => {
+        console.error('Incremental run error:', error);
+        setStatus('error', 'Error: ' + error.message);
+        disableSaveButton(false);
+    });
+}
+
+// Handle incremental SSE events
+function handleIncrementalEvent(eventType, data, results) {
+    switch (eventType) {
+        case 'slot_completed':
+            // Store the result
+            results.outputs[data.slot_key] = data.result.output;
+            results.slotsCompleted.push(data.slot_key);
+            // Update status
+            setStatus('running', `Completed: ${data.slot_key} (${results.slotsCompleted.length} slots)`);
+            // Update outputs display incrementally
+            renderIncrementalSlot(data.slot_key, data.result);
+            break;
+
+        case 'checkpoint':
+            setStatus('running', `Checkpoint ${data.segment_index + 1} reached`);
+            break;
+
+        case 'complete':
+            // Final result
+            setStatus('success', 'Complete');
+            if (data.result && data.result.results) {
+                // Convert results to outputs format
+                const outputs = {};
+                for (const [key, segResult] of Object.entries(data.result.results)) {
+                    outputs[key] = segResult.output;
+                }
+                const cost = {
+                    total_cost: data.result.total_cost,
+                    prompt_tokens: data.result.prompt_tokens,
+                    completion_tokens: data.result.completion_tokens
+                };
+                updateCostDisplay(cost);
+            }
+            // Mark any slots that weren't executed as skipped
+            markSkippedSlots(results.slotsCompleted);
+            disableSaveButton(false);
+            break;
+
+        case 'error':
+            setStatus('error', 'Error: ' + data.error_message);
+            // Mark remaining slots as skipped on error
+            markSkippedSlots(results.slotsCompleted);
+            disableSaveButton(false);
+            break;
+    }
+}
+
+// Create a pending placeholder card for a slot
+function createPendingSlotCard(slotKey) {
+    const container = document.getElementById('outputs-container');
+    const cardHtml = `
+        <div class="output-card card mb-2 output-card-pending" data-slot="${slotKey}">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <button type="button" class="btn btn-sm pin-btn me-2"
+                            onclick="togglePin(this)" title="Pin to top">
+                        <i class="bi bi-pin"></i>
+                    </button>
+                    <code class="slot-name">${slotKey}</code>
+                </div>
+                <span class="spinner-border spinner-border-sm text-muted" role="status"></span>
+            </div>
+            <div class="card-body py-2">
+                <div class="output-value text-muted" id="output-${slotKey}">
+                    <i>Waiting...</i>
+                </div>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', cardHtml);
+}
+
+// Mark remaining pending cards as skipped
+function markSkippedSlots(completedSlots) {
+    document.querySelectorAll('.output-card-pending').forEach(card => {
+        const slotKey = card.dataset.slot;
+        if (!completedSlots.includes(slotKey)) {
+            card.classList.remove('output-card-pending');
+            card.classList.add('output-card-skipped');
+            const spinner = card.querySelector('.spinner-border');
+            if (spinner) {
+                spinner.outerHTML = '<span class="badge bg-secondary">Skipped</span>';
+            }
+            const valueEl = card.querySelector('.output-value');
+            if (valueEl) {
+                valueEl.innerHTML = '<i class="text-muted">Conditional not executed</i>';
+            }
+        }
+    });
+}
+
+// Render a single slot result incrementally
+function renderIncrementalSlot(slotKey, result) {
+    // Find or create the output card for this slot
+    let card = document.querySelector(`.output-card[data-slot="${slotKey}"]`);
+
+    // Clear the "Processing..." placeholder on first slot
+    const container = document.getElementById('outputs-container');
+    const placeholder = container.querySelector('p.text-muted');
+    if (placeholder) {
+        placeholder.remove();
+    }
+
+    if (!card) {
+        // Create a new card matching the template structure
+        const cardHtml = `
+            <div class="output-card card mb-2" data-slot="${slotKey}">
+                <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                    <div class="d-flex align-items-center">
+                        <button type="button" class="btn btn-sm pin-btn me-2"
+                                onclick="togglePin(this)" title="Pin to top">
+                            <i class="bi bi-pin"></i>
+                        </button>
+                        <code class="slot-name">${slotKey}</code>
+                    </div>
+                    <button class="btn btn-link btn-sm text-muted p-0" onclick="copyOutput('${slotKey}')"
+                            title="Copy to clipboard">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                </div>
+                <div class="card-body py-2">
+                    <div class="output-value" id="output-${slotKey}">${escapeHtml(formatOutput(result.output))}</div>
+                </div>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', cardHtml);
+    } else {
+        // Update existing card (may be a pending placeholder)
+        card.classList.remove('output-card-pending');
+
+        // Replace spinner with copy button
+        const spinner = card.querySelector('.spinner-border');
+        if (spinner) {
+            spinner.outerHTML = `
+                <button class="btn btn-link btn-sm text-muted p-0" onclick="copyOutput('${slotKey}')"
+                        title="Copy to clipboard">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+            `;
+        }
+
+        // Update value
+        const valueEl = card.querySelector('.output-value');
+        if (valueEl) {
+            valueEl.classList.remove('text-muted');
+            valueEl.innerHTML = escapeHtml(formatOutput(result.output));
+        }
+    }
+}
+
+// Format output value for display
+function formatOutput(value) {
+    if (value === null || value === undefined) {
+        return 'null';
+    }
+    if (typeof value === 'object') {
+        return JSON.stringify(value, null, 2);
+    }
+    return String(value);
+}
+
+// Escape HTML for safe insertion
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Render single mode outputs

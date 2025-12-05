@@ -136,7 +136,8 @@
     font-size: 0.95em;
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 400px;
+    /* 75% of outputs panel so user can always see if there's another card */
+    max-height: calc(0.75 * (100vh - 112px));
     overflow-y: auto;
 }
 
@@ -144,6 +145,20 @@
     border-color: #0d6efd;
     border-width: 2px;
     order: -1;
+}
+
+.output-card-pending {
+    opacity: 0.7;
+    background-color: #f8f9fa;
+}
+
+.output-card-skipped {
+    opacity: 0.5;
+    background-color: #f8f9fa;
+}
+
+.output-card-skipped .card-body {
+    font-style: italic;
 }
 
 /* Pin button */
@@ -178,6 +193,35 @@
 
 /* Panels */
 #inputs-container {
+    overflow-y: auto;
+}
+
+/* Independent scrolling panels (iframe-like behaviour) */
+html, body {
+    overflow: hidden;
+    height: 100%;
+}
+
+/* Main content row - fill viewport minus navbar and status bar */
+.row.flex-grow-1 {
+    height: calc(100vh - 32px - 30px);
+}
+
+/* Both columns fill full height of row */
+#editor-column,
+#outputs-column {
+    height: 100%;
+}
+
+/* Editor content area */
+#editor-column > .flex-grow-1 {
+    height: calc(100% - 50px);
+    overflow: hidden;
+}
+
+/* Outputs content area */
+#outputs-container {
+    height: calc(100% - 50px);
     overflow-y: auto;
 }
 
@@ -220,6 +264,19 @@
 
 .batch-cell-error {
     color: #dc3545;
+}
+
+.batch-cell-streaming {
+    background-color: #e8f4fd;
+}
+
+.batch-cell-updated {
+    animation: cell-flash 0.3s ease-out;
+}
+
+@keyframes cell-flash {
+    0% { background-color: #b8daff; }
+    100% { background-color: inherit; }
 }
 
 /* Column toggles */

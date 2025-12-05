@@ -5,7 +5,8 @@ let batchData = {
     columns: {input: [], output: []},
     rows: [],
     completed: 0,
-    total: 0
+    total: 0,
+    tableInitialized: false
 };
 
 // Initialize batch streaming
@@ -41,11 +42,17 @@ function initBatchStream(taskId) {
         columns: {input: [], output: []},
         rows: [],
         completed: 0,
-        total: 0
+        total: 0,
+        tableInitialized: false
     };
 
     // Connect to SSE stream
     batchEventSource = new EventSource('/api/batch-stream/' + taskId);
+
+    batchEventSource.addEventListener('slot', function(event) {
+        const slotData = JSON.parse(event.data);
+        handleSlotUpdate(slotData);
+    });
 
     batchEventSource.addEventListener('row', function(event) {
         const rowData = JSON.parse(event.data);
@@ -77,6 +84,75 @@ function initBatchStream(taskId) {
     };
 }
 
+// Handle slot-level update (individual cell)
+function handleSlotUpdate(slotData) {
+    const rowIndex = slotData.row_index;
+    const slotKey = slotData.slot_key;
+    const value = slotData.value;
+
+    // Track output columns we've seen (for dynamic column discovery)
+    if (!batchData.columns.output.includes(slotKey)) {
+        batchData.columns.output.push(slotKey);
+        // If table header exists, add the new column
+        addOutputColumn(slotKey);
+    }
+
+    // Find the cell and update it
+    const row = document.getElementById('batch-row-' + rowIndex);
+    if (!row) return;
+
+    // Find the column index for this slot
+    const outputIndex = batchData.columns.output.indexOf(slotKey);
+    if (outputIndex === -1) return;
+
+    // Cell index = 1 (for #) + input columns + output index
+    const cellIndex = 1 + batchData.columns.input.length + outputIndex;
+    const cell = row.children[cellIndex];
+
+    if (cell) {
+        cell.textContent = formatCellValue(value);
+        cell.className = 'batch-cell-output batch-cell-streaming';
+        cell.title = String(value);
+
+        // Brief highlight animation
+        cell.classList.add('batch-cell-updated');
+        setTimeout(() => cell.classList.remove('batch-cell-updated'), 300);
+    }
+}
+
+// Add a new output column dynamically
+function addOutputColumn(colName) {
+    const header = document.getElementById('batch-header');
+    if (!header) return;
+
+    // Check if column already exists
+    if (header.querySelector(`th[data-column="${colName}"]`)) return;
+
+    // Add header cell
+    const th = document.createElement('th');
+    th.textContent = colName;
+    th.className = 'batch-col-output';
+    th.dataset.column = colName;
+    header.appendChild(th);
+
+    // Add cells to all existing rows
+    const body = document.getElementById('batch-body');
+    if (body) {
+        body.querySelectorAll('tr').forEach(row => {
+            const td = document.createElement('td');
+            td.className = 'batch-cell-output batch-cell-pending';
+            td.textContent = '-';
+            row.appendChild(td);
+        });
+    }
+
+    // Add toggle for new column
+    const toggles = document.getElementById('column-toggles');
+    if (toggles) {
+        toggles.appendChild(createColumnToggle(colName, 'output', true));
+    }
+}
+
 // Handle incoming row data
 function handleBatchRow(rowData) {
     const index = rowData.index;
@@ -90,7 +166,7 @@ function handleBatchRow(rowData) {
     batchData.rows[index] = rowData;
     batchData.completed++;
 
-    // Update table row
+    // Update table row (marks as complete)
     updateTableRow(rowData);
 
     // Update progress display
@@ -102,8 +178,16 @@ function setupBatchColumns(rowData) {
     const inputCols = Object.keys(rowData.inputs || {});
     const outputCols = Object.keys(rowData.outputs || {});
 
+    // Merge with any output columns already discovered via slot events
+    outputCols.forEach(col => {
+        if (!batchData.columns.output.includes(col)) {
+            batchData.columns.output.push(col);
+        }
+    });
+
     batchData.columns.input = inputCols;
-    batchData.columns.output = outputCols;
+    // Note: batchData.columns.output may already have items from slot events
+    batchData.tableInitialized = true;
 
     // Get total from progress if available
     if (batchData.total > 0) {
@@ -122,7 +206,7 @@ function setupBatchColumns(rowData) {
         header.appendChild(th);
     });
 
-    outputCols.forEach(col => {
+    batchData.columns.output.forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         th.className = 'batch-col-output';
@@ -140,20 +224,45 @@ function setupBatchColumns(rowData) {
         toggles.appendChild(createColumnToggle(col, 'input', true));
     });
 
-    outputCols.forEach(col => {
+    batchData.columns.output.forEach(col => {
         toggles.appendChild(createColumnToggle(col, 'output', true));
     });
 
-    // Pre-populate empty rows
+    // Pre-populate empty rows or update existing ones
     const body = document.getElementById('batch-body');
-    body.innerHTML = '';
-    for (let i = 0; i < batchData.total; i++) {
-        const tr = document.createElement('tr');
-        tr.id = 'batch-row-' + i;
-        tr.innerHTML = `<td>${i + 1}</td>` +
-            inputCols.map(() => '<td class="batch-cell-input batch-cell-pending">-</td>').join('') +
-            outputCols.map(() => '<td class="batch-cell-output batch-cell-pending">-</td>').join('');
-        body.appendChild(tr);
+    const existingRows = body.querySelectorAll('tr').length;
+
+    if (existingRows === 0) {
+        // Create rows from scratch
+        body.innerHTML = '';
+        for (let i = 0; i < batchData.total; i++) {
+            const tr = document.createElement('tr');
+            tr.id = 'batch-row-' + i;
+            tr.innerHTML = `<td>${i + 1}</td>` +
+                inputCols.map(() => '<td class="batch-cell-input batch-cell-pending">-</td>').join('') +
+                batchData.columns.output.map(() => '<td class="batch-cell-output batch-cell-pending">-</td>').join('');
+            body.appendChild(tr);
+        }
+    } else {
+        // Add input and output cells to existing rows
+        body.querySelectorAll('tr').forEach(row => {
+            // Add input cells after # column
+            inputCols.forEach(() => {
+                const td = document.createElement('td');
+                td.className = 'batch-cell-input batch-cell-pending';
+                td.textContent = '-';
+                row.appendChild(td);
+            });
+            // Add any missing output cells
+            const currentOutputCells = row.querySelectorAll('.batch-cell-output').length;
+            const neededOutputCells = batchData.columns.output.length;
+            for (let i = currentOutputCells; i < neededOutputCells; i++) {
+                const td = document.createElement('td');
+                td.className = 'batch-cell-output batch-cell-pending';
+                td.textContent = '-';
+                row.appendChild(td);
+            }
+        });
     }
 }
 
@@ -237,7 +346,29 @@ function updateBatchProgress(progress) {
     document.getElementById('batch-total').textContent = progress.total;
     document.getElementById('batch-completed').textContent = progress.completed;
 
+    // Pre-initialize table rows if not already done
+    if (batchData.total > 0 && !batchData.tableInitialized) {
+        initializeEmptyTable(progress.total);
+    }
+
     setStatus('running', `Processing ${progress.completed}/${progress.total}...`);
+}
+
+// Pre-initialize empty table with placeholders
+function initializeEmptyTable(rowCount) {
+    if (batchData.tableInitialized) return;
+    batchData.tableInitialized = true;
+
+    const body = document.getElementById('batch-body');
+    if (!body) return;
+
+    body.innerHTML = '';
+    for (let i = 0; i < rowCount; i++) {
+        const tr = document.createElement('tr');
+        tr.id = 'batch-row-' + i;
+        tr.innerHTML = `<td>${i + 1}</td>`;
+        body.appendChild(tr);
+    }
 }
 
 // Handle batch completion

@@ -1,6 +1,12 @@
 
 # Changelog
 
+### 0.3.3
+
+- **Incremental streaming**: new `chatter_incremental()` API yields slot results as they complete
+- **Batch slot-level updates**: batch mode now updates cells individually as each slot finishes
+- **Bug fix**: fixed CSRF header in incremental run endpoint
+
 ### 0.3.2
 
 - **Local file sync**: when editing a local file, the playground now detects external changes and prompts to reload -- useful when editing the same file in another editor

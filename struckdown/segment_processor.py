@@ -6,7 +6,8 @@ enabling Jinja conditionals to react to filled values.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from jinja2 import Undefined
 from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -120,7 +121,7 @@ def render_template(template_str: str, context: Dict[str, Any]) -> str:
     return template.render(**context)
 
 
-async def process_segment_with_delta(
+async def process_segment_with_delta_incremental(
     template_str: str,
     initial_context: Dict[str, Any],
     llm,
@@ -128,16 +129,14 @@ async def process_segment_with_delta(
     analysis: Optional[TemplateAnalysis] = None,
     global_system_messages: Optional[List[str]] = None,
     global_header_messages: Optional[List[str]] = None,
+    segment_index: int = 0,
     **extra_kwargs,
-):
-    """Process a template segment using delta-based re-rendering.
+) -> AsyncGenerator:
+    """Process a template segment, yielding SlotCompleted events as each slot is filled.
 
-    Re-renders when filling a slot that triggers conditional changes.
-    Tracks filled slots and computes deltas based on slot placeholder positions.
-
-    The key insight: [[slot]] placeholders remain as literal text in Jinja output.
-    When we fill a slot, we track its position. The delta is the text between
-    the end of the last filled slot's placeholder and the start of the next slot.
+    This is the incremental (generator) version of process_segment_with_delta.
+    It yields SlotCompleted events after each slot completion, allowing consumers
+    to display progress in real-time.
 
     Args:
         template_str: Raw template string (may contain <system> tags)
@@ -147,15 +146,17 @@ async def process_segment_with_delta(
         analysis: Pre-computed template analysis (optional)
         global_system_messages: System messages from previous segments (globals persist)
         global_header_messages: Header messages from previous segments (sent as user role)
+        segment_index: Index of this segment (for event metadata)
         **extra_kwargs: Additional LLM parameters
 
-    Returns:
-        ChatterResult with all slot completions
+    Yields:
+        SlotCompleted events as each slot is filled
     """
     # Import here to avoid circular imports
-    from .results import ChatterResult, SegmentResult, get_progress_callback
+    from .results import SegmentResult, get_progress_callback, get_run_id
+    from .incremental import SlotCompleted
     from .llm import structured_chat
-    from .jinja_utils import escape_struckdown_syntax, struckdown_finalize
+    from .jinja_utils import escape_struckdown_syntax
     import anyio
 
     # template_str is the body only (system already extracted by caller)
@@ -172,7 +173,6 @@ async def process_segment_with_delta(
     filled_slots: Dict[str, Any] = {}
     accumulated_context = initial_context.copy()
     messages: List[Dict[str, str]] = []
-    results = ChatterResult()
     last_slot_end = 0  # Position after the last filled slot placeholder
 
     # Add system message from globals (caller passes accumulated globals)
@@ -237,6 +237,9 @@ async def process_segment_with_delta(
         # Check if this is an action (function call) vs LLM completion
         is_action = slot_info.is_function or hasattr(return_type, '_executor')
 
+        # Track timing
+        start_time = time.monotonic()
+
         if is_action and hasattr(return_type, '_executor'):
             # Execute action function
             logger.debug(f"Executing action: {slot_info.action_type}:{slot_key}")
@@ -257,6 +260,8 @@ async def process_segment_with_delta(
                 abandon_on_cancel=True,
             )
 
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+
         # Extract response value
         extracted_value = res.response if hasattr(res, 'response') else res
         completion_str = str(extracted_value)
@@ -264,8 +269,8 @@ async def process_segment_with_delta(
         # Add assistant response to messages
         messages.append({"role": "assistant", "content": completion_str})
 
-        # Store result
-        results[slot_key] = SegmentResult(
+        # Build result
+        segment_result = SegmentResult(
             name=slot_key,
             output=extracted_value,
             completion=completion_obj,
@@ -275,6 +280,26 @@ async def process_segment_with_delta(
             messages=messages.copy(),
         )
 
+        # Determine if result was cached
+        current_run_id = get_run_id()
+        was_cached = False
+        if completion_obj and hasattr(completion_obj, 'get'):
+            was_cached = completion_obj.get("_run_id") != current_run_id
+
+        # Yield the event
+        yield SlotCompleted(
+            segment_index=segment_index,
+            slot_key=slot_key,
+            result=segment_result,
+            elapsed_ms=elapsed_ms,
+            was_cached=was_cached,
+        )
+
+        # Fire progress callback for backward compatibility
+        callback = get_progress_callback()
+        if callback:
+            callback()
+
         # Update context with escaped value
         escaped_value, _ = escape_struckdown_syntax(extracted_value, var_name=slot_key)
         accumulated_context[slot_key] = escaped_value
@@ -283,11 +308,6 @@ async def process_segment_with_delta(
         # Update last_slot_end for next iteration (if no re-render)
         last_slot_end = slot_end
 
-        # Fire progress callback
-        callback = get_progress_callback()
-        if callback:
-            callback()
-
         # Re-render if this slot triggers conditional changes
         if analysis.triggers_rerender(slot_key):
             logger.debug(f"Slot {slot_key} triggers re-render")
@@ -295,5 +315,51 @@ async def process_segment_with_delta(
             # Reset last_slot_end since positions changed
             # Will be recalculated from filled_slots on next iteration
             last_slot_end = 0
+
+
+async def process_segment_with_delta(
+    template_str: str,
+    initial_context: Dict[str, Any],
+    llm,
+    credentials=None,
+    analysis: Optional[TemplateAnalysis] = None,
+    global_system_messages: Optional[List[str]] = None,
+    global_header_messages: Optional[List[str]] = None,
+    **extra_kwargs,
+):
+    """Process a template segment using delta-based re-rendering.
+
+    This is the non-incremental version that returns a ChatterResult after
+    all slots are filled. It internally consumes the incremental generator.
+
+    Args:
+        template_str: Raw template string (may contain <system> tags)
+        initial_context: Initial variable context
+        llm: LLM configuration
+        credentials: API credentials
+        analysis: Pre-computed template analysis (optional)
+        global_system_messages: System messages from previous segments (globals persist)
+        global_header_messages: Header messages from previous segments (sent as user role)
+        **extra_kwargs: Additional LLM parameters
+
+    Returns:
+        ChatterResult with all slot completions
+    """
+    from .results import ChatterResult
+
+    results = ChatterResult()
+
+    async for event in process_segment_with_delta_incremental(
+        template_str=template_str,
+        initial_context=initial_context,
+        llm=llm,
+        credentials=credentials,
+        analysis=analysis,
+        global_system_messages=global_system_messages,
+        global_header_messages=global_header_messages,
+        segment_index=0,
+        **extra_kwargs,
+    ):
+        results[event.slot_key] = event.result
 
     return results
