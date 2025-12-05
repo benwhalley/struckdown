@@ -220,8 +220,13 @@ function setupBatchColumns(rowData) {
     togglesContainer.style.display = 'block';
     toggles.innerHTML = '';
 
+    // Add "All" toggle first
+    toggles.appendChild(createAllColumnsToggle());
+
     inputCols.forEach(col => {
-        toggles.appendChild(createColumnToggle(col, 'input', true));
+        // Hide 'source' and 'input' columns by default
+        const defaultVisible = (col !== 'source' && col !== 'input');
+        toggles.appendChild(createColumnToggle(col, 'input', defaultVisible));
     });
 
     batchData.columns.output.forEach(col => {
@@ -264,6 +269,44 @@ function setupBatchColumns(rowData) {
             }
         });
     }
+
+    // Hide default-hidden columns after table is built
+    inputCols.forEach(col => {
+        if (col === 'source' || col === 'input') {
+            toggleColumn(col, false);
+        }
+    });
+}
+
+// Create "All" columns toggle
+function createAllColumnsToggle() {
+    const div = document.createElement('div');
+    div.className = 'form-check form-check-inline';
+    div.innerHTML = `
+        <input class="form-check-input" type="checkbox" id="col-toggle-all">
+        <label class="form-check-label text-danger fw-bold" for="col-toggle-all">All</label>
+    `;
+    div.querySelector('input').addEventListener('change', function() {
+        toggleAllColumns(this.checked);
+    });
+    return div;
+}
+
+// Toggle all columns visibility
+function toggleAllColumns(visible) {
+    document.querySelectorAll('#column-toggles input[data-column]').forEach(cb => {
+        cb.checked = visible;
+        toggleColumn(cb.dataset.column, visible);
+    });
+}
+
+// Update "All" checkbox state based on individual checkboxes
+function updateAllCheckboxState() {
+    const allCheckbox = document.getElementById('col-toggle-all');
+    if (!allCheckbox) return;
+    const columnCheckboxes = document.querySelectorAll('#column-toggles input[data-column]');
+    const allChecked = Array.from(columnCheckboxes).every(cb => cb.checked);
+    allCheckbox.checked = allChecked;
 }
 
 // Create column toggle checkbox
@@ -278,6 +321,7 @@ function createColumnToggle(colName, type, checked) {
 
     div.querySelector('input').addEventListener('change', function() {
         toggleColumn(colName, this.checked);
+        updateAllCheckboxState();
     });
 
     return div;

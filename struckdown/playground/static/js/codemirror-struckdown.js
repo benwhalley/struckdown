@@ -150,6 +150,9 @@ function createStruckdownEditor(container, initialContent = '', options = {}) {
         color: #333;
         border: none;
         pointer-events: none;
+        font: inherit;
+        line-height: inherit;
+        box-sizing: border-box;
     `;
 
     // Create textarea (foreground, transparent text)
@@ -174,6 +177,7 @@ function createStruckdownEditor(container, initialContent = '', options = {}) {
         word-wrap: break-word;
         overflow: auto;
         outline: none;
+        box-sizing: border-box;
     `;
     textarea.spellcheck = false;
     textarea.value = initialContent;

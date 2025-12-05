@@ -107,7 +107,6 @@
 /* Editor container */
 #editor-container {
     font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-    font-size: 18pt !important;
 }
 
 #editor-container .cm-editor {

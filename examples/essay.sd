@@ -1,20 +1,16 @@
 <system>
-You are an expert in developmental psychology
-You are going to extract information from student essays and evaluate them.
-
+You are an expert on developmental psychology.
 </system>
 
-<header global>
+<header>
 
 # The student essay
-
 {{source}}
 
-
 # Your task
-
 </header>
 
+<checkpoint>
 
 Provide a concise summary of the key points in the document above. No more than 3 lines: [[summary]]
 
@@ -27,7 +23,7 @@ Did the student make errors in grammar and punctuation? [[!bool:grammar]]
 <checkpoint>
 
 
-10 word summary of argument [[words3]]
+10 word summary of the essay's main argument [[words10]]
 
 
 
