@@ -29,6 +29,11 @@ class KeepUndefined(Undefined):
         return f"{{{{ {self._undefined_name} }}}}"
 
 
+def _strip_html_comments(text: str) -> str:
+    """Remove HTML comments from text."""
+    return re.sub(r'<!--(.|\n)*?-->', '', text)
+
+
 def extract_system_message(template_str: str) -> Tuple[str, str]:
     """Extract <system>...</system> content from template.
 
@@ -38,13 +43,16 @@ def extract_system_message(template_str: str) -> Tuple[str, str]:
     Returns:
         Tuple of (system_message, template_without_system)
     """
+    # Strip HTML comments first to avoid matching tags inside comments
+    clean_template = _strip_html_comments(template_str)
+
     # Pattern to match <system>...</system> blocks
     pattern = re.compile(r'<system[^>]*>(.*?)</system>', re.DOTALL | re.IGNORECASE)
 
     system_parts = []
-    remaining = template_str
+    remaining = clean_template
 
-    for match in pattern.finditer(template_str):
+    for match in pattern.finditer(clean_template):
         system_parts.append(match.group(1).strip())
         remaining = remaining.replace(match.group(0), '', 1)
 
@@ -61,13 +69,16 @@ def extract_header_message(template_str: str) -> Tuple[str, str]:
     Returns:
         Tuple of (header_message, template_without_header)
     """
+    # Strip HTML comments first to avoid matching tags inside comments
+    clean_template = _strip_html_comments(template_str)
+
     # Pattern to match <header>...</header> blocks
     pattern = re.compile(r'<header[^>]*>(.*?)</header>', re.DOTALL | re.IGNORECASE)
 
     header_parts = []
-    remaining = template_str
+    remaining = clean_template
 
-    for match in pattern.finditer(template_str):
+    for match in pattern.finditer(clean_template):
         header_parts.append(match.group(1).strip())
         remaining = remaining.replace(match.group(0), '', 1)
 

@@ -6,19 +6,17 @@ Templates can use <system> blocks to control LLM behavior.
 <system> defines the LLM's role and persists across all segments.
 Use <system local> for instructions that only apply to the current segment.
 
-Both support template variables like {{topic}}.
--->
+Both support template variables like `topic`. -->
 
 <system>You are a helpful research assistant. Always be thorough and cite sources when possible.</system>
 
-<system local>Use clear, professional language appropriate for academic research.</system>
+<header>
+All A's are B's
+</header>
 
-Research the history of {{topic}} and provide key findings: [[findings]]
+
+Is an A a B? [[a]]
 
 <checkpoint>
 
-Based on your research about {{topic}}, what are the current trends and future outlook: [[outlook]]
-
-<checkpoint>
-
-Create a bibliography for your research on {{topic}}: [[bibliography]]
+Is C a B? [[c]]

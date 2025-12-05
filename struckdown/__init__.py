@@ -152,18 +152,29 @@ async def chatter_async(
 
     # Track global system messages (persist across checkpoints)
     accumulated_globals: List[str] = []
+    # Track global header messages (persist across checkpoints, sent as user role)
+    accumulated_header_globals: List[str] = []
 
     for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
-        from .segment_processor import extract_system_message
+        from .segment_processor import extract_system_message, extract_header_message
 
         # Extract system message from this segment
         system_template, body_template = extract_system_message(raw_segment_text)
+
+        # Extract header message from this segment
+        header_template, body_template = extract_header_message(body_template)
 
         # System messages accumulate across segments (globals persist)
         if system_template:
             env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
             rendered_system = env.from_string(system_template).render(**accumulated_context)
             accumulated_globals.append(rendered_system)
+
+        # Header messages accumulate across segments (globals persist, sent as user role)
+        if header_template:
+            env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            rendered_header = env.from_string(header_template).render(**accumulated_context)
+            accumulated_header_globals.append(rendered_header)
 
         # Analyze template structure for smart re-rendering
         analysis = analyze_template(body_template)
@@ -180,6 +191,7 @@ async def chatter_async(
                 credentials,
                 analysis=analysis,
                 global_system_messages=accumulated_globals,
+                global_header_messages=accumulated_header_globals,
                 **(extra_kwargs or {}),
             )
             final.update(result.results)
@@ -288,21 +300,32 @@ async def chatter_incremental_async(
 
     # Track global system messages (persist across checkpoints)
     accumulated_globals: List[str] = []
+    # Track global header messages (persist across checkpoints, sent as user role)
+    accumulated_header_globals: List[str] = []
 
     seg_idx = 0  # Track for error reporting
 
     try:
         for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
-            from .segment_processor import extract_system_message
+            from .segment_processor import extract_system_message, extract_header_message
 
             # Extract system message from this segment
             system_template, body_template = extract_system_message(raw_segment_text)
+
+            # Extract header message from this segment
+            header_template, body_template = extract_header_message(body_template)
 
             # System messages accumulate across segments (globals persist)
             if system_template:
                 env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
                 rendered_system = env.from_string(system_template).render(**accumulated_context)
                 accumulated_globals.append(rendered_system)
+
+            # Header messages accumulate across segments (globals persist, sent as user role)
+            if header_template:
+                env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+                rendered_header = env.from_string(header_template).render(**accumulated_context)
+                accumulated_header_globals.append(rendered_header)
 
             # Analyze template structure for smart re-rendering
             analysis = analyze_template(body_template)
@@ -319,6 +342,7 @@ async def chatter_incremental_async(
                 credentials,
                 analysis=analysis,
                 global_system_messages=accumulated_globals,
+                global_header_messages=accumulated_header_globals,
                 segment_index=seg_idx,
                 **(extra_kwargs or {}),
             ):
