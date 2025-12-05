@@ -1284,7 +1284,8 @@ function runBatch(syntax) {
         }
 
         document.getElementById('current-task-id').value = data.task_id;
-        initBatchStream(data.task_id);
+        // Small delay to ensure task is fully initialised on server
+        setTimeout(() => initBatchStream(data.task_id), 100);
     });
 }
 

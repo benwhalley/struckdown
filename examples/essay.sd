@@ -1,23 +1,22 @@
-<system>
-You are an expert on developmental psychology.
-</system>
+<system>You are an expert in psychologist</system>
 
 <header>
 
-# The student essay
+# STUDENT WORK
+
 {{source}}
 
-# Your task
-</header>
+# TASK NOW
 
-<checkpoint>
+</header>
 
 Provide a concise summary of the key points in the document above. No more than 3 lines: [[summary]]
 
-<checkpoint>
 
+<checkpoint>
 Did the student make errors in grammar and punctuation? [[!bool:grammar]]
 
-<checkpoint>
 
+<checkpoint>
 10 word summary of the essay's main argument [[words10]]
+

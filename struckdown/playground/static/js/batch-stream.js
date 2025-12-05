@@ -11,6 +11,12 @@ let batchData = {
 
 // Initialize batch streaming
 function initBatchStream(taskId) {
+    // Close any existing connection first
+    if (batchEventSource) {
+        batchEventSource.close();
+        batchEventSource = null;
+    }
+
     // Setup output container for batch mode
     const container = document.getElementById('outputs-container');
     container.innerHTML = `
