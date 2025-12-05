@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from functools import reduce
 from typing import FrozenSet, List, Dict, Tuple
 
-from jinja2 import Environment, nodes
+from jinja2 import nodes
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from .parsing import SLOT_PATTERN, extract_slot_key, find_slots_with_positions
 
@@ -116,7 +117,7 @@ def analyze_template(template_str: str) -> TemplateAnalysis:
         TemplateAnalysis with slots and triggers
     """
     try:
-        ast = Environment().parse(template_str)
+        ast = ImmutableSandboxedEnvironment().parse(template_str)
     except Exception:
         # If Jinja parsing fails, return empty analysis
         # (the error will surface later during actual rendering)

@@ -8,7 +8,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from jinja2 import Environment, Undefined
+from jinja2 import Undefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from .jinja_analysis import (
     TemplateAnalysis,
@@ -114,7 +115,7 @@ def render_template(template_str: str, context: Dict[str, Any]) -> str:
     Returns:
         Rendered string
     """
-    env = Environment(undefined=KeepUndefined)
+    env = ImmutableSandboxedEnvironment(undefined=KeepUndefined)
     template = env.from_string(template_str)
     return template.render(**context)
 

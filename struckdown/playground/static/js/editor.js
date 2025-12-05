@@ -5,6 +5,22 @@ let analyseTimeout = null;
 let currentInputs = [];
 let sessionId = null;
 
+// CSRF protection
+function getCsrfToken() {
+    let token = localStorage.getItem('struckdown_csrf_token');
+    if (!token) {
+        token = crypto.randomUUID();
+        localStorage.setItem('struckdown_csrf_token', token);
+    }
+    return token;
+}
+
+function fetchWithCsrf(url, options = {}) {
+    options.headers = options.headers || {};
+    options.headers['X-CSRF-Token'] = getCsrfToken();
+    return fetch(url, options);
+}
+
 // File watching and dirty state
 let lastKnownMtime = null;
 let lastSavedContent = null;
@@ -350,7 +366,7 @@ function getSyntax() {
 function analyseTemplate() {
     const syntax = getSyntax();
 
-    fetch('/api/analyse', {
+    fetchWithCsrf('/api/analyse', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({syntax: syntax})
@@ -385,7 +401,7 @@ function updateInputsPanel(inputsRequired) {
     const stored = loadInputsFromStorage();
     const mergedValues = { ...(stored?.inputs || {}), ...currentValues };
 
-    fetch('/partials/inputs', {
+    fetchWithCsrf('/partials/inputs', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -409,6 +425,15 @@ function updateInputsPanel(inputsRequired) {
 function addInputChangeListeners() {
     document.querySelectorAll('.input-field').forEach(field => {
         field.addEventListener('input', debounce(saveInputsToStorage, 500));
+        // Clear missing highlight when user starts typing
+        field.addEventListener('input', function() {
+            const container = this.closest('div');
+            if (container && container.classList.contains('input-missing')) {
+                container.classList.remove('input-missing');
+                const indicator = container.querySelector('.required-indicator');
+                if (indicator) indicator.remove();
+            }
+        });
     });
 }
 
@@ -434,6 +459,41 @@ function getInputValues() {
 function getMissingInputs() {
     const values = getInputValues();
     return currentInputs.filter(name => !values[name] || values[name].trim() === '');
+}
+
+// Highlight missing inputs in the inputs panel
+function highlightMissingInputs(missingVars) {
+    // First clear all existing highlights
+    clearMissingInputHighlights();
+
+    // Add highlight to missing inputs
+    missingVars.forEach(name => {
+        const field = document.querySelector(`.input-field[name="${name}"]`);
+        if (field) {
+            const container = field.closest('div');
+            if (container) {
+                container.classList.add('input-missing');
+                // Find the label and add required indicator if not already present
+                const label = container.querySelector('label');
+                if (label && !label.querySelector('.required-indicator')) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'required-indicator';
+                    indicator.textContent = ' * required';
+                    label.appendChild(indicator);
+                }
+            }
+        }
+    });
+}
+
+// Clear all missing input highlights
+function clearMissingInputHighlights() {
+    document.querySelectorAll('.input-missing').forEach(el => {
+        el.classList.remove('input-missing');
+    });
+    document.querySelectorAll('.required-indicator').forEach(el => {
+        el.remove();
+    });
 }
 
 // Show error banner
@@ -473,7 +533,7 @@ function saveOnly() {
     setStatus('running', 'Saving...');
 
     // Use the new file-specific save endpoint
-    fetch('/api/files/' + encodeURIComponent(currentFilePath), {
+    fetchWithCsrf('/api/files/' + encodeURIComponent(currentFilePath), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({syntax: syntax})
@@ -512,7 +572,7 @@ function saveAndRun() {
         savePromise = Promise.resolve();
     } else if (currentFilePath) {
         // Use file-specific save endpoint
-        savePromise = fetch('/api/files/' + encodeURIComponent(currentFilePath), {
+        savePromise = fetchWithCsrf('/api/files/' + encodeURIComponent(currentFilePath), {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({syntax: syntax})
@@ -556,6 +616,9 @@ function runSingle(syntax) {
     // Check for missing required inputs
     const missing = getMissingInputs();
     if (missing.length > 0) {
+        // Highlight missing inputs
+        highlightMissingInputs(missing);
+
         // Open inputs panel
         const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(
             document.getElementById('inputs-offcanvas')
@@ -581,7 +644,7 @@ function runSingle(syntax) {
         if (apiBase) body.api_base = apiBase;
     }
 
-    return fetch('/api/run', {
+    return fetchWithCsrf('/api/run', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
@@ -604,14 +667,14 @@ function runSingle(syntax) {
 // Render single mode outputs
 function renderSingleOutputs(data) {
     // Get slots in order
-    fetch('/api/analyse', {
+    fetchWithCsrf('/api/analyse', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({syntax: getSyntax()})
     })
     .then(response => response.json())
     .then(analysisData => {
-        fetch('/partials/outputs', {
+        fetchWithCsrf('/partials/outputs', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
@@ -732,18 +795,23 @@ function disableSaveButton(disabled) {
     }
 }
 
-// Handle batch file upload
+// Handle batch file upload (supports multiple files)
 function handleBatchFileUpload(event) {
-    const file = event.target.files[0];
-    console.log('handleBatchFileUpload called, file:', file?.name);
-    if (!file) return;
+    const files = event.target.files;
+    console.log('handleBatchFileUpload called, files:', files.length);
+    if (!files || files.length === 0) return;
 
     const formData = new FormData();
-    formData.append('file', file);
+    for (const file of files) {
+        formData.append('file', file);
+    }
 
-    setStatus('running', 'Uploading file...');
+    const uploadMsg = files.length > 1
+        ? `Uploading ${files.length} files...`
+        : 'Uploading file...';
+    setStatus('running', uploadMsg);
 
-    fetch('/api/upload', {
+    fetchWithCsrf('/api/upload', {
         method: 'POST',
         body: formData
     })
@@ -761,7 +829,11 @@ function handleBatchFileUpload(event) {
         document.getElementById('batch-row-count').textContent = data.row_count;
         document.getElementById('batch-file-info').style.display = 'block';
 
-        setStatus('success', 'File uploaded: ' + data.row_count + ' rows');
+        let statusMsg = 'Uploaded: ' + data.row_count + ' rows';
+        if (data.warning) {
+            statusMsg += ' (Warning: ' + data.warning + ')';
+        }
+        setStatus('success', statusMsg);
     })
     .catch(err => {
         console.error('Upload error:', err);
@@ -786,7 +858,7 @@ function handleSourceFileUpload(event) {
 
     setStatus('running', 'Uploading file...');
 
-    fetch('/api/upload-source', {
+    fetchWithCsrf('/api/upload-source', {
         method: 'POST',
         body: formData
     })
@@ -848,7 +920,7 @@ function runFile(syntax) {
         if (apiBase) body.api_base = apiBase;
     }
 
-    return fetch('/api/run-file', {
+    return fetchWithCsrf('/api/run-file', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
@@ -895,7 +967,7 @@ function runBatch(syntax) {
         if (apiBase) body.api_base = apiBase;
     }
 
-    return fetch('/api/run-batch', {
+    return fetchWithCsrf('/api/run-batch', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
@@ -1109,7 +1181,7 @@ function createNewFile() {
 
     setStatus('running', 'Creating file...');
 
-    fetch('/api/files/new', {
+    fetchWithCsrf('/api/files/new', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({filename: filename})

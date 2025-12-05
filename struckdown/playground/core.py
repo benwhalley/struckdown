@@ -26,6 +26,7 @@ from struckdown.parsing import extract_slot_key, find_slots_with_positions, pars
 # Security configuration from environment
 STRUCKDOWN_ZIP_MAX_SIZE = int(os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800"))  # 50MB
 STRUCKDOWN_ZIP_MAX_FILES = int(os.environ.get("STRUCKDOWN_ZIP_MAX_FILES", "500"))
+STRUCKDOWN_STATE_MAX_SIZE = int(os.environ.get("STRUCKDOWN_STATE_MAX_SIZE", "1048576"))  # 1MB max decompressed state
 
 
 def extract_required_inputs(syntax: str) -> Dict[str, List[str]]:
@@ -126,10 +127,21 @@ def encode_state(syntax: str, model: str = "", inputs: dict = None) -> str:
 
 
 def decode_state(encoded: str) -> dict:
-    """Decode URL state back to components."""
+    """Decode URL state back to components.
+
+    Uses max_length parameter to prevent decompression bombs.
+    """
     try:
         compressed = base64.urlsafe_b64decode(encoded)
-        json_bytes = zlib.decompress(compressed)
+
+        # Use max_length to limit decompressed size and prevent decompression bombs
+        decompressor = zlib.decompressobj()
+        json_bytes = decompressor.decompress(compressed, max_length=STRUCKDOWN_STATE_MAX_SIZE)
+
+        # Check if there's unconsumed data (meaning we hit the limit)
+        if decompressor.unconsumed_tail:
+            raise ValueError("Decompressed state exceeds size limit")
+
         state = json.loads(json_bytes)
         return {
             "syntax": state.get("s", ""),

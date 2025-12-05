@@ -58,11 +58,11 @@
             </p>
         </div>
 
-        <!-- Batch mode: xlsx/csv/zip file upload -->
+        <!-- Batch mode: xlsx/csv/zip/multiple files upload -->
         <div id="batch-upload-section" style="display: none;">
-            <label for="batch-file" class="form-label">Upload xlsx/csv or zip archive</label>
+            <label for="batch-file" class="form-label">Upload data file(s)</label>
             <input type="file" class="form-control form-control-sm" id="batch-file"
-                   accept=".xlsx,.csv,.xls,.zip">
+                   multiple>
             <div id="batch-file-info" class="mt-2" style="display: none;">
                 <span class="badge bg-success"><i class="bi bi-file-earmark-spreadsheet"></i>
                     <span id="batch-filename"></span>
@@ -73,7 +73,7 @@
                 </button>
             </div>
             <p class="text-muted small mt-2 mb-0">
-                Upload xlsx/csv with columns matching <code>{{ "{{variables}}" }}</code>, or a zip of files (each available as <code>{{ "{{source}}" }}</code>).
+                Upload xlsx/csv with columns matching <code>{{ "{{variables}}" }}</code>, or select multiple files (each available as <code>{{ "{{source}}" }}</code>).
             </p>
         </div>
     </div>

@@ -10,7 +10,7 @@ Based on conditionals.sd test scenarios:
 """
 
 import pytest
-from jinja2 import Environment
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from struckdown.jinja_analysis import (
     analyze_template,

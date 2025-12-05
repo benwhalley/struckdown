@@ -9,7 +9,8 @@ from typing import List, Optional
 import anyio
 import typer
 from decouple import config as env_config
-from jinja2 import Environment, meta
+from jinja2 import meta
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken
 from rich.console import Console
 from rich.progress import (BarColumn, Progress, SpinnerColumn,
@@ -86,7 +87,8 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     Raises:
         Exception: If template rendering fails (e.g., include file not found)
     """
-    from jinja2 import Environment, FileSystemLoader
+    from jinja2 import FileSystemLoader
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
     from struckdown import KeepUndefined
     from struckdown.parsing import resolve_includes
 
@@ -113,7 +115,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     # Then resolve Jinja2 {% include %} tags
     # NOTE: We don't use struckdown_finalize here because we're just expanding
     # includes, not substituting variables. The struckdown syntax must remain intact.
-    env = Environment(
+    env = ImmutableSandboxedEnvironment(
         undefined=KeepUndefined,
         loader=FileSystemLoader(search_paths)
     )
@@ -134,7 +136,7 @@ def auto_prepend_input(prompt: str) -> str:
     Uses Jinja2's meta.find_undeclared_variables to parse the template
     and detect variable references.
     """
-    env = Environment()
+    env = ImmutableSandboxedEnvironment()
     try:
         # Parse the template to find all variable references
         ast = env.parse(prompt)

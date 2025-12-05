@@ -9,6 +9,11 @@ import pytest
 from struckdown.playground import create_app
 
 
+# CSRF token for testing - any string >= 10 chars works
+CSRF_TOKEN = "test-csrf-token-for-testing"
+CSRF_HEADERS = {"X-CSRF-Token": CSRF_TOKEN}
+
+
 @pytest.fixture
 def temp_prompt_file(tmp_path):
     """Create a temporary prompt file."""
@@ -33,6 +38,42 @@ def remote_client():
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client
+
+
+class TestCsrfProtection:
+    """Tests for CSRF protection."""
+
+    def test_post_without_csrf_token_rejected(self, client):
+        """POST requests without CSRF token are rejected."""
+        response = client.post(
+            "/api/analyse",
+            data=json.dumps({"syntax": "[[test]]"}),
+            content_type="application/json",
+            # No CSRF header
+        )
+        assert response.status_code == 403
+        data = response.get_json()
+        assert "CSRF" in data["error"]
+
+    def test_post_with_short_token_rejected(self, client):
+        """POST requests with too-short CSRF token are rejected."""
+        response = client.post(
+            "/api/analyse",
+            data=json.dumps({"syntax": "[[test]]"}),
+            content_type="application/json",
+            headers={"X-CSRF-Token": "short"},  # Less than 10 chars
+        )
+        assert response.status_code == 403
+
+    def test_post_with_valid_token_accepted(self, client):
+        """POST requests with valid CSRF token are accepted."""
+        response = client.post(
+            "/api/analyse",
+            data=json.dumps({"syntax": "[[test]]"}),
+            content_type="application/json",
+            headers=CSRF_HEADERS,
+        )
+        assert response.status_code == 200
 
 
 class TestHomePage:
@@ -72,6 +113,7 @@ class TestSaveEndpoint:
             "/api/save",
             data=json.dumps({"syntax": new_content}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         data = response.get_json()
@@ -84,6 +126,7 @@ class TestSaveEndpoint:
             "/api/save",
             data=json.dumps({"syntax": "test"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 400
         data = response.get_json()
@@ -99,6 +142,7 @@ class TestAnalyseEndpoint:
             "/api/analyse",
             data=json.dumps({"syntax": "{{name}} says [[greeting]]"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         data = response.get_json()
@@ -112,6 +156,7 @@ class TestAnalyseEndpoint:
             "/api/analyse",
             data=json.dumps({"syntax": "Hello [[greeting]]"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         data = response.get_json()
         assert data["valid"] is True
@@ -124,6 +169,7 @@ class TestAnalyseEndpoint:
             "/api/analyse",
             data=json.dumps({"syntax": "Plain text without slots"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         data = response.get_json()
         # Plain text should be valid
@@ -136,6 +182,7 @@ class TestAnalyseEndpoint:
             "/api/analyse",
             data=json.dumps({"syntax": "{{a}} and {{b}} make [[result]]"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         data = response.get_json()
         assert sorted(data["inputs_required"]) == ["a", "b"]
@@ -147,6 +194,7 @@ class TestAnalyseEndpoint:
             "/api/analyse",
             data=json.dumps({"syntax": "[[topic]]\nMore about {{topic}}\n[[details]]"}),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         data = response.get_json()
         assert data["inputs_required"] == []
@@ -166,6 +214,7 @@ class TestUploadEndpoint:
                 "/api/upload",
                 data={"file": (f, "test.csv")},
                 content_type="multipart/form-data",
+                headers=CSRF_HEADERS,
             )
 
         assert response.status_code == 200
@@ -176,11 +225,11 @@ class TestUploadEndpoint:
 
     def test_upload_no_file(self, client):
         """Upload without file returns error."""
-        response = client.post("/api/upload")
+        response = client.post("/api/upload", headers=CSRF_HEADERS)
         assert response.status_code == 400
 
-    def test_upload_rejects_invalid_extension(self, client, tmp_path):
-        """Upload rejects files with unsupported extensions."""
+    def test_upload_text_file_as_source(self, client, tmp_path):
+        """Upload accepts text files and processes them as source rows."""
         txt_file = tmp_path / "test.txt"
         txt_file.write_text("some content")
 
@@ -189,15 +238,42 @@ class TestUploadEndpoint:
                 "/api/upload",
                 data={"file": (f, "test.txt")},
                 content_type="multipart/form-data",
+                headers=CSRF_HEADERS,
             )
 
-        assert response.status_code == 400
+        assert response.status_code == 200
         data = response.get_json()
-        assert "not allowed" in data["error"]
-        assert ".csv" in data["error"]
+        assert "file_id" in data
+        assert data["row_count"] == 1
+        assert "source" in data["columns"]
+        assert "filename" in data["columns"]
+
+    def test_upload_multiple_files(self, client, tmp_path):
+        """Upload multiple files creates multiple source rows."""
+        from io import BytesIO
+
+        response = client.post(
+            "/api/upload",
+            data={
+                "file": [
+                    (BytesIO(b"content of file 1"), "file1.txt"),
+                    (BytesIO(b"content of file 2"), "file2.txt"),
+                    (BytesIO(b"content of file 3"), "file3.txt"),
+                ]
+            },
+            content_type="multipart/form-data",
+            headers=CSRF_HEADERS,
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "file_id" in data
+        assert data["row_count"] == 3
+        assert data["columns"] == ["source", "filename"]
+        assert data["filename"] == "3 files"
 
     def test_upload_rejects_pdf(self, client, tmp_path):
-        """Upload rejects PDF files."""
+        """Upload rejects PDF files as binary."""
         pdf_file = tmp_path / "test.pdf"
         pdf_file.write_bytes(b"%PDF-1.4 fake pdf content")
 
@@ -206,11 +282,12 @@ class TestUploadEndpoint:
                 "/api/upload",
                 data={"file": (f, "test.pdf")},
                 content_type="multipart/form-data",
+                headers=CSRF_HEADERS,
             )
 
         assert response.status_code == 400
         data = response.get_json()
-        assert "not allowed" in data["error"]
+        assert "binary" in data["error"].lower() or "skipped" in data["error"].lower()
 
 
 class TestUploadSourceEndpoint:
@@ -226,6 +303,7 @@ class TestUploadSourceEndpoint:
                 "/api/upload-source",
                 data={"file": (f, "document.txt")},
                 content_type="multipart/form-data",
+                headers=CSRF_HEADERS,
             )
 
         assert response.status_code == 200
@@ -243,6 +321,7 @@ class TestUploadSourceEndpoint:
                 "/api/upload-source",
                 data={"file": (f, "image.png")},
                 content_type="multipart/form-data",
+                headers=CSRF_HEADERS,
             )
 
         assert response.status_code == 400
@@ -264,6 +343,7 @@ class TestEncodeStateEndpoint:
                 "inputs": {"x": "y"}
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         data = response.get_json()
@@ -301,6 +381,7 @@ class TestInputsPartial:
                 "current_values": {"topic": "cats"}
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"topic" in response.data
@@ -315,6 +396,7 @@ class TestInputsPartial:
                 "current_values": {"topic": "my-value"}
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"my-value" in response.data
@@ -328,6 +410,7 @@ class TestInputsPartial:
                 "current_values": {}
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"No input variables" in response.data
@@ -347,6 +430,7 @@ class TestOutputsPartial:
                 "slots_defined": ["greeting"]
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"greeting" in response.data
@@ -363,6 +447,7 @@ class TestOutputsPartial:
                 "slots_defined": []
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"Something went wrong" in response.data
@@ -378,6 +463,7 @@ class TestOutputsPartial:
                 "slots_defined": ["first", "second"]
             }),
             content_type="application/json",
+            headers=CSRF_HEADERS,
         )
         assert response.status_code == 200
         assert b"value1" in response.data

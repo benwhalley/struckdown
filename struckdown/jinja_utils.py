@@ -3,7 +3,8 @@
 import logging
 from typing import Any
 
-from jinja2 import Environment, Undefined, UndefinedError, meta
+from jinja2 import Undefined, UndefinedError, meta
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from .errors import StruckdownSafe
 
@@ -198,7 +199,7 @@ def extract_jinja_variables(text: str) -> set:
         return set()
 
     try:
-        env = Environment()
+        env = ImmutableSandboxedEnvironment()
         ast = env.parse(text)
         return meta.find_undeclared_variables(ast)
     except Exception:

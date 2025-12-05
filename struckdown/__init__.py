@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import anyio
-from jinja2 import Environment
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 # Version - reads from package metadata (set in pyproject.toml)
 try:
@@ -153,7 +153,7 @@ async def chatter_async(
 
         # System messages accumulate across segments (globals persist)
         if system_template:
-            env = Environment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
             rendered_system = env.from_string(system_template).render(**accumulated_context)
             accumulated_globals.append(rendered_system)
 

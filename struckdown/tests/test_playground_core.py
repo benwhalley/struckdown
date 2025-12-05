@@ -191,6 +191,25 @@ class TestEncodeDecodeState:
         raw_length = len(syntax)
         assert len(encoded) < raw_length / 2
 
+    def test_decompression_bomb_rejected(self):
+        """Decompression bombs are rejected to prevent DoS."""
+        import zlib
+        import base64
+
+        # Create a payload that decompresses to more than 1MB (the default limit)
+        # Highly compressible data: 2MB of repeated 'A' characters
+        large_data = b'A' * (2 * 1024 * 1024)
+        # Wrap in JSON structure to match expected format
+        json_payload = b'{"s":"' + large_data + b'","m":"","i":{}}'
+        compressed = zlib.compress(json_payload, level=9)
+        encoded = base64.urlsafe_b64encode(compressed).decode("ascii")
+
+        # Should return empty state (graceful failure) rather than OOM
+        decoded = decode_state(encoded)
+        assert decoded["syntax"] == ""
+        assert decoded["model"] == ""
+        assert decoded["inputs"] == {}
+
 
 class TestLoadXlsxData:
     """Tests for load_xlsx_data function."""

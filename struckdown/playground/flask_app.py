@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.utils import secure_filename
 from litellm.exceptions import (
     APIConnectionError,
     AuthenticationError,
@@ -35,10 +36,12 @@ from . import core
 
 # Security configuration from environment
 STRUCKDOWN_RATE_LIMIT = os.environ.get("STRUCKDOWN_RATE_LIMIT", "100/hour")
+STRUCKDOWN_UPLOAD_RATE_LIMIT = os.environ.get("STRUCKDOWN_UPLOAD_RATE_LIMIT", "100/minute")
 STRUCKDOWN_MAX_SYNTAX_LENGTH = int(os.environ.get("STRUCKDOWN_MAX_SYNTAX_LENGTH", "1000000"))
 STRUCKDOWN_MAX_UPLOAD_SIZE = int(os.environ.get("STRUCKDOWN_MAX_UPLOAD_SIZE", "5242880"))  # 5MB
 STRUCKDOWN_ZIP_MAX_SIZE = int(os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800"))  # 50MB
 STRUCKDOWN_ZIP_MAX_FILES = int(os.environ.get("STRUCKDOWN_ZIP_MAX_FILES", "500"))
+STRUCKDOWN_BATCH_TIMEOUT = int(os.environ.get("STRUCKDOWN_BATCH_TIMEOUT", "300"))  # 5 minutes
 # Threshold for spooling to disk (files smaller than this stay in memory)
 STRUCKDOWN_SPOOL_THRESHOLD = int(os.environ.get("STRUCKDOWN_SPOOL_THRESHOLD", "1048576"))  # 1MB
 
@@ -112,6 +115,18 @@ def sanitise_error_string(error_str: str, remote_mode: bool) -> str:
         return "Execution failed. Please check your prompt and settings."
 
 
+def get_json_safe() -> Optional[dict]:
+    """Parse request JSON safely.
+
+    Note: Python's json module doesn't support max_depth, so we just use standard parsing.
+    For DoS protection we rely on MAX_CONTENT_LENGTH limiting request size.
+    """
+    data = request.get_data()
+    if not data:
+        return None
+    return json.loads(data)
+
+
 def find_available_port(start: int = 9000, max_attempts: int = 100) -> int:
     """Find an available port starting from 9000."""
     for port in range(start, start + max_attempts):
@@ -165,21 +180,17 @@ def _create_untitled_file(workspace_dir: Path, content: str) -> Optional[Path]:
     return None
 
 
-# In-memory storage for batch tasks and uploaded files
-# These are request-scoped and cleaned up after use or on timeout
+# In-memory storage for batch tasks only (uploaded files now use disk cache)
 _batch_tasks: Dict[str, Dict] = {}
-_uploaded_files: Dict[str, Dict] = {}  # Stores parsed data in memory (no disk files)
-_source_files: Dict[str, Dict] = {}  # For file mode (content stored in memory)
-_file_timestamps: Dict[str, float] = {}  # Track when files were uploaded for cleanup
 
-# Cleanup interval and max age for uploaded files (seconds)
+# Cleanup interval for batch tasks
 _CLEANUP_INTERVAL = 300  # 5 minutes
-_FILE_MAX_AGE = 1800  # 30 minutes
+_TASK_MAX_AGE = 86400  # 1 day (match upload cache default)
 _last_cleanup = time.time()
 
 
 def _cleanup_old_files():
-    """Remove uploaded files and tasks older than _FILE_MAX_AGE."""
+    """Clean up old batch tasks and trigger upload cache cleanup."""
     global _last_cleanup
     now = time.time()
 
@@ -187,16 +198,15 @@ def _cleanup_old_files():
         return
 
     _last_cleanup = now
-    cutoff = now - _FILE_MAX_AGE
 
-    # Clean up old uploaded files
-    expired_files = [fid for fid, ts in _file_timestamps.items() if ts < cutoff]
-    for fid in expired_files:
-        _uploaded_files.pop(fid, None)
-        _source_files.pop(fid, None)
-        _file_timestamps.pop(fid, None)
+    # Import here to avoid circular imports
+    from . import upload_cache
+
+    # Clean up upload cache (handles expiry and size limits)
+    upload_cache.cleanup_cache()
 
     # Clean up old batch tasks
+    cutoff = now - _TASK_MAX_AGE
     expired_tasks = [
         tid for tid, task in _batch_tasks.items()
         if task.get("created_at", 0) < cutoff and task.get("status") in ("complete", "error")
@@ -226,6 +236,8 @@ def create_app(
         allowed_models: Optional list of allowed model names. If provided,
                         the UI shows a dropdown instead of free text input.
     """
+    from . import upload_cache
+
     app = Flask(
         __name__,
         template_folder=str(Path(__file__).parent / "templates"),
@@ -266,6 +278,22 @@ def create_app(
         except Exception:
             pass  # Ignore errors loading custom actions
 
+    @app.before_request
+    def check_csrf():
+        """Validate CSRF token on all POST requests.
+
+        Applied in both remote and local mode because:
+        - Remote: prevents cross-site attacks using user's stored API key
+        - Local: prevents malicious sites from targeting localhost
+        """
+        if request.method != "POST":
+            return
+
+        # Check for token in header
+        token = request.headers.get("X-CSRF-Token")
+        if not token or len(token) < 10:
+            return jsonify({"error": "Missing or invalid CSRF token"}), 403
+
     @app.route("/")
     def index():
         """Render the main editor page."""
@@ -295,6 +323,9 @@ def create_app(
             # Remote mode - just use placeholder without file
             syntax = get_random_placeholder()
 
+        # Get default model from environment
+        default_model = os.environ.get("DEFAULT_LLM", "")
+
         return render_template(
             "editor.html",
             syntax=syntax,
@@ -303,6 +334,7 @@ def create_app(
             remote_mode=remote_mode,
             has_server_api_key=bool(server_api_key),
             allowed_models=allowed_models,
+            model=default_model,
         )
 
     @app.route("/e/<encoded_state>")
@@ -327,7 +359,7 @@ def create_app(
         if remote_mode:
             return jsonify({"error": "Cannot save in remote mode"}), 400
 
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
 
         if prompt_file:
@@ -420,7 +452,7 @@ def create_app(
         if not file_path:
             return jsonify({"error": "Invalid path"}), 400
 
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
 
         # Create parent directories if needed
@@ -442,7 +474,7 @@ def create_app(
         if not workspace:
             return jsonify({"error": "No workspace configured"}), 400
 
-        data = request.get_json()
+        data = get_json_safe()
         filename = data.get("filename", "").strip()
 
         if not filename:
@@ -473,7 +505,7 @@ def create_app(
     @app.route("/api/analyse", methods=["POST"])
     def analyse():
         """Analyse template syntax."""
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
 
         # Validate syntax
@@ -496,7 +528,7 @@ def create_app(
         from struckdown import LLMCredentials
         from struckdown.errors import StruckdownLLMError
 
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
         inputs = data.get("inputs", {})
         model_name = data.get("model")
@@ -576,7 +608,11 @@ def create_app(
 
     @app.route("/api/upload", methods=["POST"])
     def upload():
-        """Upload xlsx/csv/zip file for batch processing.
+        """Upload files for batch processing.
+
+        Supports:
+        - Single xlsx/csv/zip file: parsed as batch data
+        - Multiple files: each file becomes a row with 'source' and 'filename' columns
 
         Files are processed in memory using SpooledTemporaryFile.
         Only the parsed data is retained; the original file is discarded.
@@ -587,64 +623,134 @@ def create_app(
         if "file" not in request.files:
             return jsonify({"error": "No file provided"}), 400
 
-        file = request.files["file"]
-        if not file.filename:
+        files = request.files.getlist("file")
+        if not files or not files[0].filename:
             return jsonify({"error": "No file selected"}), 400
-
-        # Validate file extension
-        suffix = Path(file.filename).suffix.lower()
-        if suffix not in ALLOWED_BATCH_EXTENSIONS:
-            allowed = ", ".join(sorted(ALLOWED_BATCH_EXTENSIONS))
-            return jsonify({"error": f"File type '{suffix}' not allowed. Allowed types: {allowed}"}), 400
 
         # Generate unique file ID
         file_id = str(uuid.uuid4())
 
-        # Use SpooledTemporaryFile: stays in memory up to threshold, auto-deletes
-        try:
-            with tempfile.SpooledTemporaryFile(
-                max_size=STRUCKDOWN_SPOOL_THRESHOLD,
-                suffix=suffix
-            ) as spooled:
-                # Copy uploaded file to spooled temp
-                file.save(spooled)
-                spooled.seek(0)
+        # Check if this is a single structured file (xlsx/csv/zip)
+        if len(files) == 1:
+            file = files[0]
+            suffix = Path(file.filename).suffix.lower()
 
-                # For processing, we need a path -- write to a real temp file briefly
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                    tmp.write(spooled.read())
-                    tmp_path = Path(tmp.name)
-
+            if suffix in ALLOWED_BATCH_EXTENSIONS:
+                # Single xlsx/csv/zip: use existing parsing logic
                 try:
-                    # Parse the file (xlsx/csv/zip)
-                    data = core.load_batch_file(tmp_path)
-                finally:
-                    # Immediately delete the temp file after parsing
-                    tmp_path.unlink(missing_ok=True)
+                    with tempfile.SpooledTemporaryFile(
+                        max_size=STRUCKDOWN_SPOOL_THRESHOLD,
+                        suffix=suffix
+                    ) as spooled:
+                        file.save(spooled)
+                        spooled.seek(0)
 
-            # Store only parsed data in memory (no file path)
-            _uploaded_files[file_id] = {
-                "filename": file.filename,
-                "data": data,
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                            tmp.write(spooled.read())
+                            tmp_path = Path(tmp.name)
+
+                        try:
+                            data = core.load_batch_file(tmp_path)
+                        finally:
+                            tmp_path.unlink(missing_ok=True)
+
+                    upload_cache.store_upload(file_id, {
+                        "type": "batch",
+                        "filename": file.filename,
+                        "data": data,
+                    })
+
+                    return jsonify({
+                        "file_id": file_id,
+                        "filename": file.filename,
+                        "row_count": data["row_count"],
+                        "columns": data["columns"],
+                        "preview": data["rows"][:5],
+                    })
+                except Exception as e:
+                    error_msg = safe_error_message(e, remote_mode)
+                    return jsonify({"error": error_msg}), 400
+
+        # Multiple files (or single non-xlsx/csv/zip): treat as individual source files
+        # Each file becomes a row with 'source' and 'filename' columns (like zip handling)
+        try:
+            if len(files) > STRUCKDOWN_ZIP_MAX_FILES:
+                return jsonify({"error": f"Too many files. Maximum is {STRUCKDOWN_ZIP_MAX_FILES}."}), 400
+
+            rows = []
+            total_size = 0
+            skipped_binary = []
+
+            for f in files:
+                filename = secure_filename(f.filename) if f.filename else "unnamed"
+                suffix = Path(filename).suffix.lower()
+
+                # Skip binary files
+                if suffix in BINARY_EXTENSIONS:
+                    skipped_binary.append(filename)
+                    continue
+
+                # Read content
+                content = f.read()
+                total_size += len(content)
+
+                if total_size > STRUCKDOWN_ZIP_MAX_SIZE:
+                    return jsonify({"error": f"Total file size exceeds {STRUCKDOWN_ZIP_MAX_SIZE // (1024*1024)}MB limit."}), 400
+
+                # Decode as UTF-8 with replacement for invalid chars
+                try:
+                    text_content = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    text_content = content.decode("utf-8", errors="replace")
+
+                rows.append({"source": text_content, "filename": filename})
+
+            if not rows:
+                if skipped_binary:
+                    return jsonify({"error": f"All files were binary and skipped: {', '.join(skipped_binary)}"}), 400
+                return jsonify({"error": "No valid files to process"}), 400
+
+            data = {
+                "rows": rows,
+                "columns": ["source", "filename"],
+                "row_count": len(rows),
             }
-            _file_timestamps[file_id] = time.time()
 
-            return jsonify({
+            # Determine display name
+            display_name = f"{len(files)} files" if len(files) > 1 else files[0].filename
+
+            upload_cache.store_upload(file_id, {
+                "type": "batch",
+                "filename": display_name,
+                "data": data,
+            })
+
+            response_data = {
                 "file_id": file_id,
-                "filename": file.filename,
+                "filename": display_name,
                 "row_count": data["row_count"],
                 "columns": data["columns"],
                 "preview": data["rows"][:5],
-            })
+            }
+
+            if skipped_binary:
+                response_data["warning"] = f"Skipped binary files: {', '.join(skipped_binary)}"
+
+            return jsonify(response_data)
+
         except Exception as e:
             error_msg = safe_error_message(e, remote_mode)
             return jsonify({"error": error_msg}), 400
+
+    # Apply rate limiting to upload endpoint in remote mode
+    if limiter:
+        upload = limiter.limit(STRUCKDOWN_UPLOAD_RATE_LIMIT)(upload)
 
     @app.route("/api/upload-source", methods=["POST"])
     def upload_source():
         """Upload a single file for file mode (content becomes {{source}}).
 
-        File content is read directly into memory; no disk storage.
+        File content is stored in disk cache.
         """
         # Trigger cleanup on each request
         _cleanup_old_files()
@@ -664,20 +770,20 @@ def create_app(
         # Generate unique file ID
         file_id = str(uuid.uuid4())
 
-        # Read file content directly into memory
+        # Read file content and store to disk cache
         try:
             # Read as bytes first, then decode
             file_bytes = file.read()
             file_size = len(file_bytes)
             content = file_bytes.decode("utf-8", errors="replace")
 
-            # Store only content in memory (no disk path)
-            _source_files[file_id] = {
+            # Store to disk cache
+            upload_cache.store_upload(file_id, {
+                "type": "source",
                 "filename": file.filename,
                 "content": content,
                 "size": file_size,
-            }
-            _file_timestamps[file_id] = time.time()
+            })
 
             return jsonify({
                 "file_id": file_id,
@@ -688,6 +794,10 @@ def create_app(
             error_msg = safe_error_message(e, remote_mode)
             return jsonify({"error": error_msg}), 400
 
+    # Apply rate limiting to upload-source endpoint in remote mode
+    if limiter:
+        upload_source = limiter.limit(STRUCKDOWN_UPLOAD_RATE_LIMIT)(upload_source)
+
     @app.route("/api/run-file", methods=["POST"])
     def run_file():
         """Execute template with uploaded file as {{source}}."""
@@ -695,7 +805,7 @@ def create_app(
         from struckdown import LLMCredentials
         from struckdown.errors import StruckdownLLMError
 
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
         file_id = data.get("file_id")
         model_name = data.get("model")
@@ -718,10 +828,12 @@ def create_app(
                     "cost": None
                 }), 400
 
-        if file_id not in _source_files:
+        try:
+            file_data = upload_cache.get_upload(file_id)
+            if file_data.get("type") != "source":
+                return jsonify({"error": "Invalid file type", "outputs": {}, "cost": None}), 400
+        except (FileNotFoundError, ValueError):
             return jsonify({"error": "File not found or expired", "outputs": {}, "cost": None}), 400
-
-        file_data = _source_files[file_id]
 
         # Determine credentials
         credentials = None
@@ -781,7 +893,7 @@ def create_app(
         """Start batch processing and return task ID."""
         from struckdown import LLMCredentials
 
-        data = request.get_json()
+        data = get_json_safe()
         syntax = data.get("syntax", "")
         file_id = data.get("file_id")
         model_name = data.get("model")
@@ -796,7 +908,11 @@ def create_app(
             if disallowed:
                 return jsonify({"error": f"Actions not allowed in remote mode: {', '.join(disallowed)}"}), 400
 
-        if file_id not in _uploaded_files:
+        try:
+            file_data = upload_cache.get_upload(file_id)
+            if file_data.get("type") != "batch":
+                return jsonify({"error": "Invalid file type"}), 400
+        except (FileNotFoundError, ValueError):
             return jsonify({"error": "File not found or expired"}), 400
 
         # Determine credentials
@@ -818,7 +934,6 @@ def create_app(
                 return jsonify({"error": "API key required. Enter your API key in Settings."}), 400
         # In local mode, credentials=None will use environment variables
 
-        file_data = _uploaded_files[file_id]
         rows = file_data["data"]["rows"]
 
         # Create task with timestamp for cleanup
@@ -835,25 +950,41 @@ def create_app(
             "columns": file_data["data"]["columns"],
         }
 
-        # Start background processing
+        # Start background processing with timeout
         def process_batch():
+            import anyio
+
             task = _batch_tasks[task_id]
             task["status"] = "running"
+            task["start_time"] = time.time()
 
             def on_row_complete(result):
                 task["results"].append(result)
                 task["completed"] += 1
+                # Check timeout on each row completion
+                elapsed = time.time() - task["start_time"]
+                if elapsed > STRUCKDOWN_BATCH_TIMEOUT:
+                    raise TimeoutError(f"Batch timeout exceeded ({STRUCKDOWN_BATCH_TIMEOUT}s)")
 
             try:
-                core.run_batch_sync(
-                    syntax=syntax,
-                    rows=rows,
-                    model_name=model_name,
-                    credentials=credentials,
-                    include_paths=app.config["INCLUDE_PATHS"],
-                    on_row_complete=on_row_complete,
-                )
+                # Run with timeout using anyio
+                async def run_with_timeout():
+                    with anyio.fail_after(STRUCKDOWN_BATCH_TIMEOUT):
+                        async for result in core.run_batch_streaming(
+                            syntax=syntax,
+                            rows=rows,
+                            model_name=model_name,
+                            credentials=credentials,
+                            include_paths=app.config["INCLUDE_PATHS"],
+                            on_row_complete=on_row_complete,
+                        ):
+                            pass  # Results handled by on_row_complete
+
+                anyio.run(run_with_timeout)
                 task["status"] = "complete"
+            except TimeoutError:
+                task["status"] = "error"
+                task["error"] = f"Batch processing timed out after {STRUCKDOWN_BATCH_TIMEOUT} seconds"
             except Exception as e:
                 task["status"] = "error"
                 task["error"] = safe_error_message(e, remote_mode)
@@ -942,7 +1073,7 @@ def create_app(
     @app.route("/api/encode-state", methods=["POST"])
     def encode_state_route():
         """Encode current state for URL sharing."""
-        data = request.get_json()
+        data = get_json_safe()
         encoded = core.encode_state(
             syntax=data.get("syntax", ""),
             model=data.get("model", ""),
@@ -953,7 +1084,7 @@ def create_app(
     @app.route("/partials/inputs", methods=["POST"])
     def render_inputs_partial():
         """Render inputs panel with current fields."""
-        data = request.get_json()
+        data = get_json_safe()
         inputs_required = data.get("inputs_required", [])
         current_values = data.get("current_values", {})
 
@@ -966,7 +1097,7 @@ def create_app(
     @app.route("/partials/outputs", methods=["POST"])
     def render_outputs_partial():
         """Render outputs panel with results."""
-        data = request.get_json()
+        data = get_json_safe()
         outputs = data.get("outputs", {})
         error = data.get("error")
         cost = data.get("cost")

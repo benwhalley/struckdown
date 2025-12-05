@@ -783,12 +783,13 @@ def render_execution_plan(data: Dict, format: str = 'text') -> str:
     Returns:
         Rendered template as string
     """
-    from jinja2 import Environment, FileSystemLoader, select_autoescape
+    from jinja2 import FileSystemLoader, select_autoescape
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
     from pathlib import Path
 
     # Set up Jinja2 environment
     templates_dir = Path(__file__).parent / "templates"
-    env = Environment(
+    env = ImmutableSandboxedEnvironment(
         loader=FileSystemLoader(templates_dir),
         autoescape=select_autoescape(['html']) if format == 'html' else False,
         trim_blocks=True,

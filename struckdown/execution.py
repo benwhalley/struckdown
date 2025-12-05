@@ -6,7 +6,8 @@ from types import FunctionType
 from typing import List, Optional
 
 import anyio
-from jinja2 import Environment, StrictUndefined, UndefinedError
+from jinja2 import StrictUndefined, UndefinedError
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from .errors import StruckdownTemplateError
 from .jinja_utils import extract_jinja_variables, struckdown_finalize, escape_struckdown_syntax
@@ -86,7 +87,7 @@ async def process_single_segment_(
         is_first_completion = (idx == 0)
 
         # Re-render system and header with current accumulated context
-        env_with_finalize = Environment(
+        env_with_finalize = ImmutableSandboxedEnvironment(
             undefined=StrictUndefined,
             finalize=struckdown_finalize,
         )

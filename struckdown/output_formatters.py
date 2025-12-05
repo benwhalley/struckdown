@@ -4,7 +4,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
-from jinja2 import Environment, FileSystemLoader, Template, Undefined
+from jinja2 import FileSystemLoader, Template, Undefined
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ def render_template(
         raise FileNotFoundError(f"Template file not found: {template_path}")
 
     # Load template with tolerant undefined handling (missing vars become empty)
-    env = Environment(
+    env = ImmutableSandboxedEnvironment(
         loader=FileSystemLoader(template_path.parent), undefined=Undefined
     )
     template = env.get_template(template_path.name)
