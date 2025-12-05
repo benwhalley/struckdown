@@ -32,11 +32,12 @@ from litellm.exceptions import (
     Timeout,
 )
 
-from . import core
+from . import core, prompt_cache
 
 # Security configuration from environment
 STRUCKDOWN_RATE_LIMIT = os.environ.get("STRUCKDOWN_RATE_LIMIT", "100/hour")
 STRUCKDOWN_UPLOAD_RATE_LIMIT = os.environ.get("STRUCKDOWN_UPLOAD_RATE_LIMIT", "100/minute")
+STRUCKDOWN_PROMPT_RATE_LIMIT = os.environ.get("STRUCKDOWN_PROMPT_RATE_LIMIT", "20/minute")
 STRUCKDOWN_MAX_SYNTAX_LENGTH = int(os.environ.get("STRUCKDOWN_MAX_SYNTAX_LENGTH", "1000000"))
 STRUCKDOWN_MAX_UPLOAD_SIZE = int(os.environ.get("STRUCKDOWN_MAX_UPLOAD_SIZE", "5242880"))  # 5MB
 STRUCKDOWN_ZIP_MAX_SIZE = int(os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800"))  # 50MB
@@ -340,6 +341,32 @@ def create_app(
             remote_mode=True,
             has_server_api_key=bool(server_api_key),
             encoded_state=encoded_state,
+            allowed_models=allowed_models,
+        )
+
+    @app.route("/p/<prompt_id>")
+    def load_from_prompt(prompt_id: str):
+        """Load editor from stored prompt (remote mode)."""
+        if not prompt_cache.validate_prompt_id(prompt_id):
+            return "Invalid prompt ID", 400
+
+        try:
+            syntax = prompt_cache.get_prompt(prompt_id)
+        except FileNotFoundError:
+            return "Prompt not found", 404
+
+        # Get default model from environment
+        default_model = os.environ.get("DEFAULT_LLM", "")
+
+        return render_template(
+            "editor.html",
+            syntax=syntax,
+            model=default_model,
+            inputs={},
+            filename=None,
+            remote_mode=True,
+            has_server_api_key=bool(server_api_key),
+            prompt_id=prompt_id,
             allowed_models=allowed_models,
         )
 
@@ -1215,6 +1242,35 @@ def create_app(
             inputs=data.get("inputs", {}),
         )
         return jsonify({"encoded": encoded})
+
+    @app.route("/api/save-prompt", methods=["POST"])
+    def save_prompt():
+        """Save prompt text and return a new UUID (remote mode only).
+
+        Generates a new UUID for each save, creating an immutable version.
+        Only saves the prompt text -- never inputs or outputs.
+        """
+        if not remote_mode:
+            return jsonify({"error": "Only available in remote mode"}), 400
+
+        data = get_json_safe()
+        syntax = data.get("syntax", "")
+
+        if not syntax or not syntax.strip():
+            return jsonify({"error": "Empty prompt"}), 400
+
+        if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
+            return jsonify({"error": "Prompt too long"}), 400
+
+        # Generate a new UUID for this version
+        prompt_id = str(uuid.uuid4())
+        prompt_cache.store_prompt(prompt_id, syntax)
+
+        return jsonify({"prompt_id": prompt_id})
+
+    # Apply rate limiting to save-prompt endpoint in remote mode
+    if limiter:
+        save_prompt = limiter.limit(STRUCKDOWN_PROMPT_RATE_LIMIT)(save_prompt)
 
     @app.route("/partials/inputs", methods=["POST"])
     def render_inputs_partial():

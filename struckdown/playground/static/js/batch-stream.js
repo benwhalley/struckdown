@@ -448,6 +448,8 @@ function handleBatchComplete() {
 
     setStatus('success', 'Batch complete');
     disableSaveButton(false);
+    // Save prompt and update URL (remote mode only)
+    savePromptAndUpdateUrl();
 }
 
 // Handle batch error

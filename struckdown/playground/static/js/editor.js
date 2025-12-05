@@ -561,6 +561,36 @@ function saveOnly() {
     });
 }
 
+// Save prompt to backend and update URL (remote mode only)
+// Called after successful run to create a shareable link
+function savePromptAndUpdateUrl() {
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+    if (!remoteMode) return Promise.resolve();
+
+    const syntax = getSyntax();
+    if (!syntax || !syntax.trim()) return Promise.resolve();
+
+    return fetchWithCsrf('/api/save-prompt', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({syntax: syntax})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.prompt_id) {
+            // Update URL without reloading
+            const newUrl = '/p/' + data.prompt_id;
+            history.pushState({promptId: data.prompt_id}, '', newUrl);
+            // Update hidden field
+            document.getElementById('current-prompt-id').value = data.prompt_id;
+        }
+    })
+    .catch(err => {
+        // Don't fail the whole operation if URL update fails
+        console.error('Failed to save prompt:', err);
+    });
+}
+
 // Save and run the prompt
 function saveAndRun() {
     const syntax = getSyntax();
@@ -666,6 +696,8 @@ function runSingle(syntax) {
             setStatus('success', 'Complete');
             renderSingleOutputs(data);
             updateCostDisplay(data.cost);
+            // Save prompt and update URL (remote mode only)
+            savePromptAndUpdateUrl();
         }
     });
 }
@@ -835,6 +867,8 @@ function handleIncrementalEvent(eventType, data, results) {
             // Mark any slots that weren't executed as skipped
             markSkippedSlots(results.slotsCompleted);
             disableSaveButton(false);
+            // Save prompt and update URL (remote mode only)
+            savePromptAndUpdateUrl();
             break;
 
         case 'error':
@@ -1239,6 +1273,8 @@ function runFile(syntax) {
             setStatus('success', 'Complete');
             renderSingleOutputs(data);
             updateCostDisplay(data.cost);
+            // Save prompt and update URL (remote mode only)
+            savePromptAndUpdateUrl();
         }
     });
 }
