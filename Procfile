@@ -1,1 +1,1 @@
-web: gunicorn --workers 3 --bind 0.0.0.0:$PORT "struckdown.playground:create_app(remote_mode=True)"
+web: gunicorn --workers 1 --threads 4 --bind 0.0.0.0:$PORT "struckdown.playground:create_app(remote_mode=True)"
