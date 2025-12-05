@@ -16,14 +16,8 @@ Provide a concise summary of the key points in the document above. No more than 
 
 <checkpoint>
 
-
 Did the student make errors in grammar and punctuation? [[!bool:grammar]]
-
 
 <checkpoint>
 
-
 10 word summary of the essay's main argument [[words10]]
-
-
-
