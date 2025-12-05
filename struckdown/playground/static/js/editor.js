@@ -756,34 +756,34 @@ function runSingleIncremental(syntax) {
 
                 buffer += decoder.decode(value, {stream: true});
 
-                // Process complete SSE events
-                const lines = buffer.split('\n');
-                buffer = '';
+                // SSE events are separated by double newlines
+                // Only process complete events, keep partial data in buffer
+                const events = buffer.split('\n\n');
 
-                let eventType = null;
-                let eventData = null;
+                // Keep the last part in buffer (may be incomplete)
+                buffer = events.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) {
-                        eventType = line.substring(7).trim();
-                    } else if (line.startsWith('data: ')) {
-                        eventData = line.substring(6);
-                        // Process the event
-                        if (eventType && eventData) {
-                            try {
-                                const data = JSON.parse(eventData);
-                                handleIncrementalEvent(eventType, data, incrementalResults);
-                            } catch (e) {
-                                console.error('Failed to parse event data:', e);
-                            }
+                for (const eventBlock of events) {
+                    if (!eventBlock.trim()) continue;
+
+                    let eventType = null;
+                    let eventData = null;
+
+                    for (const line of eventBlock.split('\n')) {
+                        if (line.startsWith('event: ')) {
+                            eventType = line.substring(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            eventData = line.substring(6);
                         }
-                        eventType = null;
-                        eventData = null;
-                    } else if (line.trim() === '' && eventType === null) {
-                        // Empty line between events, ignore
-                    } else {
-                        // Incomplete line, keep in buffer
-                        buffer = line;
+                    }
+
+                    if (eventType && eventData) {
+                        try {
+                            const data = JSON.parse(eventData);
+                            handleIncrementalEvent(eventType, data, incrementalResults);
+                        } catch (e) {
+                            console.error('Failed to parse event data:', eventData, e);
+                        }
                     }
                 }
 
