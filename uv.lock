@@ -1896,11 +1896,12 @@ wheels = [
 
 [[package]]
 name = "struckdown"
-version = "0.3.3"
+version = "0.3.4"
 source = { editable = "." }
 dependencies = [
     { name = "dateutils" },
     { name = "ddgs" },
+    { name = "filelock" },
     { name = "flask" },
     { name = "flask-limiter" },
     { name = "gunicorn" },
@@ -1934,6 +1935,7 @@ playwright = [
 requires-dist = [
     { name = "dateutils", specifier = ">=0.6.12" },
     { name = "ddgs", specifier = ">=8.0.0" },
+    { name = "filelock", specifier = ">=3.12.0" },
     { name = "flask", specifier = ">=3.0.0" },
     { name = "flask-limiter", specifier = ">=3.5.0" },
     { name = "gunicorn", specifier = ">=21.0.0" },

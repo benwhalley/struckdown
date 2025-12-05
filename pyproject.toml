@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.3.3"
+version = "0.3.4"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -38,6 +38,7 @@ dependencies = [
     "flask-limiter>=3.5.0",
     "pytest-xdist>=3.8.0",
     "gunicorn>=21.0.0",
+    "filelock>=3.12.0",
 ]
 
 [project.optional-dependencies]

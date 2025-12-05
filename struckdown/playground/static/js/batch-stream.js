@@ -11,8 +11,11 @@ let batchData = {
 
 // Initialize batch streaming
 function initBatchStream(taskId) {
+    console.log('initBatchStream called, taskId:', taskId);
+
     // Close any existing connection first
     if (batchEventSource) {
+        console.log('Closing existing EventSource');
         batchEventSource.close();
         batchEventSource = null;
     }
@@ -53,35 +56,46 @@ function initBatchStream(taskId) {
     };
 
     // Connect to SSE stream
+    console.log('Creating EventSource for:', '/api/batch-stream/' + taskId);
     batchEventSource = new EventSource('/api/batch-stream/' + taskId);
 
+    batchEventSource.onopen = function() {
+        console.log('EventSource connected');
+    };
+
     batchEventSource.addEventListener('slot', function(event) {
+        console.log('SSE slot event:', event.data);
         const slotData = JSON.parse(event.data);
         handleSlotUpdate(slotData);
     });
 
     batchEventSource.addEventListener('row', function(event) {
+        console.log('SSE row event:', event.data);
         const rowData = JSON.parse(event.data);
         handleBatchRow(rowData);
     });
 
     batchEventSource.addEventListener('progress', function(event) {
+        console.log('SSE progress event:', event.data);
         const progress = JSON.parse(event.data);
         updateBatchProgress(progress);
     });
 
     batchEventSource.addEventListener('done', function(event) {
+        console.log('SSE done event');
         handleBatchComplete();
     });
 
     batchEventSource.addEventListener('error', function(event) {
+        console.log('SSE error event:', event.data);
         if (event.data) {
             const error = JSON.parse(event.data);
             handleBatchError(error);
         }
     });
 
-    batchEventSource.onerror = function() {
+    batchEventSource.onerror = function(e) {
+        console.log('EventSource onerror, readyState:', batchEventSource.readyState);
         if (batchEventSource.readyState === EventSource.CLOSED) {
             // Connection closed normally
         } else {

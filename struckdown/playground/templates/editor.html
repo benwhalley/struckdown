@@ -158,6 +158,7 @@
 
 <!-- Hidden data -->
 <input type="hidden" id="remote-mode" value="{{ 'true' if remote_mode else 'false' }}">
+<input type="hidden" id="has-server-api-key" value="{{ 'true' if has_server_api_key else 'false' }}">
 <input type="hidden" id="current-file-path" value="{{ current_file_path or '' }}">
 <input type="hidden" id="current-file-id" value="">
 <input type="hidden" id="current-source-file-id" value="">
@@ -255,6 +256,14 @@
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
     <div class="offcanvas-body">
+        <!-- Setup hint alert (shown when credentials needed) -->
+        <div id="setup-hint-alert" class="alert alert-info alert-dismissible fade show mb-3" role="alert" style="display: none;">
+            <i class="bi bi-info-circle"></i>
+            <strong>Setup required</strong><br>
+            Enter your LLM API credentials below to run prompts.
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+
         <div class="mb-3">
             <label for="model-input" class="form-label">Model</label>
             {% if allowed_models %}
@@ -270,12 +279,12 @@
             <div class="form-text">LLM model identifier</div>
         </div>
         {% if remote_mode %}
-        <div class="mb-3">
+        <div class="mb-3" id="api-base-group">
             <label for="api-base-input" class="form-label">API Base URL</label>
             <input type="url" class="form-control form-control-sm" id="api-base-input">
             <div class="form-text">OpenAI-compatible endpoint</div>
         </div>
-        <div class="mb-3">
+        <div class="mb-3" id="api-key-group">
             <label for="api-key-input" class="form-label">API Key</label>
             <input type="password" class="form-control form-control-sm" id="api-key-input"
                    placeholder="sk-...">
@@ -497,6 +506,52 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
+// Check if API credentials are needed and show settings panel
+function checkCredentialsNeeded() {
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+    const hasServerApiKey = document.getElementById('has-server-api-key').value === 'true';
+
+    // Only check in remote mode when server doesn't have an API key
+    if (!remoteMode || hasServerApiKey) {
+        return;
+    }
+
+    // Check if user has saved credentials in localStorage
+    const savedKey = localStorage.getItem('struckdown_api_key');
+    const savedBase = localStorage.getItem('struckdown_api_base');
+
+    // If either is missing, show the settings panel with hint
+    if (!savedKey || !savedBase) {
+        // Show the setup hint alert
+        const hintAlert = document.getElementById('setup-hint-alert');
+        if (hintAlert) {
+            hintAlert.style.display = 'block';
+        }
+
+        // Highlight the missing fields
+        if (!savedBase) {
+            const baseGroup = document.getElementById('api-base-group');
+            if (baseGroup) {
+                baseGroup.classList.add('input-missing');
+            }
+        }
+        if (!savedKey) {
+            const keyGroup = document.getElementById('api-key-group');
+            if (keyGroup) {
+                keyGroup.classList.add('input-missing');
+            }
+        }
+
+        // Open the settings panel
+        setTimeout(function() {
+            const settingsOffcanvas = bootstrap.Offcanvas.getOrCreateInstance(
+                document.getElementById('settings-offcanvas')
+            );
+            settingsOffcanvas.show();
+        }, 500);
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize session for localStorage persistence
@@ -511,6 +566,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Start file watching after editor is ready
         startFileWatching();
     }, 2000);
+
+    // Check if credentials are needed (after a brief delay to allow localStorage load)
+    setTimeout(checkCredentialsNeeded, 100);
 
     // Inputs strip click handler
     document.getElementById('inputs-strip').addEventListener('click', toggleInputs);
@@ -591,17 +649,27 @@ document.addEventListener('DOMContentLoaded', function() {
     // Batch file upload
     document.getElementById('batch-file').addEventListener('change', handleBatchFileUpload);
 
-    // API credentials save on change
+    // API credentials save on change and clear missing highlight
     const apiKeyInput = document.getElementById('api-key-input');
     if (apiKeyInput) {
         apiKeyInput.addEventListener('change', function() {
             localStorage.setItem('struckdown_api_key', this.value);
+            // Clear missing highlight when filled
+            if (this.value) {
+                const group = document.getElementById('api-key-group');
+                if (group) group.classList.remove('input-missing');
+            }
         });
     }
     const apiBaseInput = document.getElementById('api-base-input');
     if (apiBaseInput) {
         apiBaseInput.addEventListener('change', function() {
             localStorage.setItem('struckdown_api_base', this.value);
+            // Clear missing highlight when filled
+            if (this.value) {
+                const group = document.getElementById('api-base-group');
+                if (group) group.classList.remove('input-missing');
+            }
         });
     }
 

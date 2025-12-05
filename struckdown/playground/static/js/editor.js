@@ -1275,8 +1275,12 @@ function runBatch(syntax) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log('run-batch response status:', response.status);
+        return response.json();
+    })
     .then(data => {
+        console.log('run-batch response data:', data);
         if (data.error) {
             setStatus('error', 'Error: ' + data.error);
             disableSaveButton(false);
@@ -1286,6 +1290,11 @@ function runBatch(syntax) {
         document.getElementById('current-task-id').value = data.task_id;
         // Small delay to ensure task is fully initialised on server
         setTimeout(() => initBatchStream(data.task_id), 100);
+    })
+    .catch(err => {
+        console.error('run-batch fetch error:', err);
+        setStatus('error', 'Error: ' + err.message);
+        disableSaveButton(false);
     });
 }
 

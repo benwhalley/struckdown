@@ -180,12 +180,8 @@ def _create_untitled_file(workspace_dir: Path, content: str) -> Optional[Path]:
     return None
 
 
-# In-memory storage for batch tasks only (uploaded files now use disk cache)
-_batch_tasks: Dict[str, Dict] = {}
-
-# Cleanup interval for batch tasks
+# Cleanup interval for caches
 _CLEANUP_INTERVAL = 300  # 5 minutes
-_TASK_MAX_AGE = 86400  # 1 day (match upload cache default)
 _last_cleanup = time.time()
 
 
@@ -200,19 +196,13 @@ def _cleanup_old_files():
     _last_cleanup = now
 
     # Import here to avoid circular imports
-    from . import upload_cache
+    from . import upload_cache, task_cache
 
     # Clean up upload cache (handles expiry and size limits)
     upload_cache.cleanup_cache()
 
-    # Clean up old batch tasks
-    cutoff = now - _TASK_MAX_AGE
-    expired_tasks = [
-        tid for tid, task in _batch_tasks.items()
-        if task.get("created_at", 0) < cutoff and task.get("status") in ("complete", "error")
-    ]
-    for tid in expired_tasks:
-        _batch_tasks.pop(tid, None)
+    # Clean up task cache
+    task_cache.cleanup_tasks()
 
 
 def create_app(
@@ -236,7 +226,7 @@ def create_app(
         allowed_models: Optional list of allowed model names. If provided,
                         the UI shows a dropdown instead of free text input.
     """
-    from . import upload_cache
+    from . import upload_cache, task_cache
 
     app = Flask(
         __name__,
@@ -1054,28 +1044,23 @@ def create_app(
 
         rows = file_data["data"]["rows"]
 
-        # Create task with timestamp for cleanup
+        # Create task in file-based cache
         task_id = str(uuid.uuid4())
-        _batch_tasks[task_id] = {
+        task_cache.create_task(task_id, {
             "status": "pending",
-            "syntax": syntax,
-            "rows": rows,
-            "model": model_name,
-            "results": [],
-            "events": [],  # slot-level events for incremental updates
-            "completed": 0,
-            "created_at": time.time(),
             "total": len(rows),
+            "completed": 0,
             "columns": file_data["data"]["columns"],
-        }
+            "results": [],
+            "events": [],
+        })
 
         # Start background processing with timeout
         def process_batch():
             import anyio
 
-            task = _batch_tasks[task_id]
-            task["status"] = "running"
-            task["start_time"] = time.time()
+            task_cache.update_task(task_id, status="running", start_time=time.time())
+            start_time = time.time()
 
             def on_row_complete(result):
                 # Convert to row event format for SSE
@@ -1086,10 +1071,9 @@ def create_app(
                     "status": result["status"],
                     "error": result["error"],
                 }
-                task["results"].append(row_event)
-                task["completed"] += 1
+                task_cache.append_result(task_id, row_event)
                 # Check timeout on each row completion
-                elapsed = time.time() - task["start_time"]
+                elapsed = time.time() - start_time
                 if elapsed > STRUCKDOWN_BATCH_TIMEOUT:
                     raise TimeoutError(f"Batch timeout exceeded ({STRUCKDOWN_BATCH_TIMEOUT}s)")
 
@@ -1108,16 +1092,22 @@ def create_app(
                         ):
                             # Store slot events for SSE streaming
                             if event.get("type") == "slot":
-                                task["events"].append(event)
+                                task_cache.append_event(task_id, event)
 
                 anyio.run(run_with_timeout)
-                task["status"] = "complete"
+                task_cache.update_task(task_id, status="complete")
             except TimeoutError:
-                task["status"] = "error"
-                task["error"] = f"Batch processing timed out after {STRUCKDOWN_BATCH_TIMEOUT} seconds"
+                task_cache.update_task(
+                    task_id,
+                    status="error",
+                    error=f"Batch processing timed out after {STRUCKDOWN_BATCH_TIMEOUT} seconds"
+                )
             except Exception as e:
-                task["status"] = "error"
-                task["error"] = safe_error_message(e, remote_mode)
+                task_cache.update_task(
+                    task_id,
+                    status="error",
+                    error=safe_error_message(e, remote_mode)
+                )
 
         thread = threading.Thread(target=process_batch, daemon=True)
         thread.start()
@@ -1131,40 +1121,48 @@ def create_app(
     @app.route("/api/batch-stream/<task_id>")
     def batch_stream(task_id: str):
         """SSE stream for batch progress with slot-level updates."""
-        if task_id not in _batch_tasks:
+        task = task_cache.get_task(task_id)
+        if not task:
             return jsonify({"error": "Task not found"}), 404
 
         def generate():
-            task = _batch_tasks[task_id]
             last_row_sent = 0
             last_event_sent = 0
 
             while True:
+                # Get current task state from file
+                task = task_cache.get_task(task_id)
+                if not task:
+                    yield f"event: error\ndata: {json.dumps({'error': 'Task not found'})}\n\n"
+                    break
+
+                # Send progress update FIRST so client can initialize table
+                yield f"event: progress\ndata: {json.dumps({'completed': task.get('completed', 0), 'total': task.get('total', 0)})}\n\n"
+
                 # Send any new slot events (for cell-level updates)
-                while last_event_sent < len(task.get("events", [])):
-                    event = task["events"][last_event_sent]
+                events = task.get("events", [])
+                while last_event_sent < len(events):
+                    event = events[last_event_sent]
                     yield f"event: slot\ndata: {json.dumps(event)}\n\n"
                     last_event_sent += 1
 
                 # Send any new row results (for row completion)
-                while last_row_sent < len(task["results"]):
-                    result = task["results"][last_row_sent]
+                results = task.get("results", [])
+                while last_row_sent < len(results):
+                    result = results[last_row_sent]
                     yield f"event: row\ndata: {json.dumps(result)}\n\n"
                     last_row_sent += 1
 
-                # Send progress update
-                yield f"event: progress\ndata: {json.dumps({'completed': task['completed'], 'total': task['total']})}\n\n"
-
                 # Check if done
-                if task["status"] in ("complete", "error"):
-                    if task["status"] == "error":
+                status = task.get("status")
+                if status in ("complete", "error"):
+                    if status == "error":
                         yield f"event: error\ndata: {json.dumps({'error': task.get('error', 'Unknown error')})}\n\n"
                     else:
                         yield f"event: done\ndata: {json.dumps({'task_id': task_id})}\n\n"
                     break
 
                 # Small delay before next poll
-                import time
                 time.sleep(0.1)
 
         return Response(
@@ -1179,18 +1177,18 @@ def create_app(
         import pandas as pd
         from io import BytesIO
 
-        if task_id not in _batch_tasks:
+        task = task_cache.get_task(task_id)
+        if not task:
             return jsonify({"error": "Task not found"}), 404
 
-        task = _batch_tasks[task_id]
-        if task["status"] != "complete":
+        if task.get("status") != "complete":
             return jsonify({"error": "Task not complete"}), 400
 
         # Build dataframe from results
         rows_data = []
-        for result in sorted(task["results"], key=lambda r: r["index"]):
+        for result in sorted(task.get("results", []), key=lambda r: r["index"]):
             row = {**result["inputs"], **result["outputs"]}
-            if result["error"]:
+            if result.get("error"):
                 row["_error"] = result["error"]
             rows_data.append(row)
 
