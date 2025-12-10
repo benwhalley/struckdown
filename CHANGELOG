@@ -1,6 +1,26 @@
 
 # Changelog
 
+### 0.3.5
+
+**New Syntax:**
+- `<user>` and `<assistant>` role tags for explicit message role control in conversations
+
+**New Actions:**
+- `@history` -- load conversation history from text files (alternating turns)
+- `@evidence` -- BM25 keyword search over text/markdown files in evidence folders
+
+**Action System:**
+- `MessageList` return type for actions that emit multiple messages with different roles
+- `role` parameter on `@Actions.register()` to control message role in chat history
+- `noop` built-in fallback action for unknown/unregistered actions
+
+**Developer Tools:**
+- `enable_api_debug()` / `disable_api_debug()` for logging full API requests
+
+**Dependencies:**
+- Added `rank-bm25>=0.2.2`
+
 ### 0.3.3
 
 - **Incremental streaming**: new `chatter_incremental()` API yields slot results as they complete

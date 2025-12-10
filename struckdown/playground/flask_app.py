@@ -531,11 +531,15 @@ def create_app(
         # Extract inputs/slots
         extraction = core.extract_required_inputs(syntax)
 
+        # Check for @history usage
+        uses_history = core.uses_history_action(syntax)
+
         return jsonify({
             "valid": validation["valid"],
             "error": validation["error"],
             "inputs_required": extraction["inputs_required"],
             "slots_defined": extraction["slots_defined"],
+            "uses_history": uses_history,
         })
 
     @app.route("/api/run", methods=["POST"])
@@ -740,6 +744,133 @@ def create_app(
     # Apply rate limiting to run-incremental endpoint in remote mode
     if limiter:
         run_incremental = limiter.limit(STRUCKDOWN_RATE_LIMIT)(run_incremental)
+
+    @app.route("/api/run-chat", methods=["POST"])
+    def run_chat():
+        """Execute template for chat mode, with history messages injected.
+
+        Similar to /api/run-incremental but accepts history_messages to inject
+        into context for the [[@history]] action.
+
+        Returns Server-Sent Events with event types:
+        - slot_completed: individual slot result
+        - checkpoint: checkpoint boundary reached
+        - complete: final result with all slots
+        - error: processing error
+        """
+        import asyncio
+        from struckdown import LLMCredentials, chatter_incremental_async
+
+        data = get_json_safe()
+        syntax = data.get("syntax", "")
+        inputs = data.get("inputs", {})
+        model_name = data.get("model")
+        history_messages = data.get("history_messages", [])
+
+        # Validate syntax length
+        if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
+            def error_gen():
+                yield f'event: error\ndata: {json.dumps({"error_message": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"})}\n\n'
+            return Response(
+                stream_with_context(error_gen()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # Check for disallowed actions in remote mode
+        if remote_mode:
+            disallowed = core.check_disallowed_actions(syntax)
+            if disallowed:
+                def error_gen():
+                    yield f'event: error\ndata: {json.dumps({"error_message": f"Actions not allowed in remote mode: {", ".join(disallowed)}"})}\n\n'
+                return Response(
+                    stream_with_context(error_gen()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
+        # Determine credentials (same as /api/run)
+        credentials = None
+        if remote_mode:
+            user_api_key = data.get("api_key")
+            user_api_base = data.get("api_base")
+
+            if server_api_key:
+                credentials = LLMCredentials(api_key=server_api_key)
+            elif user_api_key:
+                api_base = user_api_base or os.environ.get("LLM_API_BASE")
+                if not api_base:
+                    def error_gen():
+                        yield f'event: error\ndata: {json.dumps({"error_message": "API base URL required."})}\n\n'
+                    return Response(
+                        stream_with_context(error_gen()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    )
+                credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
+            else:
+                def error_gen():
+                    yield f'event: error\ndata: {json.dumps({"error_message": "API key required."})}\n\n'
+                return Response(
+                    stream_with_context(error_gen()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
+        # Build context with inputs and history messages
+        context = dict(inputs)
+        if history_messages:
+            context["_history_messages"] = history_messages
+
+        def generate():
+            """Generator that streams incremental events."""
+            from struckdown import LLM
+
+            async def stream_events():
+                """Async generator to collect events."""
+                model = LLM(model_name=model_name) if model_name else LLM()
+                try:
+                    async for event in chatter_incremental_async(
+                        syntax,
+                        model=model,
+                        credentials=credentials,
+                        context=context,
+                    ):
+                        yield event
+                except Exception as e:
+                    # Yield error event
+                    from struckdown import ProcessingError, ChatterResult
+                    yield ProcessingError(
+                        segment_index=0,
+                        slot_key=None,
+                        error_message=safe_error_message(e, remote_mode),
+                        partial_results=ChatterResult(),
+                    )
+
+            # Run the async generator synchronously
+            loop = asyncio.new_event_loop()
+            try:
+                gen = stream_events()
+                while True:
+                    try:
+                        event = loop.run_until_complete(gen.__anext__())
+                        # Serialise and yield as SSE
+                        event_data = event.model_dump_json()
+                        yield f"event: {event.type}\ndata: {event_data}\n\n"
+                    except StopAsyncIteration:
+                        break
+            finally:
+                loop.close()
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Apply rate limiting to run-chat endpoint in remote mode
+    if limiter:
+        run_chat = limiter.limit(STRUCKDOWN_RATE_LIMIT)(run_chat)
 
     @app.route("/api/upload", methods=["POST"])
     def upload():
@@ -1278,11 +1409,13 @@ def create_app(
         data = get_json_safe()
         inputs_required = data.get("inputs_required", [])
         current_values = data.get("current_values", {})
+        uses_history = data.get("uses_history", False)
 
         return render_template(
             "partials/inputs_panel.html",
             inputs_required=inputs_required,
             current_values=current_values,
+            uses_history=uses_history,
         )
 
     @app.route("/partials/outputs", methods=["POST"])

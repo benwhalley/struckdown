@@ -516,3 +516,261 @@ kbd {
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* ============================================
+   Chat Mode Styles
+   ============================================ */
+
+/* Single mode view - shown by default */
+#single-mode-view {
+    display: flex !important;
+}
+
+#single-mode-view.hidden {
+    display: none !important;
+}
+
+/* Chat mode view - hidden by default */
+#chat-mode-view {
+    display: none !important;
+}
+
+#chat-mode-view.active {
+    display: flex !important;
+}
+
+/* Chat mode toggle in navbar */
+#chat-mode-toggle {
+    cursor: pointer;
+}
+
+#chat-mode-toggle:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Chat pane layout */
+#chat-pane {
+    background-color: #fff;
+}
+
+#chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Chat message bubbles - iMessage style */
+.chat-message {
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: 16px;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    word-wrap: break-word;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease;
+}
+
+.chat-message:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.chat-message.selected {
+    box-shadow: 0 0 0 2px #0d6efd;
+}
+
+/* User messages - right aligned, blue */
+.chat-message.user {
+    align-self: flex-end;
+    background-color: #007aff;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+/* Assistant messages - left aligned, grey */
+.chat-message.assistant {
+    align-self: flex-start;
+    background-color: #e9ecef;
+    color: #212529;
+    border-bottom-left-radius: 4px;
+}
+
+/* Seeded messages - outline style for visual distinction */
+.chat-message.seeded.user {
+    background-color: transparent;
+    border: 2px solid #007aff;
+    color: #007aff;
+}
+
+.chat-message.seeded.assistant {
+    background-color: transparent;
+    border: 2px solid #6c757d;
+    color: #495057;
+}
+
+/* Streaming indicator on assistant message */
+.chat-message.streaming {
+    position: relative;
+}
+
+.chat-message.streaming::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    background-color: #0d6efd;
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Restart button on hover */
+.chat-message .restart-btn {
+    display: none;
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    font-size: 10px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 50%;
+    background: #6c757d;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.chat-message.assistant:hover .restart-btn {
+    display: block;
+}
+
+.chat-message .restart-btn:hover {
+    background: #495057;
+}
+
+/* Chat input area */
+#chat-input-area {
+    flex-shrink: 0;
+}
+
+#chat-input {
+    border-radius: 18px;
+    padding-left: 14px;
+    padding-right: 14px;
+}
+
+#chat-send-btn {
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#chat-send-btn:disabled {
+    opacity: 0.5;
+}
+
+/* Thinking pane */
+#thinking-pane {
+    background-color: #fafbfc;
+}
+
+#thinking-container {
+    font-size: 0.85rem;
+}
+
+/* Thinking slot cards - reuse output-card styles but more compact */
+.thinking-slot {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+}
+
+.thinking-slot-header {
+    background: #f8f9fa;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #495057;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.thinking-slot-header code {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.85em;
+}
+
+.thinking-slot-body {
+    padding: 8px;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.thinking-slot.streaming .thinking-slot-header {
+    background: #e8f4fd;
+}
+
+.thinking-slot.streaming .thinking-slot-header::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 6px;
+    background-color: #0d6efd;
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+}
+
+/* Chat history seed input */
+#chat-history-seed-group {
+    border-top: 1px solid #dee2e6;
+    padding-top: 12px;
+    margin-top: 12px;
+}
+
+#chat-history-seed {
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    font-size: 0.8rem;
+    min-height: 80px;
+    resize: vertical;
+}
+
+/* Export link styling */
+#export-chat-link {
+    text-decoration: none;
+}
+
+#export-chat-link:hover {
+    text-decoration: underline;
+}
+
+/* Wide popover for seed history */
+.seed-popover-wide {
+    max-width: 520px !important;
+}
+
+.seed-popover-wide .popover-body {
+    padding: 12px;
+}

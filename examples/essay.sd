@@ -10,11 +10,13 @@
 
 </header>
 
+
+<checkpoint>
 Provide a concise summary of the key points in the document above. No more than 3 lines: [[summary]]
 
 
 <checkpoint>
-Did the student make errors in grammar and punctuation? [[!bool:grammar]]
+Check carefully. Did the student make ANY errors in grammar and punctuation? [[!bool:grammar]]
 
 
 <checkpoint>

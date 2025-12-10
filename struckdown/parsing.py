@@ -574,6 +574,52 @@ class MindframeTransformer(Transformer):
 
         return None
 
+    def user_tag(self, items):
+        """Handle <user>content</user> - inline user message.
+
+        Grammar: user_tag: USER_OPEN USER_CONTENT? USER_CLOSE
+        Items: [USER_OPEN token, optional USER_CONTENT, USER_CLOSE]
+
+        Content is stored in current_buf with role marker for later processing
+        by the segment processor.
+        """
+        content = ""
+        if len(items) > 2:  # Has content between open and close
+            content = str(items[1]).strip()
+            # Strip HTML comments from content
+            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+
+        if content:
+            self.current_buf.append({
+                "type": "role_content",
+                "role": "user",
+                "text": content,
+            })
+        return None
+
+    def assistant_tag(self, items):
+        """Handle <assistant>content</assistant> - inline assistant message.
+
+        Grammar: assistant_tag: ASSISTANT_OPEN ASSISTANT_CONTENT? ASSISTANT_CLOSE
+        Items: [ASSISTANT_OPEN token, optional ASSISTANT_CONTENT, ASSISTANT_CLOSE]
+
+        Content is stored in current_buf with role marker for later processing
+        by the segment processor.
+        """
+        content = ""
+        if len(items) > 2:  # Has content between open and close
+            content = str(items[1]).strip()
+            # Strip HTML comments from content
+            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+
+        if content:
+            self.current_buf.append({
+                "type": "role_content",
+                "role": "assistant",
+                "text": content,
+            })
+        return None
+
     def include_tag(self, items):
         """Handle <include src="path"/> - file inclusion (fallback).
 
@@ -717,6 +763,11 @@ class MindframeTransformer(Transformer):
                 lines.append(f"{{{{{item['name']}}}}}")
             elif item["type"] == "templatetag":
                 lines.append(item["text"])
+            elif item["type"] == "role_content":
+                # Preserve role markers in special format for segment processor
+                role = item["role"]
+                text = item["text"]
+                lines.append(f"<{role}>{text}</{role}>")
 
         prompt_text = "\n".join(lines).strip()
         return prompt_text
@@ -941,11 +992,11 @@ class MindframeTransformer(Transformer):
         options = items[2] if len(items) > 2 else []
 
         if not Actions.is_registered(action_name):
-            raise ValueError(
+            warnings.warn(
                 f"Unknown action '@{action_name}' at line {line_number}. "
-                f"Actions must be registered via @Actions.register(). "
-                f"Available actions: {Actions.list_registered() or ['(none)']}"
+                f"Treating as no-op. Available actions: {Actions.list_registered() or ['(none)']}"
             )
+            action_name = "noop"
 
         return {
             "return_type": self._lookup_rt(action_name, options, None, False),
@@ -974,11 +1025,11 @@ class MindframeTransformer(Transformer):
         options = items[1] if len(items) > 1 else []
 
         if not Actions.is_registered(action_name):
-            raise ValueError(
+            warnings.warn(
                 f"Unknown action '@{action_name}' at line {line_number}. "
-                f"Actions must be registered via @Actions.register(). "
-                f"Available actions: {Actions.list_registered() or ['(none)']}"
+                f"Treating as no-op. Available actions: {Actions.list_registered() or ['(none)']}"
             )
+            action_name = "noop"
 
         if action_name not in self.action_counters:
             self.action_counters[action_name] = 0
@@ -1010,16 +1061,17 @@ class MindframeTransformer(Transformer):
         action_name = str(items[0])
         options = items[1] if len(items) > 1 else []
 
+        original_action_name = action_name
         if not Actions.is_registered(action_name):
-            raise ValueError(
+            warnings.warn(
                 f"Unknown action '@{action_name}' at line {line_number}. "
-                f"Actions must be registered via @Actions.register(). "
-                f"Available actions: {Actions.list_registered() or ['(none)']}"
+                f"Treating as no-op. Available actions: {Actions.list_registered() or ['(none)']}"
             )
+            action_name = "noop"
 
         return {
             "return_type": self._lookup_rt(action_name, options, None, False),
-            "key": action_name,
+            "key": original_action_name,  # keep original name as variable key
             "options": options,
             "quantifier": None,
             "action_type": action_name,

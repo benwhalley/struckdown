@@ -82,16 +82,25 @@
 <div class="container-fluid vh-100 d-flex flex-column">
     <!-- Compact Header -->
     <nav class="navbar navbar-dark py-0" id="top-navbar">
-        <div class="container-fluid d-flex align-items-center">
+        <div class="container-fluid d-flex align-items-center justify-content-between">
             <!-- Title and filename -->
-            <span class="navbar-brand mb-0 py-1">
-                <i class="bi bi-code-square"></i> Struckdown
-            </span>
-            {% if filename %}
-            <span class="text-light opacity-75 small ms-2">
-                <i class="bi bi-file-earmark-code"></i> {{ filename }}
-            </span>
-            {% endif %}
+            <div class="d-flex align-items-center">
+                <span class="navbar-brand mb-0 py-1">
+                    <i class="bi bi-code-square"></i> Struckdown
+                </span>
+                {% if filename %}
+                <span class="text-light opacity-75 small ms-2">
+                    <i class="bi bi-file-earmark-code"></i> {{ filename }}
+                </span>
+                {% endif %}
+            </div>
+            <!-- Chat mode toggle -->
+            <div class="d-flex align-items-center">
+                <div class="form-check form-switch mb-0 me-3">
+                    <input class="form-check-input" type="checkbox" role="switch" id="chat-mode-toggle" autocomplete="off">
+                    <label class="form-check-label text-light small" for="chat-mode-toggle">Chat mode</label>
+                </div>
+            </div>
         </div>
     </nav>
 
@@ -114,11 +123,8 @@
                         <i class="bi bi-folder2-open"></i> Open
                     </button>
                     {% endif %}
-                    <button class="btn btn-secondary btn-sm me-1" id="save-btn" onclick="saveOnly()">
+                    <button class="btn btn-secondary btn-sm" id="save-btn" onclick="saveOnly()">
                         <i class="bi bi-check2"></i> Save
-                    </button>
-                    <button class="btn btn-primary btn-sm" id="save-run-btn" onclick="saveAndRun()">
-                        <i class="bi bi-play-fill"></i> Save & Run
                     </button>
                 </div>
             </div>
@@ -130,18 +136,80 @@
 
         <!-- Outputs Panel -->
         <div class="col-md-6 d-flex flex-column overflow-hidden" id="outputs-column">
-            <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
-                <span class="small text-muted">Outputs</span>
-                <div id="cost-display" class="small text-muted" style="display: none;">
-                    <span id="cost-tokens"></span> tokens |
-                    <span id="cost-amount"></span>
+            <!-- Single Mode View -->
+            <div id="single-mode-view" class="d-flex flex-column h-100">
+                <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Outputs</span>
+                    <div class="d-flex align-items-center">
+                        <div id="cost-display" class="small text-muted me-2" style="display: none;">
+                            <span id="cost-tokens"></span> tokens |
+                            <span id="cost-amount"></span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="run-btn" onclick="saveAndRun()">
+                            <i class="bi bi-play-fill"></i> Run
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-grow-1 overflow-auto p-3" id="outputs-container">
+                    <p class="text-muted text-center mt-5">
+                        <i class="bi bi-arrow-left-circle"></i>
+                        Edit your prompt and click "Run" to see outputs
+                    </p>
                 </div>
             </div>
-            <div class="flex-grow-1 overflow-auto p-3" id="outputs-container">
-                <p class="text-muted text-center mt-5">
-                    <i class="bi bi-arrow-left-circle"></i>
-                    Edit your prompt and click "Save & Run" to see outputs
-                </p>
+
+            <!-- Chat Mode View (hidden by default) -->
+            <div id="chat-mode-view" class="flex-column h-100" style="display: none;">
+                <!-- Chat Pane -->
+                <div class="d-flex flex-column" id="chat-pane" style="flex: 1; min-height: 0;">
+                    <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
+                        <span class="small text-muted">Chat</span>
+                        <div class="d-flex align-items-center">
+                            <div id="chat-cost-display" class="small text-muted me-2" style="display: none;">
+                                <span id="chat-cost-tokens"></span> tokens |
+                                <span id="chat-cost-amount"></span>
+                            </div>
+                            <a href="#" class="small text-muted me-2" id="seed-chat-link" data-bs-toggle="popover" data-bs-placement="bottom">
+                                <i class="bi bi-chat-left-text"></i> Seed
+                            </a>
+                            <a href="#" class="small text-muted me-2" id="restart-chat-link" onclick="restartChat(); return false;">
+                                <i class="bi bi-arrow-counterclockwise"></i> Restart
+                            </a>
+                            <a href="#" class="small text-muted me-2" id="export-chat-link" onclick="exportChatHistory(); return false;">
+                                <i class="bi bi-download"></i> Export
+                            </a>
+                        </div>
+                    </div>
+                    <div class="flex-grow-1 overflow-auto p-3" id="chat-messages">
+                        <p class="text-muted text-center mt-3" id="chat-empty-state">
+                            <i class="bi bi-chat-dots"></i>
+                            Type a message below to start chatting
+                        </p>
+                    </div>
+                    <div class="border-top p-2 bg-light" id="chat-input-area">
+                        <div class="d-flex align-items-end gap-1">
+                            <textarea class="form-control form-control-sm flex-grow-1" id="chat-input"
+                                   rows="3" placeholder="Type a message..." autocomplete="off" style="resize: none;"></textarea>
+                            <button class="btn btn-primary btn-sm" id="chat-send-btn" onclick="sendChatMessage()" style="border-radius: 6px; padding: 4px 12px; align-self: flex-end;">
+                                <i class="bi bi-send"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Thinking Pane -->
+                <div class="d-flex flex-column border-top" id="thinking-pane" style="flex: 0 0 35%; min-height: 150px;">
+                    <div class="panel-header p-2 border-bottom bg-light d-flex justify-content-between align-items-center">
+                        <span class="small text-muted">Thinking</span>
+                        <span class="small text-muted" id="thinking-turn-label"></span>
+                    </div>
+                    <div class="flex-grow-1 overflow-auto p-2" id="thinking-container">
+                        <p class="text-muted small mb-0" id="thinking-empty-state">
+                            Slot completions will appear here as they stream in.
+                            Click a message above to see its slots.
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -649,6 +717,32 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Batch file upload
     document.getElementById('batch-file').addEventListener('change', handleBatchFileUpload);
+
+    // Chat mode toggle
+    document.getElementById('chat-mode-toggle').addEventListener('change', function() {
+        toggleChatMode(this.checked);
+    });
+
+    // Initialize seed popover
+    initSeedPopover();
+
+    // Restore chat mode from localStorage (default: off)
+    const savedChatMode = localStorage.getItem('struckdown_chat_mode') === 'true';
+    const chatToggle = document.getElementById('chat-mode-toggle');
+    if (savedChatMode) {
+        chatToggle.checked = true;
+        toggleChatMode(true, true); // skipReset=true to not clear on page load
+    } else {
+        chatModeEnabled = false;
+    }
+
+    // Chat input - Enter to send
+    document.getElementById('chat-input').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendChatMessage();
+        }
+    });
 
     // API credentials save on change and clear missing highlight
     const apiKeyInput = document.getElementById('api-key-input');

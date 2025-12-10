@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import sys
 import traceback
 from glob import glob
@@ -157,9 +158,17 @@ def auto_prepend_input(prompt: str) -> str:
 
 
 def setup_logging(verbosity: int):
-    if verbosity >= 2:
+    """Set up logging based on verbosity level.
+
+    Levels:
+        0 (no -v): WARNING only
+        1 (-v): WARNING only (quiet, just outputs)
+        2 (-vv): INFO logs
+        3+ (-vvv): DEBUG logs
+    """
+    if verbosity >= 3:
         level = logging.DEBUG
-    elif verbosity == 1:
+    elif verbosity >= 2:
         level = logging.INFO
     else:
         level = logging.WARNING
@@ -168,6 +177,261 @@ def setup_logging(verbosity: int):
         level=level,
         format="%(levelname)s: %(message)s",
     )
+
+async def _run_chat_incremental(
+    prompt_str: str,
+    model: "LLM",
+    credentials: "LLMCredentials",
+    context: dict,
+    extra_kwargs: Optional[dict],
+    prompt_file: Optional[Path],
+    include_paths: Optional[List[Path]],
+    verbose: int,
+    show_context: bool,
+) -> tuple["ChatterResult", Optional["SegmentResult"]]:
+    """Process prompt incrementally, printing results as slots complete.
+
+    Verbosity levels:
+        0: just slot outputs (slot_key: output)
+        1 (-v): messages list + slot outputs
+        2 (-vv): detailed slot info (timing, segment) + messages + outputs
+        3+ (-vvv): all above + response schema
+    """
+    from . import chatter_incremental_async
+    from .incremental import SlotCompleted, CheckpointReached, ProcessingComplete, ProcessingError
+    from .results import ChatterResult
+
+    break_result = None
+    final_result = None
+    slot_count = 0
+
+    async for event in chatter_incremental_async(
+        multipart_prompt=prompt_str,
+        model=model,
+        credentials=credentials,
+        context=context,
+        extra_kwargs=extra_kwargs,
+        template_path=prompt_file,
+        include_paths=include_paths,
+    ):
+        if isinstance(event, SlotCompleted):
+            slot_count += 1
+            seg_result = event.result
+
+            # Skip break action (handle at end)
+            if seg_result.action == 'break':
+                break_result = seg_result
+                continue
+
+            # Skip history slot
+            if event.slot_key == "history":
+                continue
+
+            # -vv and above: show detailed slot header
+            if verbose >= 2:
+                typer.echo(f"\n{'='*80}")
+                typer.echo(f"Slot {slot_count}: `{event.slot_key}` (segment {event.segment_index})")
+                typer.echo(f"  Elapsed: {event.elapsed_ms:.0f}ms, Cached: {event.was_cached}")
+                typer.echo("-" * 80)
+
+            # -v and above: show messages list
+            if verbose >= 1 and seg_result.messages:
+                for msg in seg_result.messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    typer.echo(f"\033[1m{role}:\033[0m")
+                    typer.echo(content)
+                    typer.echo()
+
+            # -vvv: show response schema
+            if verbose >= 3 and seg_result.response_schema:
+                typer.echo("\033[1m\033[33mResponse Schema (Tool):\033[0m")
+                schema_summary = seg_result.get_schema_summary()
+                typer.echo(f"\033[33m{schema_summary}\033[0m")
+                typer.echo()
+
+            # Always show slot output
+            if isinstance(seg_result.output, (dict, list)):
+                formatted = json.dumps(seg_result.output, indent=2, default=str)
+                typer.echo(f"\033[1m{event.slot_key}\033[0m: {formatted}")
+            else:
+                typer.echo(f"\033[1m{event.slot_key}\033[0m: {seg_result.output}")
+
+        elif isinstance(event, ProcessingComplete):
+            final_result = event.result
+
+        elif isinstance(event, ProcessingError):
+            raise StruckdownLLMError(event.error_message)
+
+    return final_result, break_result
+
+
+DEFAULT_HISTORY_FILE = Path(".struckdown-chat-history")
+
+
+def _save_history(history_messages: List[dict], filepath: Path) -> None:
+    """Save history messages to file (one line per message, alternating roles)."""
+    lines = [msg["content"] for msg in history_messages]
+    filepath.write_text("\n".join(lines))
+
+
+def _load_history(filepath: Path) -> List[dict]:
+    """Load history messages from file."""
+    if not filepath.exists():
+        return []
+    content = filepath.read_text()
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    roles = ["assistant", "user"]  # Default: assistant_first
+    messages = []
+    for i, line in enumerate(lines):
+        messages.append({"role": roles[i % 2], "content": line})
+    return messages
+
+
+async def _run_chat_interactive(
+    prompt_str: str,
+    model: "LLM",
+    credentials: "LLMCredentials",
+    context: dict,
+    extra_kwargs: Optional[dict],
+    prompt_file: Optional[Path],
+    include_paths: Optional[List[Path]],
+    verbose: int,
+    show_context: bool,
+    history_file: Optional[Path],
+) -> None:
+    """Run chat in interactive REPL mode with continuous conversation.
+
+    Verbosity levels:
+        0: just slot outputs
+        1 (-v): messages list + slot outputs
+        2 (-vv): detailed slot info (timing) + messages + outputs
+        3+ (-vvv): all above + response schema
+
+    History is saved to .struckdown-chat-history on exit and resumed
+    automatically if no --history file is specified.
+    """
+    from . import chatter_incremental_async, new_run
+    from .incremental import SlotCompleted, ProcessingComplete, ProcessingError
+
+    # Determine which history file to use
+    using_default_history = history_file is None
+    effective_history_file = history_file or DEFAULT_HISTORY_FILE
+
+    # Initialize in-memory history from file
+    history_messages = _load_history(effective_history_file)
+    if history_messages and using_default_history:
+        typer.echo(f"(resuming from {DEFAULT_HISTORY_FILE})", err=True)
+
+    context["_history_messages"] = history_messages
+
+    try:
+        while True:
+            new_run()  # Fresh run for cache detection
+
+            # Run the prompt
+            final_result = None
+            break_result = None
+
+            async for event in chatter_incremental_async(
+                multipart_prompt=prompt_str,
+                model=model,
+                credentials=credentials,
+                context=context,
+                extra_kwargs=extra_kwargs,
+                template_path=prompt_file,
+                include_paths=include_paths,
+            ):
+                if isinstance(event, SlotCompleted):
+                    seg_result = event.result
+
+                    if seg_result.action == "break":
+                        break_result = seg_result
+                        continue
+
+                    # Skip history slot in output
+                    if event.slot_key == "history":
+                        continue
+
+                    # -vv and above: show detailed slot header
+                    if verbose >= 2:
+                        typer.echo(f"\n{'='*80}")
+                        typer.echo(
+                            f"Slot: `{event.slot_key}` ({event.elapsed_ms:.0f}ms)"
+                        )
+                        typer.echo("-" * 80)
+                    else:
+                        typer.echo(f"\n[{event.slot_key}]")
+
+                    # -v and above: show messages list
+                    if verbose >= 1 and seg_result.messages:
+                        for msg in seg_result.messages:
+                            role = msg.get("role", "unknown")
+                            content = msg.get("content", "")
+                            typer.echo(f"\033[1m{role}:\033[0m")
+                            typer.echo(content)
+                            typer.echo()
+
+                    # -vvv: show response schema
+                    if verbose >= 3 and seg_result.response_schema:
+                        typer.echo("\033[1m\033[33mResponse Schema (Tool):\033[0m")
+                        schema_summary = seg_result.get_schema_summary()
+                        typer.echo(f"\033[33m{schema_summary}\033[0m")
+                        typer.echo()
+
+                    # Always show slot output
+                    if isinstance(seg_result.output, (dict, list)):
+                        formatted = json.dumps(seg_result.output, indent=2, default=str)
+                        typer.echo(formatted)
+                    else:
+                        typer.echo(seg_result.output)
+
+                elif isinstance(event, ProcessingComplete):
+                    final_result = event.result
+
+                elif isinstance(event, ProcessingError):
+                    typer.echo(f"Error: {event.error_message}", err=True)
+                    continue
+
+            if final_result is None:
+                typer.echo("Error: No result from prompt processing", err=True)
+                break
+
+            # Append last slot output to history as assistant response
+            assistant_response = final_result.response
+            if assistant_response:
+                history_messages.append(
+                    {"role": "assistant", "content": str(assistant_response)}
+                )
+
+            if break_result:
+                typer.echo("\n(conversation ended)")
+                break
+
+            # Get user input
+            try:
+                user_input = input("\nyou: ")
+            except EOFError:
+                typer.echo("\n(exiting)")
+                break
+
+            if not user_input.strip():
+                typer.echo("(exiting)")
+                break
+
+            # Append user message to history
+            history_messages.append({"role": "user", "content": user_input.strip()})
+            context["_history_messages"] = history_messages
+
+    except KeyboardInterrupt:
+        typer.echo("\n(interrupted)")
+
+    finally:
+        # Save history on exit
+        if history_messages:
+            _save_history(history_messages, DEFAULT_HISTORY_FILE)
+            typer.echo(f"(saved history to {DEFAULT_HISTORY_FILE})", err=True)
+
 
 @app.command()
 def chat(
@@ -201,7 +465,7 @@ def chat(
         "-v",
         "--verbose",
         count=True,
-        help="-v for info, -vv for debug",
+        help="-v: show messages, -vv: detailed + info logs, -vvv: debug",
     ),
     include_paths: Optional[List[Path]] = typer.Option(
         None,
@@ -219,6 +483,34 @@ def chat(
         "--tools",
         help="Python tools file or directory (can be repeated)",
     ),
+    history_file: Optional[Path] = typer.Option(
+        None,
+        "--history",
+        help="Conversation history file for @history action (line per turn, alternating roles)",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Run in interactive mode with continuous conversation",
+    ),
+    data_file: Optional[str] = typer.Option(
+        None,
+        "-d",
+        "--data",
+        help="JSON file to load as context data. Use 'file.json' for {{data.key}} or 'key=file.json' for {{data.key.subkey}}",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "-o",
+        "--output",
+        help="Write results as JSON to file (dict with slot keys)",
+    ),
+    debug_api: bool = typer.Option(
+        False,
+        "--debug-api",
+        help="Log full API requests (messages + tools schema) as JSON",
+    ),
 ):
     """
     Run a single chatter prompt (interactive mode).
@@ -230,7 +522,12 @@ def chat(
         sd chat -p prompt.sd -s input.txt       # {{source}} available in template
         sd chat -p prompt.sd -c topic=sun       # {{topic}} = "sun"
         sd chat -p prompt.sd -c x=1 -c y=2      # multiple context vars
+        sd chat -p prompt.sd -d data.json       # {{data.key}} from JSON file
+        sd chat -p prompt.sd -d summary=data.json  # {{data.summary.key}} from JSON file
+        sd chat -p prompt.sd -o result.json     # write slot outputs as JSON
         sd chat -p prompt.sd -I ./includes      # search ./includes for <include> files
+        sd chat -p prompt.sd --history conv.txt # use @history action with this file
+        sd chat -p prompt.sd --debug-api        # log full API requests
     """
     # start new run for cache detection
     from struckdown import new_run
@@ -239,6 +536,11 @@ def chat(
 
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
+
+    # Enable API request logging if requested
+    if debug_api:
+        from struckdown.llm import enable_api_debug
+        enable_api_debug()
 
     # load custom types and actions
     if type_files:
@@ -339,6 +641,39 @@ def chat(
             key, value = var.split("=", 1)
             context[key.strip()] = value.strip()
 
+    # add history file to context for @history action
+    if history_file:
+        if not history_file.exists():
+            typer.echo(f"Error: History file not found: {history_file}", err=True)
+            raise typer.Exit(1)
+        context["_history_file"] = str(history_file)
+
+    # load JSON data file as context["data"] or context["data"][key]
+    if data_file:
+        # parse optional key name: "key=file.json" or just "file.json"
+        if "=" in data_file:
+            data_key, data_path_str = data_file.split("=", 1)
+            data_key = data_key.strip()
+        else:
+            data_key = None
+            data_path_str = data_file
+        data_path = Path(data_path_str.strip())
+        if not data_path.exists():
+            typer.echo(f"Error: Data file not found: {data_path}", err=True)
+            raise typer.Exit(1)
+        try:
+            with open(data_path, "r", encoding="utf-8") as f:
+                data_content = json.load(f)
+            if data_key:
+                # nest under data.key
+                context["data"] = {data_key: data_content}
+            else:
+                # put directly under data
+                context["data"] = data_content
+        except json.JSONDecodeError as e:
+            typer.echo(f"Error: Invalid JSON in {data_path}: {e}", err=True)
+            raise typer.Exit(1)
+
     # Build include paths: cwd/templates as default, plus any user-provided -I paths
     all_include_paths = []
     if (Path.cwd() / 'templates').is_dir():
@@ -347,15 +682,36 @@ def chat(
         all_include_paths.extend(include_paths)
 
     try:
-        result = chatter(
-            multipart_prompt=prompt_str,
-            model=model,
-            credentials=credentials,
-            context=context,
-            extra_kwargs=extra_kwargs if extra_kwargs else None,
-            template_path=prompt_file,  # Enable {% include %} for file-based templates
-            include_paths=all_include_paths if all_include_paths else None,
-        )
+        if interactive:
+            # Interactive mode - continuous conversation
+            anyio.run(
+                _run_chat_interactive,
+                prompt_str,
+                model,
+                credentials,
+                context,
+                extra_kwargs if extra_kwargs else None,
+                prompt_file,
+                all_include_paths if all_include_paths else None,
+                verbose,
+                show_context,
+                history_file,
+            )
+            return  # Exit after interactive session
+        else:
+            # Single-run mode (existing behaviour)
+            result, break_result = anyio.run(
+                _run_chat_incremental,
+                prompt_str,
+                model,
+                credentials,
+                context,
+                extra_kwargs if extra_kwargs else None,
+                prompt_file,
+                all_include_paths if all_include_paths else None,
+                verbose,
+                show_context,
+            )
     except StruckdownTemplateError as e:
         e.template_path = prompt_file
         typer.echo(str(e), err=True)
@@ -378,95 +734,27 @@ def chat(
             typer.echo("\n" + traceback.format_exc(), err=True)
         raise typer.Exit(1)
 
-    # Check if execution was terminated by break action
-    break_result = None
-    for key, seg_result in result.results.items():
-        if seg_result.action == 'break':
-            break_result = seg_result
-            break
-
-    if verbose:
-        typer.echo("\n" + "="*80)
-        typer.echo("VERBOSE OUTPUT - Message Threads")
-        typer.echo("="*80 + "\n")
-
-        for idx, (key, seg_result) in enumerate(result.results.items(), 1):
-            # Skip break action (shown separately at the end)
-            if seg_result.action == 'break':
-                continue
-
-            typer.echo(f"Segment {idx}: `{key}`")
-            typer.echo("-" * 80)
-
-            if seg_result.messages:
-                for msg in seg_result.messages:
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-
-                    # Bold role name
-                    typer.echo(f"\033[1m{role}:\033[0m")
-                    typer.echo(content)
-                    typer.echo()
-
-                # Show response schema if available
-                if seg_result.response_schema:
-                    typer.echo("\033[1m\033[33mResponse Schema (Tool):\033[0m")
-                    # Get schema summary from SegmentResult method
-                    schema_summary = seg_result.get_schema_summary()
-                    typer.echo(f"\033[33m{schema_summary}\033[0m")
-                    typer.echo()
-
-                # Completion in red at the end
-                if isinstance(seg_result.output, (dict, list)):
-                    formatted = json.dumps(seg_result.output, indent=2, default=str)
-                    typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {formatted}\033[0m\n")
-                else:
-                    typer.echo(f"\033[91m\033[1m{key}\033[0m\033[91m: {seg_result.output}\033[0m\n")
-
-                
-            else:
-                # Fallback if messages not available
-                if isinstance(seg_result.output, (dict, list)):
-                    typer.echo(f"Output: {json.dumps(seg_result.output, indent=2, default=str)}")
-                else:
-                    typer.echo(f"Output: {seg_result.output}")
-
-            typer.echo()  # Blank line after segment
-
-        # Show break notice if execution was terminated
-        if break_result:
+    # Show break notice if execution was terminated
+    if break_result:
+        if verbose:
             typer.echo("="*80)
             typer.echo("\033[1m⚠ EXECUTION TERMINATED BY BREAK\033[0m")
             if break_result.output:
                 typer.echo(f"\033[1mReason:\033[0m {break_result.output}")
             typer.echo("="*80 + "\n")
-
-        # Pretty print accumulated context
-        typer.echo("="*80)
-        typer.echo("\033[1mAccumulated Context:\033[0m")
-        typer.echo("-"*80)
-        typer.echo(json.dumps(result.outputs, indent=2, default=str))
-        typer.echo("="*80 + "\n")
-
-    else:
-        for k, v in result.results.items():
-            # Skip break action (control flow, not a completion)
-            if v.action == 'break':
-                continue
-            # Format dict/list as JSON for valid output
-            if isinstance(v.output, (dict, list)):
-                formatted = json.dumps(v.output, indent=2, default=str)
-                typer.echo(f"\033[1m{k}\033[0m: {formatted}")
-            else:
-                typer.echo(f"\033[1m{k}\033[0m: {v.output}")
-
-        # Show break notice if execution was terminated
-        if break_result:
+        else:
             typer.echo(f"\n\033[1m⚠ Break:\033[0m {break_result.output or 'execution terminated'}")
 
     if show_context:
         typer.echo("\nFinal context:")
         typer.echo(result.outputs)
+
+    # write JSON output if requested
+    if output_file:
+        output_data = dict(result.outputs)
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, default=str)
+        typer.echo(f"Wrote {output_file}", err=True)
 
     # print cost summary to stderr (always visible)
     summary = CostSummary.from_results([result])
@@ -1606,8 +1894,9 @@ def edit(
         console.print("[dim]Auto-reload enabled - watching for file changes[/dim]")
     console.print("[dim]Press Ctrl+C to stop[/dim]")
 
-    if not no_browser:
+    if not no_browser and not os.environ.get('WERKZEUG_RUN_MAIN'):
         # Delay browser open slightly to let server start
+        # Only open in main process, not in reloader child process
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
     # Run Flask app (blocks until Ctrl+C)

@@ -82,6 +82,12 @@ def check_disallowed_actions(syntax: str) -> List[str]:
     return sorted(disallowed)
 
 
+def uses_history_action(syntax: str) -> bool:
+    """Check if the syntax uses the [[@history]] action."""
+    pattern = re.compile(r'\[\[@history(?:[:\|]|]])')
+    return bool(pattern.search(syntax))
+
+
 def validate_syntax(syntax: str) -> Dict:
     """
     Validate struckdown syntax.

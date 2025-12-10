@@ -1,11 +1,28 @@
 """LLM client, credentials, and API interaction for struckdown."""
 
+import json
 import logging
 import traceback
 from typing import Any, Dict, List, Optional
 
 import instructor
 import litellm
+from instructor.core.hooks import HookName
+
+# Module-level flag for API request logging
+_debug_api_requests = False
+
+
+def enable_api_debug():
+    """Enable logging of full API requests (messages + tools schema)."""
+    global _debug_api_requests
+    _debug_api_requests = True
+
+
+def disable_api_debug():
+    """Disable API request logging."""
+    global _debug_api_requests
+    _debug_api_requests = False
 from box import Box
 from decouple import config as env_config
 from litellm.exceptions import (
@@ -75,6 +92,20 @@ class LLM(BaseModel):
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
         client = instructor.from_litellm(litellm.completion)
+
+        # Attach debug hook if enabled
+        if _debug_api_requests:
+            def log_api_request(**kwargs):
+                """Log the full API request as JSON."""
+                import sys
+                print("\n" + "="*80, file=sys.stderr)
+                print("API REQUEST", file=sys.stderr)
+                print("="*80, file=sys.stderr)
+                print(json.dumps(kwargs, indent=2, default=str), file=sys.stderr)
+                print("="*80 + "\n", file=sys.stderr)
+
+            client.on(HookName.COMPLETION_KWARGS, log_api_request)
+
         return client
 
 

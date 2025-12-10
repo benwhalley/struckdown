@@ -1,0 +1,17 @@
+<system>
+You are a helpful assistant.
+</system>
+
+Hello, I need help with something.
+
+<assistant>
+Of course! I'm happy to help. What do you need?
+</assistant>
+
+<user>
+I want to learn about Python.
+</user>
+
+Great, now please give me a brief overview:
+
+[[response]]

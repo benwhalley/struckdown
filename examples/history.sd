@@ -1,0 +1,19 @@
+<system>
+You are an expert MI therapist.
+</system>
+
+[[@history|n=100, step=current]]
+
+# SYSTEM INSTRUCTION
+In this conversation, what is the main issue the client identifies? Max 10 words: [[topic]]
+
+
+<checkpoint>
+<system>
+Speak french
+</system>
+
+translate 
+{{topic}}: 
+
+[[french]]

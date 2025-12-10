@@ -303,7 +303,7 @@ function initEditor() {
             editor = window.StruckdownEditor.create(container, initialContent, {
                 onChange: function(content) {
                     clearTimeout(analyseTimeout);
-                    analyseTimeout = setTimeout(analyseTemplate, 500);
+                    analyseTimeout = setTimeout(analyseTemplate, 4000);
                     markEditorDirty();
                 },
                 onSave: saveOnly
@@ -334,7 +334,7 @@ function initEditor() {
     // Debounced analysis on input
     textarea.addEventListener('input', function() {
         clearTimeout(analyseTimeout);
-        analyseTimeout = setTimeout(analyseTemplate, 500);
+        analyseTimeout = setTimeout(analyseTemplate, 4000);
         markEditorDirty();
     });
 
@@ -381,11 +381,15 @@ function analyseTemplate() {
             hideError();
         }
 
-        // Update inputs panel if inputs changed
+        // Check if inputs or uses_history changed
         const newInputs = data.inputs_required || [];
-        if (JSON.stringify(newInputs) !== JSON.stringify(currentInputs)) {
+        const newUsesHistory = data.uses_history || false;
+        const inputsChanged = JSON.stringify(newInputs) !== JSON.stringify(currentInputs);
+        const historyChanged = newUsesHistory !== usesHistory;
+
+        if (inputsChanged || historyChanged) {
             currentInputs = newInputs;
-            updateInputsPanel(newInputs);
+            updateInputsPanel(newInputs, newUsesHistory);
         }
 
         // Store slots for incremental rendering
@@ -397,7 +401,7 @@ function analyseTemplate() {
 }
 
 // Update inputs panel with new fields
-function updateInputsPanel(inputsRequired) {
+function updateInputsPanel(inputsRequired, usesHistoryFlag = false) {
     const container = document.getElementById('inputs-container');
 
     // Merge current DOM values with stored values
@@ -405,12 +409,22 @@ function updateInputsPanel(inputsRequired) {
     const stored = loadInputsFromStorage();
     const mergedValues = { ...(stored?.inputs || {}), ...currentValues };
 
+    // Preserve chat history seed if it exists
+    const seedEl = document.getElementById('chat-history-seed');
+    if (seedEl) {
+        mergedValues['_chat_history_seed'] = seedEl.value;
+    }
+
+    // Update global uses_history flag
+    usesHistory = usesHistoryFlag;
+
     fetchWithCsrf('/partials/inputs', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             inputs_required: inputsRequired,
-            current_values: mergedValues
+            current_values: mergedValues,
+            uses_history: usesHistoryFlag
         })
     })
     .then(response => response.text())
@@ -1121,14 +1135,15 @@ function setStatus(type, message) {
     el.className = 'status-' + type;
 }
 
-// Disable/enable save button
+// Disable/enable run button
 function disableSaveButton(disabled) {
-    const btn = document.getElementById('save-run-btn');
+    const btn = document.getElementById('run-btn');
+    if (!btn) return;
     btn.disabled = disabled;
     if (disabled) {
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running...';
     } else {
-        btn.innerHTML = '<i class="bi bi-play-fill"></i> Save & Run';
+        btn.innerHTML = '<i class="bi bi-play-fill"></i> Run';
     }
 }
 
@@ -1552,4 +1567,716 @@ function createNewFile() {
         setStatus('error', 'Error creating file: ' + err.message);
         console.error('Error creating file:', err);
     });
+}
+
+// ============================================
+// Chat Mode
+// ============================================
+
+let chatModeEnabled = false;
+let usesHistory = false;
+let savedModeBeforeChat = 'interactive'; // Remember mode before entering chat
+
+// Chat session state
+let chatSession = {
+    turns: [],           // Array of {index, role, content, slots, cost, timestamp}
+    totalCost: { tokens: 0, amount: 0 },
+    model: null,
+    templateSnapshot: null,
+    startTime: null
+};
+
+// Current turn being streamed
+let currentTurnSlots = {};
+let currentTurnIndex = -1;
+let selectedTurnIndex = -1;
+let isChatStreaming = false;
+
+// Toggle between single mode and chat mode
+function toggleChatMode(enabled, skipReset = false) {
+    chatModeEnabled = enabled;
+    const singleView = document.getElementById('single-mode-view');
+    const chatView = document.getElementById('chat-mode-view');
+    const fileMode = document.getElementById('mode-file');
+    const batchMode = document.getElementById('mode-batch');
+    const interactiveMode = document.getElementById('mode-single');
+
+    // Persist to localStorage
+    localStorage.setItem('struckdown_chat_mode', enabled ? 'true' : 'false');
+
+    if (enabled) {
+        // Save current mode and force interactive
+        const currentMode = document.querySelector('input[name="mode"]:checked');
+        if (currentMode) {
+            savedModeBeforeChat = currentMode.value;
+        }
+
+        // Disable all mode options in chat mode
+        if (interactiveMode) interactiveMode.disabled = true;
+        if (fileMode) fileMode.disabled = true;
+        if (batchMode) batchMode.disabled = true;
+
+        // Toggle views using classes (to override Bootstrap !important)
+        singleView.classList.add('hidden');
+        chatView.classList.add('active');
+
+        // Reset chat session when entering chat mode (unless restoring from localStorage)
+        if (!skipReset) {
+            resetChatSession();
+        }
+    } else {
+        // Re-enable all mode options
+        if (interactiveMode) interactiveMode.disabled = false;
+        if (fileMode) fileMode.disabled = false;
+        if (batchMode) batchMode.disabled = false;
+
+        // Restore previous mode
+        const previousModeRadio = document.getElementById('mode-' + savedModeBeforeChat);
+        if (previousModeRadio) {
+            previousModeRadio.checked = true;
+        }
+
+        // Toggle views using classes
+        singleView.classList.remove('hidden');
+        chatView.classList.remove('active');
+    }
+}
+
+// Reset chat session to initial state
+function resetChatSession() {
+    const modelInput = document.getElementById('model-input');
+    chatSession = {
+        turns: [],
+        totalCost: { tokens: 0, amount: 0 },
+        model: modelInput ? modelInput.value : '',
+        templateSnapshot: getSyntax(),
+        startTime: Date.now()
+    };
+    currentTurnSlots = {};
+    currentTurnIndex = -1;
+    selectedTurnIndex = -1;
+    isChatStreaming = false;
+
+    // Clear chat UI
+    const messagesContainer = document.getElementById('chat-messages');
+    messagesContainer.innerHTML = `
+        <p class="text-muted text-center mt-3" id="chat-empty-state">
+            <i class="bi bi-chat-dots"></i>
+            Type a message below to start chatting
+        </p>
+    `;
+
+    // Clear thinking pane
+    const thinkingContainer = document.getElementById('thinking-container');
+    thinkingContainer.innerHTML = `
+        <p class="text-muted small mb-0" id="thinking-empty-state">
+            Slot completions will appear here as they stream in.
+            Click a message above to see its slots.
+        </p>
+    `;
+    document.getElementById('thinking-turn-label').textContent = '';
+
+    // Reset cost display
+    document.getElementById('chat-cost-display').style.display = 'none';
+
+}
+
+// Parse chat history seed text into messages
+function parseSeedText(text) {
+    if (!text || !text.trim()) return [];
+
+    const lines = text.split('\n').filter(line => line.trim());
+    const messages = [];
+
+    // First line is assistant, alternating from there
+    lines.forEach((line, i) => {
+        const role = (i % 2 === 0) ? 'assistant' : 'user';
+        messages.push({ role, content: line.trim() });
+    });
+
+    return messages;
+}
+
+// Add seed history to chat session from popover
+function addSeedToChat() {
+    const textarea = document.getElementById('seed-popover-textarea');
+    if (!textarea) return;
+
+    const seedMessages = parseSeedText(textarea.value);
+    if (seedMessages.length === 0) {
+        return;
+    }
+
+    // Remove empty state
+    const emptyState = document.getElementById('chat-empty-state');
+    if (emptyState) emptyState.remove();
+
+    // Add seed messages as turns (no slots for these)
+    seedMessages.forEach((msg) => {
+        const turnIndex = chatSession.turns.length;
+        chatSession.turns.push({
+            index: turnIndex,
+            role: msg.role,
+            content: msg.content,
+            slots: {},
+            cost: null,
+            timestamp: Date.now(),
+            isSeeded: true
+        });
+        renderChatMessage(msg.role, msg.content, turnIndex, true);
+    });
+
+    // Clear textarea and hide popover
+    textarea.value = '';
+    const popover = bootstrap.Popover.getInstance(document.getElementById('seed-chat-link'));
+    if (popover) popover.hide();
+}
+
+// Restart chat - clear all turns and reset
+function restartChat() {
+    if (isChatStreaming) return;
+    resetChatSession();
+}
+
+// Initialize seed popover
+function initSeedPopover() {
+    const seedLink = document.getElementById('seed-chat-link');
+    if (!seedLink) return;
+
+    const popoverContent = `
+        <div style="width: 500px;">
+            <textarea id="seed-popover-textarea" class="form-control mb-2" rows="10" style="font-size: 14px;"
+                placeholder="One message per line:&#10;Hello, how can I help?&#10;I have a question...&#10;What about X?&#10;Let me explain..."></textarea>
+            <div class="d-flex justify-content-between align-items-center">
+                <small class="text-muted">First line = assistant, then alternating. Cmd+Return to add.</small>
+                <button type="button" class="btn btn-sm btn-primary" onclick="addSeedToChat()">Add</button>
+            </div>
+        </div>
+    `;
+
+    new bootstrap.Popover(seedLink, {
+        html: true,
+        content: popoverContent,
+        trigger: 'click',
+        sanitize: false,
+        customClass: 'seed-popover-wide'
+    });
+
+    // Add Cmd+Return handler when popover is shown
+    seedLink.addEventListener('shown.bs.popover', function() {
+        const textarea = document.getElementById('seed-popover-textarea');
+        if (textarea) {
+            textarea.focus();
+            textarea.addEventListener('keydown', function(e) {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    addSeedToChat();
+                }
+            });
+        }
+    });
+}
+
+// Build history messages array for API from chat session
+function buildHistoryMessages() {
+    return chatSession.turns.map(turn => ({
+        role: turn.role,
+        content: turn.content
+    }));
+}
+
+// Send a chat message
+function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+
+    if (!message || isChatStreaming) return;
+
+    // Clear input
+    input.value = '';
+
+    // Remove empty state if present
+    const emptyState = document.getElementById('chat-empty-state');
+    if (emptyState) emptyState.remove();
+
+    // Add user message to session
+    const userTurnIndex = chatSession.turns.length;
+    chatSession.turns.push({
+        index: userTurnIndex,
+        role: 'user',
+        content: message,
+        slots: {},
+        cost: null,
+        timestamp: Date.now()
+    });
+
+    // Render user message
+    renderChatMessage('user', message, userTurnIndex);
+
+    // Prepare for assistant response
+    const assistantTurnIndex = chatSession.turns.length;
+    currentTurnIndex = assistantTurnIndex;
+    currentTurnSlots = {};
+    currentTurnSlotDetails = {};
+    isChatStreaming = true;
+
+    // Add placeholder for assistant turn
+    chatSession.turns.push({
+        index: assistantTurnIndex,
+        role: 'assistant',
+        content: '',
+        slots: {},
+        cost: null,
+        timestamp: Date.now()
+    });
+
+    // Render streaming assistant message
+    renderChatMessage('assistant', '', assistantTurnIndex, false, true);
+
+    // Clear thinking pane and show streaming state
+    clearThinkingPane();
+    document.getElementById('thinking-turn-label').textContent = 'Current turn';
+
+    // Disable send button
+    document.getElementById('chat-send-btn').disabled = true;
+    setStatus('running', 'Generating response...');
+
+    // Execute template with chat history
+    runChatTurn();
+}
+
+// Execute template for current chat turn
+function runChatTurn() {
+    const syntax = getSyntax();
+    const inputs = getInputValues();
+    const model = document.getElementById('model-input').value;
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+
+    const historyMessages = buildHistoryMessages();
+
+    const body = {
+        syntax: syntax,
+        inputs: inputs,
+        model: model || null,
+        history_messages: historyMessages
+    };
+
+    if (remoteMode) {
+        const apiKey = document.getElementById('api-key-input').value;
+        const apiBase = document.getElementById('api-base-input').value;
+        if (apiKey) body.api_key = apiKey;
+        if (apiBase) body.api_base = apiBase;
+    }
+
+    fetch('/api/run-chat', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': getCsrfToken()
+        },
+        body: JSON.stringify(body)
+    }).then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to start chat execution');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function processStream() {
+            return reader.read().then(({done, value}) => {
+                if (done) {
+                    finishChatTurn();
+                    return;
+                }
+
+                buffer += decoder.decode(value, {stream: true});
+
+                // Parse SSE events
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || '';
+
+                for (const eventBlock of events) {
+                    if (!eventBlock.trim()) continue;
+
+                    let eventType = null;
+                    let eventData = null;
+
+                    for (const line of eventBlock.split('\n')) {
+                        if (line.startsWith('event: ')) {
+                            eventType = line.substring(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            eventData = line.substring(6);
+                        }
+                    }
+
+                    if (eventType && eventData) {
+                        try {
+                            const data = JSON.parse(eventData);
+                            handleChatEvent(eventType, data);
+                        } catch (e) {
+                            console.error('Failed to parse chat event:', eventData, e);
+                        }
+                    }
+                }
+
+                return processStream();
+            });
+        }
+
+        return processStream();
+    }).catch(error => {
+        console.error('Chat execution error:', error);
+        setStatus('error', 'Error: ' + error.message);
+        finishChatTurn(true);
+    });
+}
+
+// Store full slot details for export (not just output)
+let currentTurnSlotDetails = {};
+
+// Handle SSE event from chat execution
+function handleChatEvent(eventType, data) {
+    switch (eventType) {
+        case 'slot_completed':
+            // Store slot result (output only for display)
+            currentTurnSlots[data.slot_key] = data.result.output;
+
+            // Store full slot details for export
+            currentTurnSlotDetails[data.slot_key] = {
+                output: data.result.output,
+                messages: data.result.messages || [],
+                prompt: data.result.prompt || null,
+                elapsed_ms: data.elapsed_ms || null,
+                was_cached: data.was_cached || false
+            };
+
+            // Update thinking pane
+            renderThinkingSlot(data.slot_key, data.result.output, false);
+
+            // Update status
+            setStatus('running', `Completed: ${data.slot_key}`);
+            break;
+
+        case 'checkpoint':
+            setStatus('running', `Checkpoint ${data.segment_index + 1}`);
+            break;
+
+        case 'complete':
+            // Get final response (last slot value)
+            const slotKeys = Object.keys(currentTurnSlots);
+            const lastSlotKey = slotKeys[slotKeys.length - 1];
+            const response = lastSlotKey ? currentTurnSlots[lastSlotKey] : '';
+
+            // Update assistant turn
+            if (currentTurnIndex >= 0 && currentTurnIndex < chatSession.turns.length) {
+                chatSession.turns[currentTurnIndex].content = String(response);
+                chatSession.turns[currentTurnIndex].slots = {...currentTurnSlots};
+                chatSession.turns[currentTurnIndex].slotDetails = {...currentTurnSlotDetails};
+
+                // Extract cost and model info from result
+                if (data.result) {
+                    chatSession.turns[currentTurnIndex].llm = {
+                        model: data.result.model || chatSession.model,
+                        prompt_tokens: data.result.prompt_tokens || 0,
+                        completion_tokens: data.result.completion_tokens || 0,
+                        total_cost: data.result.total_cost || 0
+                    };
+                    const cost = {
+                        tokens: (data.result.prompt_tokens || 0) + (data.result.completion_tokens || 0),
+                        amount: data.result.total_cost || 0
+                    };
+                    chatSession.turns[currentTurnIndex].cost = cost;
+                    chatSession.totalCost.tokens += cost.tokens;
+                    chatSession.totalCost.amount += cost.amount;
+                    updateChatCostDisplay();
+
+                    // Update session model if we got it from response
+                    if (data.result.model) {
+                        chatSession.model = data.result.model;
+                    }
+                }
+            }
+
+            // Update message bubble
+            updateChatMessageContent(currentTurnIndex, String(response));
+
+            setStatus('success', 'Complete');
+            finishChatTurn();
+            break;
+
+        case 'error':
+            setStatus('error', 'Error: ' + (data.error_message || 'Unknown error'));
+
+            // Update message with error
+            if (currentTurnIndex >= 0) {
+                updateChatMessageContent(currentTurnIndex, '[Error: ' + (data.error_message || 'Unknown error') + ']');
+            }
+
+            finishChatTurn(true);
+            break;
+    }
+}
+
+// Finish current chat turn
+function finishChatTurn(hadError = false) {
+    isChatStreaming = false;
+    document.getElementById('chat-send-btn').disabled = false;
+
+    // Remove streaming class from message
+    const messageEl = document.querySelector(`.chat-message[data-turn="${currentTurnIndex}"]`);
+    if (messageEl) {
+        messageEl.classList.remove('streaming');
+    }
+
+    // Mark slots as completed in thinking pane
+    document.querySelectorAll('.thinking-slot.streaming').forEach(el => {
+        el.classList.remove('streaming');
+    });
+
+    // Auto-scroll chat
+    const messagesContainer = document.getElementById('chat-messages');
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    currentTurnIndex = -1;
+}
+
+// Render a chat message bubble
+function renderChatMessage(role, content, turnIndex, isSeeded = false, isStreaming = false) {
+    const messagesContainer = document.getElementById('chat-messages');
+
+    const messageEl = document.createElement('div');
+    messageEl.className = `chat-message ${role}${isSeeded ? ' seeded' : ''}${isStreaming ? ' streaming' : ''}`;
+    messageEl.dataset.turn = turnIndex;
+    messageEl.onclick = () => selectChatMessage(turnIndex);
+
+    // Add restart button for assistant messages (not seeded)
+    if (role === 'assistant' && !isSeeded) {
+        const restartBtn = document.createElement('button');
+        restartBtn.className = 'restart-btn';
+        restartBtn.title = 'Restart from here';
+        restartBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+        restartBtn.onclick = (e) => {
+            e.stopPropagation();
+            restartFromTurn(turnIndex);
+        };
+        messageEl.appendChild(restartBtn);
+        messageEl.style.position = 'relative';
+    }
+
+    const contentSpan = document.createElement('span');
+    contentSpan.className = 'message-content';
+    contentSpan.textContent = content || (isStreaming ? 'Thinking...' : '');
+    messageEl.appendChild(contentSpan);
+
+    messagesContainer.appendChild(messageEl);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+// Update chat message content
+function updateChatMessageContent(turnIndex, content) {
+    const messageEl = document.querySelector(`.chat-message[data-turn="${turnIndex}"]`);
+    if (messageEl) {
+        const contentSpan = messageEl.querySelector('.message-content');
+        if (contentSpan) {
+            contentSpan.textContent = content;
+        }
+    }
+}
+
+// Select a chat message to view its slots
+function selectChatMessage(turnIndex) {
+    // Don't select if nothing to show
+    const turn = chatSession.turns[turnIndex];
+    if (!turn || turn.role === 'user') return;
+
+    // Update selection state
+    selectedTurnIndex = turnIndex;
+
+    // Update visual selection
+    document.querySelectorAll('.chat-message.selected').forEach(el => {
+        el.classList.remove('selected');
+    });
+    const messageEl = document.querySelector(`.chat-message[data-turn="${turnIndex}"]`);
+    if (messageEl) {
+        messageEl.classList.add('selected');
+    }
+
+    // Show slots in thinking pane
+    clearThinkingPane();
+    document.getElementById('thinking-turn-label').textContent = `Turn ${turnIndex + 1}`;
+
+    const slots = turn.slots || {};
+    if (Object.keys(slots).length === 0) {
+        document.getElementById('thinking-container').innerHTML = `
+            <p class="text-muted small mb-0">No slots recorded for this turn.</p>
+        `;
+        return;
+    }
+
+    for (const [key, value] of Object.entries(slots)) {
+        renderThinkingSlot(key, value, false);
+    }
+}
+
+// Clear thinking pane
+function clearThinkingPane() {
+    const container = document.getElementById('thinking-container');
+    container.innerHTML = '';
+}
+
+// Render a slot in the thinking pane
+function renderThinkingSlot(slotKey, value, isStreaming = true) {
+    // Skip history slot - it duplicates the chat interface
+    if (slotKey === 'history') return;
+
+    const container = document.getElementById('thinking-container');
+
+    // Remove empty state
+    const emptyState = document.getElementById('thinking-empty-state');
+    if (emptyState) emptyState.remove();
+
+    // Check if slot already exists
+    let slotEl = container.querySelector(`.thinking-slot[data-slot="${slotKey}"]`);
+
+    if (!slotEl) {
+        slotEl = document.createElement('div');
+        slotEl.className = `thinking-slot${isStreaming ? ' streaming' : ''}`;
+        slotEl.dataset.slot = slotKey;
+        slotEl.innerHTML = `
+            <div class="thinking-slot-header">
+                <code>${escapeHtml(slotKey)}</code>
+            </div>
+            <div class="thinking-slot-body"></div>
+        `;
+        container.appendChild(slotEl);
+    } else {
+        if (!isStreaming) {
+            slotEl.classList.remove('streaming');
+        }
+    }
+
+    // Update value
+    const bodyEl = slotEl.querySelector('.thinking-slot-body');
+    bodyEl.textContent = formatOutput(value);
+}
+
+// Restart conversation from a specific turn
+function restartFromTurn(turnIndex) {
+    if (isChatStreaming) return;
+
+    // Confirm with user
+    if (!confirm('Restart conversation from this message? Later messages will be removed.')) {
+        return;
+    }
+
+    // Truncate turns (keep up to and including this turn)
+    chatSession.turns = chatSession.turns.slice(0, turnIndex + 1);
+
+    // Recalculate total cost
+    chatSession.totalCost = { tokens: 0, amount: 0 };
+    chatSession.turns.forEach(turn => {
+        if (turn.cost) {
+            chatSession.totalCost.tokens += turn.cost.tokens;
+            chatSession.totalCost.amount += turn.cost.amount;
+        }
+    });
+    updateChatCostDisplay();
+
+    // Remove message bubbles after this turn
+    document.querySelectorAll('.chat-message').forEach(el => {
+        const idx = parseInt(el.dataset.turn, 10);
+        if (idx > turnIndex) {
+            el.remove();
+        }
+    });
+
+    // Clear thinking pane
+    clearThinkingPane();
+    document.getElementById('thinking-turn-label').textContent = '';
+
+    // Deselect
+    selectedTurnIndex = -1;
+    document.querySelectorAll('.chat-message.selected').forEach(el => {
+        el.classList.remove('selected');
+    });
+
+    setStatus('success', 'Restarted from turn ' + (turnIndex + 1));
+}
+
+// Update chat cost display
+function updateChatCostDisplay() {
+    const display = document.getElementById('chat-cost-display');
+    if (chatSession.totalCost.tokens > 0) {
+        display.style.display = 'block';
+        document.getElementById('chat-cost-tokens').textContent = chatSession.totalCost.tokens;
+        document.getElementById('chat-cost-amount').textContent = '$' + chatSession.totalCost.amount.toFixed(4);
+    }
+}
+
+// Export chat history as JSON
+function exportChatHistory() {
+    // Build user-friendly export format
+    const exportData = {
+        session: {
+            model: chatSession.model,
+            template: chatSession.templateSnapshot,
+            startTime: chatSession.startTime ? new Date(chatSession.startTime).toISOString() : null,
+            exportTime: new Date().toISOString(),
+            totalCost: {
+                tokens: chatSession.totalCost.tokens,
+                amount: chatSession.totalCost.amount,
+                formatted: '$' + chatSession.totalCost.amount.toFixed(4)
+            }
+        },
+        turns: chatSession.turns.map((turn, index) => {
+            const turnData = {
+                turn: index + 1,
+                role: turn.role,
+                content: turn.content,
+                timestamp: turn.timestamp ? new Date(turn.timestamp).toISOString() : null
+            };
+
+            // Add LLM details for assistant turns
+            if (turn.role === 'assistant') {
+                if (turn.llm) {
+                    turnData.llm = {
+                        model: turn.llm.model,
+                        prompt_tokens: turn.llm.prompt_tokens,
+                        completion_tokens: turn.llm.completion_tokens,
+                        total_tokens: turn.llm.prompt_tokens + turn.llm.completion_tokens,
+                        cost: turn.llm.total_cost,
+                        cost_formatted: '$' + (turn.llm.total_cost || 0).toFixed(4)
+                    };
+                }
+
+                // Add slot details with API messages
+                if (turn.slotDetails && Object.keys(turn.slotDetails).length > 0) {
+                    turnData.slots = {};
+                    for (const [slotKey, details] of Object.entries(turn.slotDetails)) {
+                        turnData.slots[slotKey] = {
+                            output: details.output,
+                            elapsed_ms: details.elapsed_ms,
+                            was_cached: details.was_cached,
+                            api_messages: details.messages || []
+                        };
+                    }
+                }
+            }
+
+            return turnData;
+        })
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }

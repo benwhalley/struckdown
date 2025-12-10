@@ -34,6 +34,45 @@ from readability import Document
 
 from struckdown.return_type_models import LLMConfig, ResponseModel
 
+MessageRole = Literal["user", "assistant", "system"]
+
+
+class MessageList(list):
+    """Return type for actions that emit multiple messages with different roles.
+
+    When an action returns a MessageList, each message is added to the
+    conversation history with its specified role, instead of a single message
+    with the default role.
+
+    Example:
+        @Actions.register('turns', default_save=False)
+        def turns_action(context: dict, filter_type: str = "all") -> MessageList:
+            turns = get_turns_from_context(context)
+            messages = [
+                {"role": "user" if t.is_user else "assistant", "content": t.text}
+                for t in turns
+            ]
+            return MessageList(messages)
+    """
+
+    def __init__(self, messages: list[dict]):
+        super().__init__(messages)
+        for msg in messages:
+            if not isinstance(msg, dict):
+                raise TypeError(f"MessageList items must be dicts, got {type(msg)}")
+            if "content" not in msg:
+                raise ValueError("MessageList items must have 'content' key")
+            if msg.get("role") not in ("user", "assistant", "system"):
+                raise ValueError(f"Invalid role: {msg.get('role')}")
+
+    def __str__(self) -> str:
+        """Concatenate all message contents for string representation."""
+        return "\n\n".join(m["content"] or "" for m in self)
+
+    def __repr__(self) -> str:
+        return f"MessageList({list(self)})"
+
+
 # optional playwright support
 try:
     from playwright.sync_api import sync_playwright
@@ -76,8 +115,8 @@ class Actions:
         # [[@expertise:guidance|query="insomnia",n=5]]
     """
 
-    # Registry stores: (func, on_error, default_save, return_type, default, allow_remote_use)
-    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any, bool]] = {}
+    # Registry stores: (func, on_error, default_save, return_type, default, allow_remote_use, role)
+    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any, bool, MessageRole]] = {}
 
     @classmethod
     def register(
@@ -88,6 +127,7 @@ class Actions:
         return_type: type | None = None,
         default: Any = "",
         allow_remote_use: bool = True,
+        role: MessageRole = "user",
     ):
         """Decorator to register a function as a custom action.
 
@@ -110,6 +150,11 @@ class Actions:
             allow_remote_use: Whether this action is allowed in remote/hosted mode.
                 - True: Action can be used in remote playground (default)
                 - False: Action is blocked in remote mode (e.g., fetch, search)
+            role: Message role when action output is added to chat history (default: "user")
+                - "user": Action output is context/information for the LLM (most common)
+                - "assistant": Action output appears as prior LLM response
+                - "system": Action output added as system message
+                - Ignored if action returns MessageList (which specifies roles per-message)
 
         Returns:
             Decorator function
@@ -136,9 +181,10 @@ class Actions:
                 return_type,
                 default,
                 allow_remote_use,
+                role,
             )
             logger.debug(
-                f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}, allow_remote_use={allow_remote_use}"
+                f"Registered action '{action_name}' with function {func.__name__}, default_save={default_save}, return_type={return_type}, default={default}, allow_remote_use={allow_remote_use}, role={role}"
             )
             return func
 
@@ -170,7 +216,7 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save, return_type, default_value, allow_remote_use = cls._registry[
+        func, on_error, default_save, return_type, default_value, allow_remote_use, role = cls._registry[
             action_name
         ]
 
@@ -295,11 +341,16 @@ class Actions:
 
                 # create temporary Pydantic model for validation/coercion
                 if field_defs:
+                    from pydantic import ConfigDict
+
                     CoercionModel = create_model(
-                        f"{action_name.title()}Params", **field_defs
+                        f"{action_name.title()}Params",
+                        __config__=ConfigDict(extra="allow"),
+                        **field_defs,
                     )
 
                     # validate and coerce the parameters
+                    # extra="allow" preserves unknown fields for **kwargs
                     try:
                         coerced = CoercionModel(**rendered_params)
                         coerced_params = coerced.model_dump()
@@ -346,6 +397,7 @@ class Actions:
         ActionResult._executor = executor
         ActionResult._is_function = True
         ActionResult._default_save = default_save
+        ActionResult._role = role
 
         return ActionResult
 
@@ -413,10 +465,25 @@ class Actions:
             return_type,
             default_value,
             allow_remote_use,
+            role,
         ) in cls._registry.values():
             if return_type is not None and return_type not in types:
                 types.append(return_type)
         return types
+
+    @classmethod
+    def get_role(cls, action_name: str) -> MessageRole:
+        """Get the message role for a registered action.
+
+        Args:
+            action_name: Action name to check
+
+        Returns:
+            Role string ("user", "assistant", or "system"). Defaults to "user".
+        """
+        if action_name not in cls._registry:
+            return "user"
+        return cls._registry[action_name][6]  # seventh element is role
 
     @classmethod
     def is_allowed_remote(cls, action_name: str) -> bool:
@@ -831,6 +898,7 @@ def fetch_and_parse(
 __all__ = [
     # main registry
     "Actions",
+    "MessageList",
     # loader functions
     "load_action_file",
     "load_action_directory",
@@ -870,3 +938,15 @@ from . import fetch
 from . import markdownify
 from . import search
 from . import timestamp
+from . import history
+from . import evidence
+
+
+# =============================================================================
+# Built-in noop action for unknown/unregistered actions
+# =============================================================================
+
+@Actions.register("noop", on_error="return_empty", default_save=False)
+def noop_action(**kwargs) -> str:
+    """No-op action that returns empty string. Used for unknown actions."""
+    return ""

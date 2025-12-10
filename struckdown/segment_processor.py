@@ -34,6 +34,53 @@ def _strip_html_comments(text: str) -> str:
     return re.sub(r'<!--(.|\n)*?-->', '', text)
 
 
+def split_content_by_role(content: str) -> List[Dict[str, str]]:
+    """Split content by <user> and <assistant> tags into separate messages.
+
+    Args:
+        content: Content string potentially containing role tags
+
+    Returns:
+        List of {"role": "user"|"assistant", "content": "..."} dicts.
+        Unmarked content defaults to "user" role.
+
+    Example:
+        >>> split_content_by_role("Hello <assistant>Hi there</assistant> Bye")
+        [{"role": "user", "content": "Hello"},
+         {"role": "assistant", "content": "Hi there"},
+         {"role": "user", "content": "Bye"}]
+    """
+    # Pattern matches <user>...</user> or <assistant>...</assistant>
+    pattern = re.compile(
+        r'<(user|assistant)>(.*?)</\1>',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    messages = []
+    last_end = 0
+
+    for match in pattern.finditer(content):
+        # Add any content before this tag as user
+        before = content[last_end:match.start()].strip()
+        if before:
+            messages.append({"role": "user", "content": before})
+
+        # Add tagged content with its role
+        role = match.group(1).lower()
+        tagged_content = match.group(2).strip()
+        if tagged_content:
+            messages.append({"role": role, "content": tagged_content})
+
+        last_end = match.end()
+
+    # Add any remaining content as user
+    remaining = content[last_end:].strip()
+    if remaining:
+        messages.append({"role": "user", "content": remaining})
+
+    return messages
+
+
 def extract_system_message(template_str: str) -> Tuple[str, str]:
     """Extract <system>...</system> content from template.
 
@@ -238,9 +285,11 @@ async def process_segment_with_delta_incremental(
             filled_slots[slot_key] = None
             continue
 
-        # Add user message if there's content
+        # Add messages for content before this slot
+        # Split by <user> and <assistant> tags to handle role markers
         if content_before.strip():
-            messages.append({"role": "user", "content": content_before})
+            role_segments = split_content_by_role(content_before)
+            messages.extend(role_segments)
 
         # Get return type from parsed slot info
         return_type = slot_info.return_type
@@ -275,10 +324,22 @@ async def process_segment_with_delta_incremental(
 
         # Extract response value
         extracted_value = res.response if hasattr(res, 'response') else res
-        completion_str = str(extracted_value)
 
-        # Add assistant response to messages
-        messages.append({"role": "assistant", "content": completion_str})
+        # Import MessageList to check for multi-message returns
+        from struckdown.actions import MessageList
+
+        # Handle MessageList (multi-message) vs single value returns
+        if isinstance(extracted_value, MessageList):
+            # Action returned multiple messages - add each with its role
+            for msg in extracted_value:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+            # For context storage, use string representation
+            completion_str = str(extracted_value)
+        else:
+            # Single message - use registered role for actions, "assistant" for LLM
+            completion_str = str(extracted_value)
+            action_role = getattr(return_type, '_role', 'assistant')
+            messages.append({"role": action_role, "content": completion_str})
 
         # Build result
         segment_result = SegmentResult(

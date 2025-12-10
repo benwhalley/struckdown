@@ -58,6 +58,8 @@ from .llm import (
     structured_chat,
     get_embedding,
     _call_llm_cached,
+    enable_api_debug,
+    disable_api_debug,
 )
 
 # Re-export from execution module

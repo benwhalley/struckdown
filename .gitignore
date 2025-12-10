@@ -7,3 +7,4 @@ data/
 *.pyc
 dist
 uv.lock
+.struckdown-chat-history
