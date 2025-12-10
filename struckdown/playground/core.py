@@ -266,6 +266,7 @@ async def run_single(
     model_name: str = None,
     credentials: LLMCredentials = None,
     include_paths: List[Path] = None,
+    strict_undefined: bool = False,
 ) -> Dict:
     """
     Execute template with given inputs.
@@ -283,6 +284,7 @@ async def run_single(
             credentials=credentials,
             context=inputs,
             include_paths=include_paths,
+            strict_undefined=strict_undefined,
         )
 
         # Build cost info from ChatterResult properties
@@ -319,6 +321,7 @@ async def run_batch_streaming(
     max_concurrent: int = 10,
     on_row_complete=None,
     slot_level: bool = False,
+    strict_undefined: bool = False,
 ) -> AsyncGenerator[Dict, None]:
     """
     Execute template for each row, yielding results as they complete.
@@ -376,6 +379,7 @@ async def run_batch_streaming(
                         credentials=credentials,
                         context=row,
                         include_paths=include_paths,
+                        strict_undefined=strict_undefined,
                     ):
                         if event.type == "slot_completed":
                             outputs[event.slot_key] = event.result.output
@@ -432,6 +436,7 @@ async def run_batch_streaming(
                         credentials=credentials,
                         context=row,
                         include_paths=include_paths,
+                        strict_undefined=strict_undefined,
                     )
                     row_result = {
                         "type": "row",

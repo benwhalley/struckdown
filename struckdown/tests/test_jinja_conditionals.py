@@ -388,7 +388,7 @@ class TestEdgeCases:
         assert "match" not in render_template(template, {"x": "warm"})
 
     def test_undefined_variable_is_falsy(self):
-        """Undefined variable treated as falsy (with KeepUndefined)."""
+        """Undefined variable treated as falsy (with SilentUndefined)."""
         template = "{% if undefined_var %}visible{% endif %}"
         rendered = render_template(template, {})
         assert "visible" not in rendered

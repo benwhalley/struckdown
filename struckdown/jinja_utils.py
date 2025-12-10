@@ -15,11 +15,38 @@ LC_ORANGE = "\033[38;5;208m"
 LC_RESET = "\033[0m"
 
 
-class KeepUndefined(Undefined):
-    """Custom Undefined class that preserved {{vars}} if they are not defined in context."""
+class SilentUndefined(Undefined):
+    """Undefined class that silently renders as empty string.
+
+    This class handles both simple variable access ({{foo}}) and attribute access
+    ({{foo.bar.baz}}) silently - undefined variables render as empty string
+    instead of raising errors.
+    """
+
+    def __getattr__(self, name):
+        # Don't intercept special attributes
+        if name.startswith("_"):
+            raise AttributeError(name)
+        # Return another SilentUndefined for chained access
+        return SilentUndefined()
+
+    def __getitem__(self, key):
+        # Handle dict-style access: {{data["key"]}} or {{data[0]}}
+        return SilentUndefined()
 
     def __str__(self):
-        return f"{{{{ {self._undefined_name} }}}}"
+        return ""
+
+    def __iter__(self):
+        # Return empty iterator so loops don't break
+        return iter([])
+
+    def __bool__(self):
+        # Undefined values are falsy (allows {% if data %} to work)
+        return False
+
+    def __len__(self):
+        return 0
 
 
 def make_strict_undefined(available_vars: list[str]):

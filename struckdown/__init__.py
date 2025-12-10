@@ -41,7 +41,7 @@ from .results import (
 
 # Re-export from jinja_utils module
 from .jinja_utils import (
-    KeepUndefined,
+    SilentUndefined,
     make_strict_undefined,
     mark_struckdown_safe,
     struckdown_finalize,
@@ -168,13 +168,13 @@ async def chatter_async(
 
         # System messages accumulate across segments (globals persist)
         if system_template:
-            env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
             rendered_system = env.from_string(system_template).render(**accumulated_context)
             accumulated_globals.append(rendered_system)
 
         # Header messages accumulate across segments (globals persist, sent as user role)
         if header_template:
-            env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
             rendered_header = env.from_string(header_template).render(**accumulated_context)
             accumulated_header_globals.append(rendered_header)
 
@@ -194,6 +194,7 @@ async def chatter_async(
                 analysis=analysis,
                 global_system_messages=accumulated_globals,
                 global_header_messages=accumulated_header_globals,
+                strict_undefined=strict_undefined,
                 **(extra_kwargs or {}),
             )
             final.update(result.results)
@@ -319,13 +320,13 @@ async def chatter_incremental_async(
 
             # System messages accumulate across segments (globals persist)
             if system_template:
-                env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
                 rendered_system = env.from_string(system_template).render(**accumulated_context)
                 accumulated_globals.append(rendered_system)
 
             # Header messages accumulate across segments (globals persist, sent as user role)
             if header_template:
-                env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
                 rendered_header = env.from_string(header_template).render(**accumulated_context)
                 accumulated_header_globals.append(rendered_header)
 
@@ -346,6 +347,7 @@ async def chatter_incremental_async(
                 global_system_messages=accumulated_globals,
                 global_header_messages=accumulated_header_globals,
                 segment_index=seg_idx,
+                strict_undefined=strict_undefined,
                 **(extra_kwargs or {}),
             ):
                 all_results[event.slot_key] = event.result
@@ -465,7 +467,7 @@ __all__ = [
     # Internal (for advanced use)
     "SegmentDependencyGraph",
     "merge_contexts",
-    "KeepUndefined",
+    "SilentUndefined",
     "make_strict_undefined",
     "struckdown_finalize",
     "LC",

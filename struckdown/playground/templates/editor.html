@@ -347,6 +347,15 @@
             {% endif %}
             <div class="form-text">LLM model identifier</div>
         </div>
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="strict-mode-toggle" autocomplete="off">
+                <label class="form-check-label" for="strict-mode-toggle">
+                    Strict mode
+                </label>
+            </div>
+            <div class="form-text">Error on missing template variables (default: preserve as-is)</div>
+        </div>
         {% if remote_mode %}
         <div class="mb-3" id="api-base-group">
             <label for="api-base-input" class="form-label">API Base URL</label>
@@ -736,6 +745,13 @@ document.addEventListener('DOMContentLoaded', function() {
         chatModeEnabled = false;
     }
 
+    // Restore strict mode from localStorage (default: off)
+    const savedStrictMode = localStorage.getItem('struckdown_strict_mode') === 'true';
+    const strictToggle = document.getElementById('strict-mode-toggle');
+    if (strictToggle && savedStrictMode) {
+        strictToggle.checked = true;
+    }
+
     // Chat input - Enter to send
     document.getElementById('chat-input').addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -773,6 +789,14 @@ document.addEventListener('DOMContentLoaded', function() {
     if (modelInput) {
         const eventType = modelInput.tagName === 'SELECT' ? 'change' : 'input';
         modelInput.addEventListener(eventType, debounce(saveInputsToStorage, 500));
+    }
+
+    // Strict mode toggle save on change
+    const strictModeToggle = document.getElementById('strict-mode-toggle');
+    if (strictModeToggle) {
+        strictModeToggle.addEventListener('change', function() {
+            localStorage.setItem('struckdown_strict_mode', this.checked ? 'true' : 'false');
+        });
     }
 });
 </script>

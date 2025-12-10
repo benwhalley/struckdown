@@ -553,6 +553,7 @@ def create_app(
         syntax = data.get("syntax", "")
         inputs = data.get("inputs", {})
         model_name = data.get("model")
+        strict_undefined = data.get("strict_undefined", False)
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -607,6 +608,7 @@ def create_app(
                 model_name=model_name,
                 credentials=credentials,
                 include_paths=app.config["INCLUDE_PATHS"],
+                strict_undefined=strict_undefined,
             )
 
         try:
@@ -644,6 +646,7 @@ def create_app(
         syntax = data.get("syntax", "")
         inputs = data.get("inputs", {})
         model_name = data.get("model")
+        strict_undefined = data.get("strict_undefined", False)
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -708,6 +711,7 @@ def create_app(
                         model=model,
                         credentials=credentials,
                         context=inputs,
+                        strict_undefined=strict_undefined,
                     ):
                         yield event
                 except Exception as e:
@@ -766,6 +770,7 @@ def create_app(
         inputs = data.get("inputs", {})
         model_name = data.get("model")
         history_messages = data.get("history_messages", [])
+        strict_undefined = data.get("strict_undefined", False)
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -835,6 +840,7 @@ def create_app(
                         model=model,
                         credentials=credentials,
                         context=context,
+                        strict_undefined=strict_undefined,
                     ):
                         yield event
                 except Exception as e:
@@ -1075,6 +1081,7 @@ def create_app(
         syntax = data.get("syntax", "")
         file_id = data.get("file_id")
         model_name = data.get("model")
+        strict_undefined = data.get("strict_undefined", False)
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -1135,6 +1142,7 @@ def create_app(
                 model_name=model_name,
                 credentials=credentials,
                 include_paths=app.config["INCLUDE_PATHS"],
+                strict_undefined=strict_undefined,
             )
 
         try:
@@ -1163,6 +1171,7 @@ def create_app(
         syntax = data.get("syntax", "")
         file_id = data.get("file_id")
         model_name = data.get("model")
+        strict_undefined = data.get("strict_undefined", False)
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -1247,6 +1256,7 @@ def create_app(
                             include_paths=app.config["INCLUDE_PATHS"],
                             on_row_complete=on_row_complete,
                             slot_level=True,
+                            strict_undefined=strict_undefined,
                         ):
                             # Store slot events for SSE streaming
                             if event.get("type") == "slot":

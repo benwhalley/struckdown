@@ -228,9 +228,9 @@ Say 'ok' [[response]]
             # we can't easily test this without mocking the LLM
             # but we can verify the Environment is created correctly
             from jinja2.sandbox import ImmutableSandboxedEnvironment
-            from struckdown import struckdown_finalize, KeepUndefined
+            from struckdown import struckdown_finalize, SilentUndefined
 
-            env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
             template = env.from_string(prompt)
             rendered = template.render(**context)
 
@@ -259,9 +259,9 @@ Say 'ok' [[response]]
 
         # verify Environment handling
         from jinja2.sandbox import ImmutableSandboxedEnvironment
-        from struckdown import struckdown_finalize, KeepUndefined
+        from struckdown import struckdown_finalize, SilentUndefined
 
-        env = ImmutableSandboxedEnvironment(undefined=KeepUndefined, finalize=struckdown_finalize)
+        env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
         template = env.from_string(prompt)
         rendered = template.render(**context)
 

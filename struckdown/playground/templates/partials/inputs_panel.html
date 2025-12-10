@@ -3,9 +3,16 @@
 <div class="d-flex flex-column gap-2">
     {% for input_name in inputs_required %}
     <div>
-        <label for="input-{{ input_name }}" class="form-label small mb-1">
-            <code>{{ "{{" }}{{ input_name }}{{ "}}" }}</code>
-        </label>
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <label for="input-{{ input_name }}" class="form-label small mb-0">
+                <code>{{ "{{" }}{{ input_name }}{{ "}}" }}</code>
+            </label>
+            <div class="form-check form-check-inline mb-0" style="min-height: 0;">
+                <input class="form-check-input json-toggle" type="checkbox" id="json-{{ input_name }}"
+                       data-input="{{ input_name }}" style="width: 12px; height: 12px; margin-top: 2px;">
+                <label class="form-check-label" for="json-{{ input_name }}" style="font-size: 10px; color: #6c757d;">json</label>
+            </div>
+        </div>
         <textarea class="form-control form-control-sm input-field w-100" id="input-{{ input_name }}"
                   name="{{ input_name }}" rows="2"
                   placeholder="Enter value for {{ input_name }}">{{ current_values.get(input_name, '') }}</textarea>

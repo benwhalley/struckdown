@@ -90,7 +90,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     """
     from jinja2 import FileSystemLoader
     from jinja2.sandbox import ImmutableSandboxedEnvironment
-    from struckdown import KeepUndefined
+    from struckdown import SilentUndefined
     from struckdown.parsing import resolve_includes
 
     # Read template
@@ -117,7 +117,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     # NOTE: We don't use struckdown_finalize here because we're just expanding
     # includes, not substituting variables. The struckdown syntax must remain intact.
     env = ImmutableSandboxedEnvironment(
-        undefined=KeepUndefined,
+        undefined=SilentUndefined,
         loader=FileSystemLoader(search_paths)
     )
     template = env.from_string(template_text)

@@ -9,7 +9,6 @@ import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-from jinja2 import Undefined
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from .jinja_analysis import (
@@ -17,16 +16,10 @@ from .jinja_analysis import (
     analyze_template,
     find_slots_with_positions,
 )
+from .jinja_utils import SilentUndefined
 from .parsing import parser_with_state, PromptPart
 
 logger = logging.getLogger(__name__)
-
-
-class KeepUndefined(Undefined):
-    """Preserve {{vars}} if they are not defined in context."""
-
-    def __str__(self):
-        return f"{{{{ {self._undefined_name} }}}}"
 
 
 def _strip_html_comments(text: str) -> str:
@@ -164,17 +157,24 @@ def build_slot_info_map(body_template: str) -> Dict[str, PromptPart]:
         return {}
 
 
-def render_template(template_str: str, context: Dict[str, Any]) -> str:
-    """Render Jinja template with context, preserving undefined vars.
+def render_template(
+    template_str: str,
+    context: Dict[str, Any],
+    strict_undefined: bool = False,
+) -> str:
+    """Render Jinja template with context.
 
     Args:
         template_str: Template string
         context: Variable context
+        strict_undefined: If True, raise error for undefined variables
 
     Returns:
         Rendered string
     """
-    env = ImmutableSandboxedEnvironment(undefined=KeepUndefined)
+    from jinja2 import StrictUndefined
+    undefined_class = StrictUndefined if strict_undefined else SilentUndefined
+    env = ImmutableSandboxedEnvironment(undefined=undefined_class)
     template = env.from_string(template_str)
     return template.render(**context)
 
@@ -188,6 +188,7 @@ async def process_segment_with_delta_incremental(
     global_system_messages: Optional[List[str]] = None,
     global_header_messages: Optional[List[str]] = None,
     segment_index: int = 0,
+    strict_undefined: bool = False,
     **extra_kwargs,
 ) -> AsyncGenerator:
     """Process a template segment, yielding SlotCompleted events as each slot is filled.
@@ -244,7 +245,7 @@ async def process_segment_with_delta_incremental(
         messages.append({"role": "user", "content": combined_header})
 
     # Initial render of body
-    rendered = render_template(body_template, accumulated_context)
+    rendered = render_template(body_template, accumulated_context, strict_undefined)
 
     while True:
         # Find all slots in current render
@@ -383,7 +384,7 @@ async def process_segment_with_delta_incremental(
         # Re-render if this slot triggers conditional changes
         if analysis.triggers_rerender(slot_key):
             logger.debug(f"Slot {slot_key} triggers re-render")
-            rendered = render_template(body_template, accumulated_context)
+            rendered = render_template(body_template, accumulated_context, strict_undefined)
             # Reset last_slot_end since positions changed
             # Will be recalculated from filled_slots on next iteration
             last_slot_end = 0
@@ -397,6 +398,7 @@ async def process_segment_with_delta(
     analysis: Optional[TemplateAnalysis] = None,
     global_system_messages: Optional[List[str]] = None,
     global_header_messages: Optional[List[str]] = None,
+    strict_undefined: bool = False,
     **extra_kwargs,
 ):
     """Process a template segment using delta-based re-rendering.
@@ -430,6 +432,7 @@ async def process_segment_with_delta(
         global_system_messages=global_system_messages,
         global_header_messages=global_header_messages,
         segment_index=0,
+        strict_undefined=strict_undefined,
         **extra_kwargs,
     ):
         results[event.slot_key] = event.result

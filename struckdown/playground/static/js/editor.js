@@ -468,15 +468,41 @@ function debounce(func, wait) {
 function getInputValues() {
     const values = {};
     document.querySelectorAll('.input-field').forEach(field => {
-        values[field.name] = field.value;
+        const name = field.name;
+        let value = field.value;
+
+        // Skip empty strings - don't include in context so Jinja treats as undefined
+        if (value === '' || value.trim() === '') {
+            return;
+        }
+
+        // Check if JSON toggle is checked for this field
+        const jsonToggle = document.getElementById(`json-${name}`);
+        if (jsonToggle && jsonToggle.checked) {
+            try {
+                value = JSON.parse(value);
+            } catch (e) {
+                // If JSON parse fails, keep as string
+                console.warn(`Failed to parse JSON for ${name}:`, e.message);
+            }
+        }
+
+        values[name] = value;
     });
     return values;
+}
+
+// Get strict mode setting
+function getStrictMode() {
+    const toggle = document.getElementById('strict-mode-toggle');
+    return toggle ? toggle.checked : false;
 }
 
 // Get list of required inputs that have empty values
 function getMissingInputs() {
     const values = getInputValues();
-    return currentInputs.filter(name => !values[name] || values[name].trim() === '');
+    // Since getInputValues now skips empty strings, we just check if the key exists
+    return currentInputs.filter(name => values[name] === undefined);
 }
 
 // Highlight missing inputs in the inputs panel
@@ -684,7 +710,8 @@ function runSingle(syntax) {
     const body = {
         syntax: syntax,
         inputs: inputs,
-        model: model || null
+        model: model || null,
+        strict_undefined: getStrictMode()
     };
 
     if (remoteMode) {
@@ -738,7 +765,8 @@ function runSingleIncremental(syntax) {
     const body = {
         syntax: syntax,
         inputs: inputs,
-        model: model || null
+        model: model || null,
+        strict_undefined: getStrictMode()
     };
 
     if (remoteMode) {
@@ -1262,7 +1290,8 @@ function runFile(syntax) {
     const body = {
         syntax: syntax,
         file_id: fileId,
-        model: model || null
+        model: model || null,
+        strict_undefined: getStrictMode()
     };
 
     if (remoteMode) {
@@ -1311,7 +1340,8 @@ function runBatch(syntax) {
     const body = {
         syntax: syntax,
         file_id: fileId,
-        model: model || null
+        model: model || null,
+        strict_undefined: getStrictMode()
     };
 
     if (remoteMode) {
@@ -1858,7 +1888,8 @@ function runChatTurn() {
         syntax: syntax,
         inputs: inputs,
         model: model || null,
-        history_messages: historyMessages
+        history_messages: historyMessages,
+        strict_undefined: getStrictMode()
     };
 
     if (remoteMode) {
