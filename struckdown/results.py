@@ -202,6 +202,9 @@ class SegmentResult(BaseModel):
         When SegmentResult is loaded from JSON, action outputs (like FoundEvidenceSet)
         are plain dicts. This validator checks if the action has a registered return_type
         and reconstructs the Pydantic model, preserving computed fields and methods.
+
+        Note: Returns a new dict to avoid mutating the input, which could cause issues
+        when the same dict is used elsewhere (e.g., stored in a database JSONField).
         """
         # import here to avoid circular import
         from struckdown.actions import Actions
@@ -216,7 +219,8 @@ class SegmentResult(BaseModel):
                 if return_type is not None:
                     try:
                         # reconstruct the Pydantic model from the dict
-                        data["output"] = return_type.model_validate(output)
+                        # create new dict to avoid mutating the input
+                        data = {**data, "output": return_type.model_validate(output)}
                     except Exception as e:
                         # if reconstruction fails, log warning but keep the dict
                         logger.warning(
@@ -314,33 +318,35 @@ class ChatterResult(BaseModel):
     @property
     def total_cost(self) -> float:
         """Total USD cost from all segments (0.0 for cached/unavailable)"""
-        return sum(
-            (seg.completion._hidden_params.get("response_cost", 0.0) or 0.0)
-            for seg in self.results.values()
-            if seg.completion and hasattr(seg.completion, "_hidden_params")
-        )
+        total = 0.0
+        for seg in self.results.values():
+            if not seg.completion:
+                continue
+            hidden = seg.completion.get("_hidden_params", {})
+            total += hidden.get("response_cost", 0.0) or 0.0
+        return total
 
     @property
     def prompt_tokens(self) -> int:
         """Total input tokens across all segments"""
-        return sum(
-            (seg.completion.usage.prompt_tokens or 0)
-            for seg in self.results.values()
-            if seg.completion
-            and hasattr(seg.completion, "usage")
-            and seg.completion.usage
-        )
+        total = 0
+        for seg in self.results.values():
+            if not seg.completion:
+                continue
+            usage = seg.completion.get("usage", {})
+            total += usage.get("prompt_tokens", 0) or 0
+        return total
 
     @property
     def completion_tokens(self) -> int:
         """Total output tokens across all segments"""
-        return sum(
-            (seg.completion.usage.completion_tokens or 0)
-            for seg in self.results.values()
-            if seg.completion
-            and hasattr(seg.completion, "usage")
-            and seg.completion.usage
-        )
+        total = 0
+        for seg in self.results.values():
+            if not seg.completion:
+                continue
+            usage = seg.completion.get("usage", {})
+            total += usage.get("completion_tokens", 0) or 0
+        return total
 
     @property
     def total_tokens(self) -> int:
@@ -353,26 +359,26 @@ class ChatterResult(BaseModel):
         for seg in self.results.values():
             if not seg.completion:
                 continue  # function executor, no cost
-            if not hasattr(seg.completion, "_hidden_params"):
+            hidden = seg.completion.get("_hidden_params")
+            if not hidden:
                 return True  # missing cost data
-            cost = seg.completion._hidden_params.get("response_cost")
-            if cost is None:
+            if hidden.get("response_cost") is None:
                 return True  # explicit None = unknown
         return False
 
     @property
     def all_costs_unknown(self) -> bool:
         """True if ALL segments with completions have unknown costs"""
-        segments_with_completion = [
+        segments_with_hidden = [
             seg
             for seg in self.results.values()
-            if seg.completion and hasattr(seg.completion, "_hidden_params")
+            if seg.completion and seg.completion.get("_hidden_params")
         ]
-        if not segments_with_completion:
+        if not segments_with_hidden:
             return True  # no completions = unknown
 
-        for seg in segments_with_completion:
-            cost = seg.completion._hidden_params.get("response_cost")
+        for seg in segments_with_hidden:
+            cost = seg.completion.get("_hidden_params", {}).get("response_cost")
             if cost is not None:
                 return False  # found at least one known cost
         return True
