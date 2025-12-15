@@ -99,6 +99,8 @@
           },
           "contentName": "meta.content.system.struckdown",
           "patterns": [
+            { "include": "#markdown-headings" },
+            { "include": "#struckdown-placeholders" },
             { "include": "#struckdown-template-variables" },
             { "include": "#struckdown-django-tags" }
           ]
@@ -120,6 +122,8 @@
           },
           "contentName": "meta.content.header.struckdown",
           "patterns": [
+            { "include": "#markdown-headings" },
+            { "include": "#struckdown-placeholders" },
             { "include": "#struckdown-template-variables" },
             { "include": "#struckdown-django-tags" }
           ]
@@ -328,6 +332,58 @@
               "match": "\"[^\"]*\""
             }
           ]
+        }
+      ]
+    },
+    "markdown-headings": {
+      "patterns": [
+        {
+          "name": "markup.heading.6.struckdown",
+          "match": "(######)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
+        },
+        {
+          "name": "markup.heading.5.struckdown",
+          "match": "(#####)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
+        },
+        {
+          "name": "markup.heading.4.struckdown",
+          "match": "(####)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
+        },
+        {
+          "name": "markup.heading.3.struckdown",
+          "match": "(###)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
+        },
+        {
+          "name": "markup.heading.2.struckdown",
+          "match": "(##)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
+        },
+        {
+          "name": "markup.heading.1.struckdown",
+          "match": "(#)\\s+(.+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.heading.struckdown" },
+            "2": { "name": "entity.name.section.struckdown" }
+          }
         }
       ]
     }

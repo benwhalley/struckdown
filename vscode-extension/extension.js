@@ -4,22 +4,26 @@ const vscode = require('vscode');
 // using rgba for whole-line backgrounds so cursor highlight shows through
 const COLORS = {
     light: {
-        checkpoint: { bg: 'rgba(252, 220, 220, 0.7)', fg: '#000000', bold: true },   // red tint bg, bold black text
-        system: { bg: 'rgba(248, 248, 248, 0.6)', fg: '#333333' },                   // very light grey bg for content
-        systemTagLine: { bg: 'rgba(232, 232, 232, 0.7)', fg: '#333333' },            // slightly darker grey for tag lines
-        systemTag: { bg: null, fg: '#000000', bold: true },                          // no bg, bold black
-        completion: { bg: '#D4F5E2', fg: '#1FA65A' },                                // tint of Travel-3 green
-        break: { bg: '#FCDCDC', fg: '#F23030' },                                     // tint of Travel-5 red
-        include: { bg: '#D6F5F7', fg: '#000000', bold: false }                       // teal tint bg, black text
+        checkpoint: { bg: 'rgba(252, 220, 220, 0.7)', fg: '#000000', bold: true },
+        system: { bg: 'rgba(248, 248, 248, 0.6)' },
+        systemTagLine: { bg: 'rgba(232, 232, 232, 0.7)' },
+        systemTag: { bg: null, fg: '#000000', bold: true },
+        slot: { bg: '#D4EDDA', fg: '#155724' },           // green for [[slot]]
+        action: { bg: '#EDE7F6', fg: '#6A1B9A' },         // purple for [[@action]]
+        template: { bg: '#FBDCE8', fg: '#9B2C5A' },       // pink for {{var}}
+        break: { bg: '#FCDCDC', fg: '#F23030' },
+        include: { bg: '#D6F5F7', fg: '#000000', bold: false }
     },
     dark: {
-        checkpoint: { bg: 'rgba(200, 50, 50, 0.7)', fg: '#FFFFFF', bold: true },      // bright red bg, bold white text
-        system: { bg: 'rgba(35, 35, 35, 0.6)', fg: '#CCCCCC' },                      // very dark grey bg for content
-        systemTagLine: { bg: 'rgba(51, 51, 51, 0.7)', fg: '#CCCCCC' },               // slightly lighter grey for tag lines
-        systemTag: { bg: null, fg: '#FFFFFF', bold: true },                          // no bg, bold white
-        completion: { bg: '#1FA65A', fg: '#FFFFFF' },                                // Travel-3 green
-        break: { bg: '#F23030', fg: '#FFFFFF' },                                     // Travel-5 red
-        include: { bg: '#23B7D9', fg: '#000000', bold: false }                       // Travel-2 teal, black text
+        checkpoint: { bg: 'rgba(200, 50, 50, 0.7)', fg: '#FFFFFF', bold: true },
+        system: { bg: 'rgba(35, 35, 35, 0.6)' },
+        systemTagLine: { bg: 'rgba(51, 51, 51, 0.7)' },
+        systemTag: { bg: null, fg: '#FFFFFF', bold: true },
+        slot: { bg: '#1E5128', fg: '#98FB98' },           // green for [[slot]]
+        action: { bg: '#4A148C', fg: '#CE93D8' },         // purple for [[@action]]
+        template: { bg: '#5E2750', fg: '#FFB6C1' },       // pink for {{var}}
+        break: { bg: '#F23030', fg: '#FFFFFF' },
+        include: { bg: '#23B7D9', fg: '#000000', bold: false }
     }
 };
 
@@ -43,23 +47,34 @@ function activate(context) {
             }),
             system: vscode.window.createTextEditorDecorationType({
                 isWholeLine: true,
-                backgroundColor: colors.system.bg,
-                color: colors.system.fg
+                backgroundColor: colors.system.bg
             }),
             systemTagLine: vscode.window.createTextEditorDecorationType({
                 isWholeLine: true,
-                backgroundColor: colors.systemTagLine.bg,
-                color: colors.systemTagLine.fg
+                backgroundColor: colors.systemTagLine.bg
             }),
             systemTag: vscode.window.createTextEditorDecorationType({
                 ...(colors.systemTag.bg && { backgroundColor: colors.systemTag.bg }),
                 color: colors.systemTag.fg,
                 fontWeight: colors.systemTag.bold ? 'bold' : 'normal'
             }),
-            completion: vscode.window.createTextEditorDecorationType({
-                backgroundColor: colors.completion.bg,
-                color: colors.completion.fg,
-                borderRadius: '3px'
+            slot: vscode.window.createTextEditorDecorationType({
+                backgroundColor: colors.slot.bg,
+                color: colors.slot.fg,
+                borderRadius: '3px',
+                fontWeight: 'bold'
+            }),
+            action: vscode.window.createTextEditorDecorationType({
+                backgroundColor: colors.action.bg,
+                color: colors.action.fg,
+                borderRadius: '3px',
+                fontWeight: 'bold'
+            }),
+            template: vscode.window.createTextEditorDecorationType({
+                backgroundColor: colors.template.bg,
+                color: colors.template.fg,
+                borderRadius: '3px',
+                fontWeight: 'bold'
             }),
             break: vscode.window.createTextEditorDecorationType({
                 backgroundColor: colors.break.bg,
@@ -93,7 +108,9 @@ function activate(context) {
         const systemRanges = [];
         const systemTagLineRanges = [];
         const systemTagRanges = [];
-        const completionRanges = [];
+        const slotRanges = [];
+        const actionRanges = [];
+        const templateRanges = [];
         const breakRanges = [];
         const includeRanges = [];
         const lines = text.split('\n');
@@ -155,23 +172,30 @@ function activate(context) {
                 includeRanges.push({ range: new vscode.Range(start, end) });
             }
 
-            // find all [[...]] completion tags (inline)
-            const completionRegex = /\[\[[^\]]+\]\]/g;
-            while ((match = completionRegex.exec(line)) !== null) {
+            // find {{...}} template variables (pink)
+            const templateRegex = /\{\{[^}]+\}\}/g;
+            while ((match = templateRegex.exec(line)) !== null) {
                 const start = new vscode.Position(i, match.index);
                 const end = new vscode.Position(i, match.index + match[0].length);
-                // skip @break tags, they get their own decoration
-                if (!/\[\[@break/.test(match[0])) {
-                    completionRanges.push({ range: new vscode.Range(start, end) });
-                }
+                templateRanges.push({ range: new vscode.Range(start, end) });
             }
 
-            // find [[@break|...]] tags (inline)
-            const breakRegex = /\[\[@break[^\]]*\]\]/g;
-            while ((match = breakRegex.exec(line)) !== null) {
+            // find all [[...]] and categorize them
+            const bracketRegex = /\[\[([^\]]+)\]\]/g;
+            while ((match = bracketRegex.exec(line)) !== null) {
                 const start = new vscode.Position(i, match.index);
                 const end = new vscode.Position(i, match.index + match[0].length);
-                breakRanges.push({ range: new vscode.Range(start, end) });
+                const content = match[1];
+
+                if (content.startsWith('@break')) {
+                    breakRanges.push({ range: new vscode.Range(start, end) });
+                } else if (content.startsWith('@')) {
+                    // action - blue
+                    actionRanges.push({ range: new vscode.Range(start, end) });
+                } else {
+                    // slot - green
+                    slotRanges.push({ range: new vscode.Range(start, end) });
+                }
             }
         }
 
@@ -179,7 +203,9 @@ function activate(context) {
         editor.setDecorations(decorations.systemTagLine, systemTagLineRanges);
         editor.setDecorations(decorations.systemTag, systemTagRanges);
         editor.setDecorations(decorations.checkpoint, checkpointRanges);
-        editor.setDecorations(decorations.completion, completionRanges);
+        editor.setDecorations(decorations.slot, slotRanges);
+        editor.setDecorations(decorations.action, actionRanges);
+        editor.setDecorations(decorations.template, templateRanges);
         editor.setDecorations(decorations.break, breakRanges);
         editor.setDecorations(decorations.include, includeRanges);
     }

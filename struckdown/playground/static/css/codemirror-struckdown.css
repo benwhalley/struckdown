@@ -20,18 +20,36 @@
     line-height: 1.5;
 }
 
-/* Slot highlighting [[...]] - emerald green */
+/* Slot highlighting [[...]] - green */
 .sd-slot {
-    color: #047857;
-    background-color: rgba(6, 214, 160, 0.25);
+    color: #155724;
+    background-color: #D4EDDA;
     border-radius: 2px;
+    font-weight: bold;
 }
 
-/* Template variable {{...}} - bubblegum pink */
-.sd-template-var {
-    color: #be185d;
-    background-color: rgba(239, 71, 111, 0.2);
+/* Action slots [[@...]] - purple */
+.sd-action {
+    color: #6A1B9A;
+    background-color: #EDE7F6;
     border-radius: 2px;
+    font-weight: bold;
+}
+
+/* Break action [[@break]] - red */
+.sd-break {
+    color: #F23030;
+    background-color: #FCDCDC;
+    border-radius: 2px;
+    font-weight: bold;
+}
+
+/* Template variable {{...}} - pink */
+.sd-template-var {
+    color: #9B2C5A;
+    background-color: #FBDCE8;
+    border-radius: 2px;
+    font-weight: bold;
 }
 
 /* Jinja tag {% %} - ocean blue */
@@ -65,4 +83,19 @@
 /* Comments <!-- --> - muted grey */
 .sd-comment {
     color: #9ca3af;
+}
+
+/* Markdown headings */
+.sd-heading {
+    font-weight: bold;
+}
+
+.sd-heading-marker {
+    color: #BF360C;
+    font-weight: bold;
+}
+
+.sd-heading-text {
+    color: #1565C0;
+    font-weight: bold;
 }

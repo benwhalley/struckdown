@@ -5,7 +5,9 @@
  * for real-time syntax highlighting without external dependencies.
  *
  * Highlights:
- * - [[slot]] completions (emerald green)
+ * - [[slot]] completions (green)
+ * - [[@action]] actions (purple)
+ * - [[@break]] break action (red)
  * - {{variable}} template vars (pink)
  * - {% tag %} jinja tags (blue)
  * - <system>...</system> blocks (grey)
@@ -16,7 +18,11 @@
 
 // Regex patterns for syntax elements
 const PATTERNS = [
-    // Slots [[...]] - emerald
+    // Break action [[@break...]] - red (must be before other actions)
+    { pattern: /\[\[@break[^\]]*\]\]/g, class: 'sd-break' },
+    // Action slots [[@...]] - purple (must be before regular slots)
+    { pattern: /\[\[@[^\]]*\]\]/g, class: 'sd-action' },
+    // Regular slots [[...]] - green
     { pattern: /\[\[[^\]]*\]\]/g, class: 'sd-slot' },
     // Template vars {{...}} - pink
     { pattern: /\{\{[^}]*\}\}/g, class: 'sd-template-var' },
@@ -34,6 +40,9 @@ const PATTERNS = [
     // Comments
     { pattern: /<!--[\s\S]*?-->/g, class: 'sd-comment' },
 ];
+
+// Special pattern for markdown headings (needs line-by-line processing)
+const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/gm;
 
 function escapeHtml(text) {
     return text
@@ -70,9 +79,25 @@ function highlightSyntax(text) {
                 start: match.index,
                 end: match.index + match[0].length,
                 text: match[0],
-                className
+                className,
+                isHeading: false
             });
         }
+    }
+
+    // Handle markdown headings specially (with separate marker and text styling)
+    HEADING_PATTERN.lastIndex = 0;
+    let headingMatch;
+    while ((headingMatch = HEADING_PATTERN.exec(text)) !== null) {
+        const marker = headingMatch[1];
+        const headingText = headingMatch[2];
+        matches.push({
+            start: headingMatch.index,
+            end: headingMatch.index + headingMatch[0].length,
+            marker: marker,
+            headingText: headingText,
+            isHeading: true
+        });
     }
 
     // Sort by start position
@@ -98,7 +123,11 @@ function highlightSyntax(text) {
             result += escapeHtml(text.slice(pos, match.start));
         }
         // Add highlighted match
-        result += `<span class="${match.className}">${escapeHtml(match.text)}</span>`;
+        if (match.isHeading) {
+            result += `<span class="sd-heading"><span class="sd-heading-marker">${escapeHtml(match.marker)}</span> <span class="sd-heading-text">${escapeHtml(match.headingText)}</span></span>`;
+        } else {
+            result += `<span class="${match.className}">${escapeHtml(match.text)}</span>`;
+        }
         pos = match.end;
     }
 

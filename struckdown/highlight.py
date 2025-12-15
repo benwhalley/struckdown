@@ -294,16 +294,20 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
 
 
 def _highlight_unparsed_content(text: str) -> str:
-    """Highlight template variables and jinja tags in unparsed content.
+    """Highlight template variables, slots, actions, headings and jinja tags in unparsed content.
 
     Used for content inside system blocks where the grammar captures
     everything as a single SYSTEM_CONTENT token without parsing inner elements.
     """
-    # patterns for elements that should be highlighted
+    # patterns for elements that should be highlighted (order matters - more specific first)
     patterns = [
-        ('template-var', r'\{\{[^}]+\}\}'),
+        ('break', r'\[\[@break[^\]]*\]\]'),       # break action - red
+        ('action', r'\[\[@[^\]]*\]\]'),           # other actions - purple
+        ('placeholder', r'\[\[[^\]]*\]\]'),       # slots - green
+        ('template-var', r'\{\{[^}]+\}\}'),       # template vars - pink
         ('jinja-tag', r'\{%[^%]+%\}'),
         ('comment', r'<!--[\s\S]*?-->'),
+        ('heading', r'^(#{1,6})\s+(.+)$'),        # markdown headings
     ]
 
     # combine into single pattern with named groups
@@ -312,17 +316,32 @@ def _highlight_unparsed_content(text: str) -> str:
     result = []
     last_end = 0
 
-    for match in re.finditer(combined, text):
+    for match in re.finditer(combined, text, re.MULTILINE):
         # add text before match
         if match.start() > last_end:
             result.append(escape(text[last_end:match.start()]))
 
         # find which group matched and apply class
-        for name, _ in patterns:
+        for name, pattern in patterns:
             group_name = name.replace('-', '_')
             matched_text = match.group(group_name)
             if matched_text is not None:
-                result.append(f'<span class="sd-{name}">{escape(matched_text)}</span>')
+                if name == 'heading':
+                    # special handling for headings - split marker and text
+                    heading_match = re.match(r'^(#{1,6})\s+(.+)$', matched_text)
+                    if heading_match:
+                        marker = heading_match.group(1)
+                        heading_text = heading_match.group(2)
+                        result.append(
+                            f'<span class="sd-heading">'
+                            f'<span class="sd-heading-marker">{escape(marker)}</span> '
+                            f'<span class="sd-heading-text">{escape(heading_text)}</span>'
+                            f'</span>'
+                        )
+                    else:
+                        result.append(f'<span class="sd-heading">{escape(matched_text)}</span>')
+                else:
+                    result.append(f'<span class="sd-{name}">{escape(matched_text)}</span>')
                 break
 
         last_end = match.end()
@@ -406,23 +425,41 @@ def render_preview_html(text: str, filename: str = "preview") -> str:
             font-size: 16px;
             overflow-x: auto;
         }}
-        /* placeholder [[...]] - emerald */
+        /* placeholder [[...]] - green */
         .sd-placeholder {{
-            background: rgba(6, 214, 160, 0.3);
-            color: #047857;
+            background: #D4EDDA;
+            color: #155724;
             font-weight: bold;
             border-radius: 4px;
             padding: 2px 6px;
-            border: 1px solid rgba(6, 214, 160, 0.6);
+            border: 1px solid #c3e6cb;
         }}
-        /* template variables {{...}} - bubblegum pink */
-        .sd-template-var {{
-            background: rgba(239, 71, 111, 0.25);
-            color: #be3a5a;
+        /* action slots [[@...]] - purple */
+        .sd-action {{
+            background: #EDE7F6;
+            color: #6A1B9A;
             font-weight: bold;
             border-radius: 4px;
             padding: 2px 6px;
-            border: 1px solid rgba(239, 71, 111, 0.5);
+            border: 1px solid #d1c4e9;
+        }}
+        /* break action [[@break]] - red */
+        .sd-break {{
+            background: #FCDCDC;
+            color: #F23030;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 2px 6px;
+            border: 1px solid #f5c6cb;
+        }}
+        /* template variables {{...}} - pink */
+        .sd-template-var {{
+            background: #FBDCE8;
+            color: #9B2C5A;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 2px 6px;
+            border: 1px solid #f8c9dc;
         }}
         /* jinja tags {{% %}} - ocean blue, no bg */
         .sd-jinja-tag {{
@@ -512,14 +549,17 @@ def render_preview_html(text: str, filename: str = "preview") -> str:
             font-style: italic;
             opacity: 0.8;
         }}
-        /* action calls [[@...]] - purple accent */
-        .sd-action {{
-            background: rgba(139, 92, 246, 0.25);
-            color: #6d28d9;
+        /* markdown headings */
+        .sd-heading {{
             font-weight: bold;
-            border-radius: 4px;
-            padding: 2px 6px;
-            border: 1px solid rgba(139, 92, 246, 0.5);
+        }}
+        .sd-heading-marker {{
+            color: #BF360C;
+            font-weight: bold;
+        }}
+        .sd-heading-text {{
+            color: #1565C0;
+            font-weight: bold;
         }}
     </style>
 </head>
