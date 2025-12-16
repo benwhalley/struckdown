@@ -260,12 +260,36 @@ async def chatter_async(
         if len(batch) > 1:
             logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
+        # For parallel batches, pre-collect system/header from all segments in the batch
+        # so all segments see globals from earlier-indexed segments in the same batch
+        batch_globals = accumulated_globals.copy()
+        batch_header_globals = accumulated_header_globals.copy()
+
+        for seg_idx in sorted(batch):
+            data = segment_data[seg_idx]
+            if data["system_template"]:
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered = env.from_string(data["system_template"]).render(
+                    **accumulated_context
+                )
+                batch_globals.append(rendered)
+            if data["header_template"]:
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered = env.from_string(data["header_template"]).render(
+                    **accumulated_context
+                )
+                batch_header_globals.append(rendered)
+
         tasks = [
             process_single_segment(
                 seg_idx,
                 accumulated_context,
-                accumulated_globals,
-                accumulated_header_globals,
+                batch_globals,
+                batch_header_globals,
             )
             for seg_idx in batch
         ]
@@ -549,13 +573,37 @@ async def chatter_incremental_async(
             if len(batch) > 1:
                 logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
-            # Launch all segment tasks in parallel
+            # For parallel batches, pre-collect system/header from all segments in the batch
+            # so all segments see globals from earlier-indexed segments in the same batch
+            batch_globals = accumulated_globals.copy()
+            batch_header_globals = accumulated_header_globals.copy()
+
+            for seg_idx in sorted(batch):
+                data = segment_data[seg_idx]
+                if data["system_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered = env.from_string(data["system_template"]).render(
+                        **accumulated_context
+                    )
+                    batch_globals.append(rendered)
+                if data["header_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered = env.from_string(data["header_template"]).render(
+                        **accumulated_context
+                    )
+                    batch_header_globals.append(rendered)
+
+            # Launch all segment tasks in parallel with batch-accumulated globals
             tasks = [
                 process_segment_collect_events(
                     seg_idx,
                     accumulated_context,
-                    accumulated_globals,
-                    accumulated_header_globals,
+                    batch_globals,
+                    batch_header_globals,
                 )
                 for seg_idx in batch
             ]

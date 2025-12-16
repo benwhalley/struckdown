@@ -353,6 +353,168 @@ class TestSegmentDependencyGraph:
         assert set(plan[0]) == {"segment_0", "segment_1"}
 
 
+class TestTogetherConversationHistory:
+    """Test that slots after <together> blocks see the Q&A history."""
+
+    def test_together_tags_not_exposed_to_llm(self):
+        """<together> and </together> tags should never appear in LLM messages."""
+        from struckdown import LLM, chatter_async
+
+        messages_sent = []
+
+        def mock_structured_chat(*args, **kwargs):
+            messages_sent.append(kwargs.get("messages", []))
+            mock_res = MagicMock()
+            mock_res.response = "mock response"
+            mock_res.model_dump.return_value = {"response": "mock response"}
+            mock_com = {"_run_id": "test", "usage": {}}
+            return mock_res, mock_com
+
+        template = """
+        <together>
+        Question A? [[a]]
+        Question B? [[b]]
+        </together>
+
+        Final question: [[final]]
+        """
+
+        async def run_test():
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
+
+        asyncio.run(run_test())
+
+        # Check no messages contain together tags
+        for call_msgs in messages_sent:
+            for msg in call_msgs:
+                content = msg["content"]
+                assert "<together>" not in content, f"<together> found in: {content}"
+                assert "</together>" not in content, f"</together> found in: {content}"
+
+    def test_slot_after_together_sees_qa_history(self):
+        """A slot after </together> should see Q&A pairs in its messages."""
+        from struckdown import LLM, chatter_async
+
+        # Track messages passed to each LLM call
+        call_messages = []
+
+        def mock_structured_chat(*args, **kwargs):
+            call_messages.append(kwargs.get("messages", []))
+            mock_res = MagicMock()
+            mock_res.response = "mock response"
+            mock_res.model_dump.return_value = {"response": "mock response"}
+            mock_com = {"_run_id": "test", "usage": {}}
+            return mock_res, mock_com
+
+        template = """
+        <together>
+        Question A? [[a]]
+        Question B? [[b]]
+        </together>
+
+        Based on above, final answer: [[final]]
+        """
+
+        async def run_test():
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
+
+        asyncio.run(run_test())
+
+        # Should have 3 calls: a, b (parallel), then final (sequential)
+        assert len(call_messages) == 3, f"Expected 3 calls, got {len(call_messages)}"
+
+        # The final slot should see Q&A from together block in its messages
+        final_messages = call_messages[2]
+
+        # Extract user messages (questions) and assistant messages (answers)
+        user_msgs = [m["content"] for m in final_messages if m["role"] == "user"]
+        assistant_msgs = [
+            m["content"] for m in final_messages if m["role"] == "assistant"
+        ]
+
+        # Should see both questions from together block
+        assert any(
+            "Question A?" in msg for msg in user_msgs
+        ), f"Missing Q A in messages: {user_msgs}"
+        assert any(
+            "Question B?" in msg for msg in user_msgs
+        ), f"Missing Q B in messages: {user_msgs}"
+
+        # Should see both answers (mock responses)
+        assert (
+            len(assistant_msgs) >= 2
+        ), f"Expected at least 2 assistant messages, got {assistant_msgs}"
+
+
+class TestParallelSegmentGlobals:
+    """Test that system/header messages propagate to parallel segments."""
+
+    def test_parallel_segments_see_system_message(self):
+        """Segments in same parallel batch should all see segment 0's system message."""
+        from struckdown import LLM, chatter_async
+
+        messages_per_call = []
+
+        def mock_structured_chat(*args, **kwargs):
+            messages_per_call.append(kwargs.get("messages", []))
+            mock_res = MagicMock()
+            mock_res.response = "mock response"
+            mock_res.model_dump.return_value = {"response": "mock response"}
+            mock_com = {"_run_id": "test", "usage": {}}
+            return mock_res, mock_com
+
+        # Segment 0 has system + header, segment 1 has only body
+        # They're independent so should run in parallel
+        template = """
+        <system>You are a test assistant.</system>
+
+        <header>
+        # Test content
+        Some important context here.
+        </header>
+
+        First question: [[q1]]
+
+        <checkpoint>
+
+        Second question: [[q2]]
+        """
+
+        async def run_test():
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
+
+        asyncio.run(run_test())
+
+        # Should have 2 calls (one per segment)
+        assert (
+            len(messages_per_call) == 2
+        ), f"Expected 2 calls, got {len(messages_per_call)}"
+
+        # BOTH calls should have the system message
+        for i, msgs in enumerate(messages_per_call):
+            system_msgs = [m for m in msgs if m.get("role") == "system"]
+            assert len(system_msgs) >= 1, f"Call {i} missing system message"
+            assert (
+                "test assistant" in system_msgs[0]["content"]
+            ), f"Call {i} has wrong system message"
+
+        # BOTH calls should have the header content
+        for i, msgs in enumerate(messages_per_call):
+            all_content = " ".join(m.get("content", "") for m in msgs)
+            assert (
+                "important context" in all_content
+            ), f"Call {i} missing header content"
+
+
 class TestParallelExecutionTiming:
     """Test that parallel slots actually start simultaneously."""
 

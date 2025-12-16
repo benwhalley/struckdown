@@ -25,6 +25,13 @@ def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--(.|\n)*?-->", "", text)
 
 
+def _strip_together_tags(text: str) -> str:
+    """Remove <together> and </together> tags from text."""
+    text = re.sub(r"<together>\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*</together>", "", text, flags=re.IGNORECASE)
+    return text
+
+
 def split_content_by_role(content: str) -> List[Dict[str, str]]:
     """Split content by <user> and <assistant> tags into separate messages.
 
@@ -342,6 +349,8 @@ async def _process_together_group(
     results = await asyncio.gather(*[run_with_semaphore(t) for t in tasks])
 
     # Process results and yield events
+    # Also collect Q&A pairs to return for adding to conversation history
+    qa_pairs = []
     for (
         slot_key,
         res,
@@ -354,6 +363,14 @@ async def _process_together_group(
         extracted_value = res.response if hasattr(res, "response") else res
 
         # Build segment result
+        # Get response schema from return_type if it's a Pydantic model
+        response_schema = None
+        if hasattr(slot_info.return_type, "model_json_schema"):
+            try:
+                response_schema = slot_info.return_type.model_json_schema()
+            except Exception:
+                pass
+
         segment_result = SegmentResult(
             name=slot_key,
             output=extracted_value,
@@ -361,7 +378,7 @@ async def _process_together_group(
             prompt=content_before,
             action=slot_info.action_type,
             options=slot_info.options if slot_info.options else None,
-            messages=slot_messages,
+            response_schema=response_schema,
         )
 
         # Determine if result was cached
@@ -388,6 +405,16 @@ async def _process_together_group(
         escaped_value, _ = escape_struckdown_syntax(extracted_value, var_name=slot_key)
         accumulated_context[slot_key] = escaped_value
         filled_slots[slot_key] = escaped_value
+
+        # Collect Q&A pair for conversation history
+        # Question is content_before, answer is the response
+        qa_pairs.append(
+            {
+                "question": content_before,
+                "answer": str(extracted_value),
+                "slot_key": slot_key,
+            }
+        )
 
 
 async def process_segment_with_delta_incremental(
@@ -491,6 +518,8 @@ async def process_segment_with_delta_incremental(
             # Process entire together group at once (parallel execution)
             processed_together_groups.add(together_group)
 
+            # Collect events to build conversation history after
+            together_events = []
             async for event in _process_together_group(
                 together_group=together_group,
                 slot_info_map=slot_info_map,
@@ -504,7 +533,17 @@ async def process_segment_with_delta_incremental(
                 segment_index=segment_index,
                 extra_kwargs=extra_kwargs,
             ):
+                together_events.append(event)
                 yield event
+
+            # Add Q&A pairs from together block to conversation history
+            # This makes them available for subsequent slots
+            for event in together_events:
+                if event.result.prompt and event.result.prompt.strip():
+                    messages.append({"role": "user", "content": event.result.prompt})
+                messages.append(
+                    {"role": "assistant", "content": str(event.result.output)}
+                )
 
             # Re-render after together block
             needs_rerender = any(
@@ -541,6 +580,8 @@ async def process_segment_with_delta_incremental(
 
         # Content between last filled slot and next unfilled slot
         content_before = rendered[last_slot_end:slot_start]
+        # Strip together tags so they don't appear in LLM messages
+        content_before = _strip_together_tags(content_before)
 
         # Add messages for content before this slot
         # Split by <user> and <assistant> tags to handle role markers
@@ -598,6 +639,14 @@ async def process_segment_with_delta_incremental(
             action_role = getattr(return_type, "_role", "assistant")
             messages.append({"role": action_role, "content": completion_str})
 
+        # Get response schema from return_type if it's a Pydantic model
+        response_schema = None
+        if hasattr(return_type, "model_json_schema"):
+            try:
+                response_schema = return_type.model_json_schema()
+            except Exception:
+                pass
+
         # Build result
         segment_result = SegmentResult(
             name=slot_key,
@@ -606,7 +655,7 @@ async def process_segment_with_delta_incremental(
             prompt=content_before,
             action=slot_info.action_type,
             options=slot_info.options if slot_info.options else None,
-            messages=messages.copy(),
+            response_schema=response_schema,
         )
 
         # Determine if result was cached

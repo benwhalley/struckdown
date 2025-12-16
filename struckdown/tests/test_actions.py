@@ -16,8 +16,12 @@ class ActionRegistryTestCase(unittest.TestCase):
     """Test basic action registration and lookup"""
 
     def setUp(self):
-        # clear registry before each test
+        # save and clear registry before each test
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
     def test_register_action(self):
         """Test registering a simple action"""
@@ -55,6 +59,7 @@ class SimpleActionsTestCase(unittest.TestCase):
     """Test simple actions without parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action
@@ -93,11 +98,15 @@ class SimpleActionsTestCase(unittest.TestCase):
         model = Actions.create_action_model("nonexistent", None, None, False)
         self.assertIsNone(model)
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class ParameterizedActionsTestCase(unittest.TestCase):
     """Test actions with parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register repeat action
@@ -152,11 +161,15 @@ class ParameterizedActionsTestCase(unittest.TestCase):
 
         self.assertEqual(result.response, ">>>MIDDLE")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class TypeCoercionTestCase(unittest.TestCase):
     """Test automatic type coercion of parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register multiply action with int type
@@ -201,11 +214,15 @@ class TypeCoercionTestCase(unittest.TestCase):
         result2, _ = model2._executor(context={}, rendered_prompt="")
         self.assertEqual(result2.response, "no")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class ContextVariablesTestCase(unittest.TestCase):
     """Test actions using context variables"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register action that uses context
@@ -241,11 +258,15 @@ class ContextVariablesTestCase(unittest.TestCase):
 
         self.assertEqual(result.response, "Context has 3 variables")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class ErrorHandlingTestCase(unittest.TestCase):
     """Test error handling strategies"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
     def test_error_propagate_strategy(self):
@@ -317,11 +338,15 @@ class ErrorHandlingTestCase(unittest.TestCase):
         result, _ = executor(context={}, rendered_prompt="")
         self.assertEqual(result.response, "0")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
     """Test actions integrated with template parsing"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action
@@ -382,11 +407,15 @@ class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
         self.assertEqual(section["upper"].action_type, "uppercase")
         self.assertEqual(section["rev"].action_type, "reverse")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class RealWorldExampleTestCase(unittest.TestCase):
     """Test realistic action use cases"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action (like the user requested)
@@ -481,6 +510,9 @@ class RealWorldExampleTestCase(unittest.TestCase):
         action_part = sections[1]["loud_text"]
         self.assertEqual(action_part.action_type, "uppercase")
         self.assertTrue(action_part.is_function)
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 if __name__ == "__main__":

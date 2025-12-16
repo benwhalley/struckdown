@@ -103,10 +103,7 @@ class SegmentResult(BaseModel):
         default=None,
         description="Resolved action parameters (with variables interpolated)",
     )
-    messages: Optional[List[Dict[str, str]]] = Field(
-        default=None,
-        description="Full message list sent to LLM (system, user, assistant messages)",
-    )
+    # Note: messages are now stored in completion._request_messages
     response_schema: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Pydantic model schema (JSON Schema) for the expected response",

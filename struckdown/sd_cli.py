@@ -230,25 +230,29 @@ async def _run_chat_incremental(
             if event.slot_key == "history":
                 continue
 
-            # -vv and above: show detailed slot header
-            if verbose >= 2:
-                typer.echo(f"\n{'='*80}")
-                typer.echo(
-                    f"Slot {slot_count}: `{event.slot_key}` (segment {event.segment_index})"
-                )
-                typer.echo(
-                    f"  Elapsed: {event.elapsed_ms:.0f}ms, Cached: {event.was_cached}"
-                )
-                typer.echo("-" * 80)
+            # Get messages from completion if available
+            request_messages = None
+            if seg_result.completion:
+                request_messages = seg_result.completion.get("_request_messages")
 
-            # -v and above: show messages list
-            if verbose >= 1 and seg_result.messages:
-                for msg in seg_result.messages:
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    typer.echo(f"\033[1m{role}:\033[0m")
-                    typer.echo(content)
-                    typer.echo()
+            # -v and above: show segment header and messages
+            if verbose >= 1:
+                typer.echo(f"\n{'='*72}")
+                typer.echo(f"SLOT: {event.slot_key} (segment {event.segment_index})")
+                if verbose >= 2:
+                    typer.echo(
+                        f"  Elapsed: {event.elapsed_ms:.0f}ms, Cached: {event.was_cached}"
+                    )
+                typer.echo(f"{'+'*72}\n")
+
+                # Show messages list
+                if request_messages:
+                    for msg in request_messages:
+                        role = msg.get("role", "unknown")
+                        content = msg.get("content", "")
+                        typer.echo(f"\033[1m{role}:\033[0m")
+                        typer.echo(content)
+                        typer.echo()
 
             # -vvv: show response schema
             if verbose >= 3 and seg_result.response_schema:
@@ -360,24 +364,31 @@ async def _run_chat_interactive(
                     if event.slot_key == "history":
                         continue
 
-                    # -vv and above: show detailed slot header
-                    if verbose >= 2:
-                        typer.echo(f"\n{'='*80}")
-                        typer.echo(
-                            f"Slot: `{event.slot_key}` ({event.elapsed_ms:.0f}ms)"
+                    # Get messages from completion if available
+                    request_messages = None
+                    if seg_result.completion:
+                        request_messages = seg_result.completion.get(
+                            "_request_messages"
                         )
-                        typer.echo("-" * 80)
+
+                    # -v and above: show segment header and messages
+                    if verbose >= 1:
+                        typer.echo(f"\n{'='*72}")
+                        typer.echo(f"SLOT: {event.slot_key}")
+                        if verbose >= 2:
+                            typer.echo(f"  Elapsed: {event.elapsed_ms:.0f}ms")
+                        typer.echo(f"{'+'*72}\n")
+
+                        # Show messages list
+                        if request_messages:
+                            for msg in request_messages:
+                                role = msg.get("role", "unknown")
+                                content = msg.get("content", "")
+                                typer.echo(f"\033[1m{role}:\033[0m")
+                                typer.echo(content)
+                                typer.echo()
                     else:
                         typer.echo(f"\n[{event.slot_key}]")
-
-                    # -v and above: show messages list
-                    if verbose >= 1 and seg_result.messages:
-                        for msg in seg_result.messages:
-                            role = msg.get("role", "unknown")
-                            content = msg.get("content", "")
-                            typer.echo(f"\033[1m{role}:\033[0m")
-                            typer.echo(content)
-                            typer.echo()
 
                     # -vvv: show response schema
                     if verbose >= 3 and seg_result.response_schema:
@@ -523,6 +534,11 @@ def chat(
         "--debug-api",
         help="Log full API requests (messages + tools schema) as JSON",
     ),
+    dump_dir: Optional[Path] = typer.Option(
+        None,
+        "--dump",
+        help="Directory to save API call JSON files (one per slot, named {slot_name}.json)",
+    ),
 ):
     """
     Run a single chatter prompt (interactive mode).
@@ -540,6 +556,7 @@ def chat(
         sd chat -p prompt.sd -I ./includes      # search ./includes for <include> files
         sd chat -p prompt.sd --history conv.txt # use @history action with this file
         sd chat -p prompt.sd --debug-api        # log full API requests
+        sd chat -p prompt.sd --dump ./api_calls # save API call details to dir/
     """
     # start new run for cache detection
     from struckdown import new_run
@@ -773,6 +790,34 @@ def chat(
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, default=str)
         typer.echo(f"Wrote {output_file}", err=True)
+
+    # dump API call details if requested
+    if dump_dir:
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        for slot_key, seg_result in result.results.items():
+            # Build comprehensive API call record
+            # Note: messages are in completion._request_messages
+            api_call = {
+                "slot_name": slot_key,
+                "model": (
+                    seg_result.completion.get("model")
+                    if seg_result.completion
+                    else None
+                ),
+                "response_schema": seg_result.response_schema,
+                "completion": (
+                    dict(seg_result.completion) if seg_result.completion else None
+                ),
+                "output": seg_result.output,
+                "prompt": seg_result.prompt,
+                "action": seg_result.action,
+                "options": seg_result.options,
+            }
+            # Write to file
+            output_path = dump_dir / f"{slot_key}.json"
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(api_call, f, indent=2, default=str)
+        typer.echo(f"Dumped {len(result.results)} API calls to {dump_dir}/", err=True)
 
     # print cost summary to stderr (always visible)
     summary = CostSummary.from_results([result])
