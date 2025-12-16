@@ -96,17 +96,14 @@ class SegmentResult(BaseModel):
         default=None,
         description="Action type (e.g., 'pick', 'bool', 'int', 'evidence', 'memory')",
     )
-    options: Optional[List[str]] = Field(
-        default=None, description="Raw template options before variable resolution"
+    options: Optional[List[Any]] = Field(
+        default=None, description="Parsed template options (OptionValue namedtuples)"
     )
     params: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Resolved action parameters (with variables interpolated)",
     )
-    messages: Optional[List[Dict[str, str]]] = Field(
-        default=None,
-        description="Full message list sent to LLM (system, user, assistant messages)",
-    )
+    # Note: messages are now stored in completion._request_messages
     response_schema: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Pydantic model schema (JSON Schema) for the expected response",

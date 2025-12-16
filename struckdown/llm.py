@@ -204,6 +204,8 @@ def _call_llm_cached(
 
     # mark with current run ID for cache detection
     com_dict["_run_id"] = get_run_id()
+    # store the actual messages sent to the API
+    com_dict["_request_messages"] = messages
     return res.model_dump(), com_dict
 
 

@@ -93,21 +93,35 @@ def parse_options(options: list[str] | None) -> ParsedOptions:
         return result
 
     for opt in options:
-        opt = opt.strip()
-        if not opt:
-            continue
+        # handle both OptionValue namedtuples and legacy string options
+        if hasattr(opt, 'key') and hasattr(opt, 'value'):
+            # OptionValue namedtuple
+            key = opt.key.lower() if opt.key else None
+            value = opt.value
+            value_str = str(value)
+        else:
+            # legacy string option
+            opt_str = str(opt).strip()
+            if not opt_str:
+                continue
+            if "=" in opt_str:
+                key, value_str = opt_str.split("=", 1)
+                key = key.strip().lower()
+                value_str = value_str.strip()
+                value = _parse_value(value_str)
+            else:
+                key = None
+                value = opt_str
+                value_str = opt_str
 
-        if "=" in opt:
-            key, value = opt.split("=", 1)
-            key = key.strip().lower()
-            value_str = value.strip()
-            parsed = _parse_value(value_str)
+        if key:
+            parsed = _parse_value(value_str) if isinstance(value, str) else value
             result.kwargs[key] = parsed
 
             # extract common fields with aliases
             match key:
                 case "required":
-                    result.required = _parse_bool(value_str)
+                    result.required = _parse_bool(value_str) if isinstance(value_str, str) else bool(value)
                 case "min" | "ge":
                     result.ge = float(parsed) if parsed is not None else None
                 case "max" | "le":
@@ -122,7 +136,7 @@ def parse_options(options: list[str] | None) -> ParsedOptions:
                     result.max_length = int(parsed) if parsed is not None else None
         else:
             # positional value (bare keywords like "required" are just values for pick type)
-            result.positional.append(opt)
+            result.positional.append(value)
 
     return result
 

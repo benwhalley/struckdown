@@ -373,7 +373,9 @@ class TemporalOptionalRequiredTestCase(unittest.TestCase):
 
         part = sections[0]["event_date"]
         self.assertEqual(part.action_type, "date")
-        self.assertIn("required", part.options)
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in part.options]
+        self.assertIn("required", option_values)
 
     def test_parse_date_without_required(self):
         """Test [[date:var]] parsing (optional by default)"""

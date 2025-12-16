@@ -4,7 +4,7 @@ You are a helpful research assistant. Summarise information clearly and concisel
 
 # Search and Summarise Example
 
-[[@search:search_results|query={{q}},max_results=2]]
+[[@search:search_results|query=q,max_results=2]]
 
 <checkpoint>
 

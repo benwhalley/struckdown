@@ -23,8 +23,8 @@ def uppercase_text(context, text: str):
     """Convert text to uppercase"""
     return text.upper()
 
-# Use in template
-result = chatter("[[@uppercase:loud|text=hello world]]")
+# Use in template with literal string (quoted)
+result = chatter('[[@uppercase:loud|text="hello world"]]')
 print(result['loud'])  # "HELLO WORLD"
 ```
 
@@ -36,8 +36,8 @@ Actions use `[[@action:var|params]]` instead of `[[type:var]]`:
 # LLM completion (calls AI)
 [[pick:color|red,blue,green]]
 
-# Custom action (calls Python function)
-[[@uppercase:result|text=hello]]
+# Custom action (calls Python function) - literal value quoted
+[[@uppercase:result|text="hello"]]
 ```
 
 ## Action Parameters
@@ -52,14 +52,14 @@ def greet(context, name: str, greeting: str = "Hello"):
     """Greet someone"""
     return f"{greeting}, {name}!"
 
-# Use it
-chatter("[[@greet:message|name=Alice,greeting=Hi]]")
+# Use it with literal values (quoted strings)
+chatter('[[@greet:message|name="Alice",greeting="Hi"]]')
 # Output: "Hi, Alice!"
 ```
 
 ### Using Context Variables
 
-Reference previous extractions with `{{variable}}`:
+Reference previous extractions by using **unquoted values**:
 
 ```python
 template = """
@@ -67,11 +67,39 @@ Extract name: [[name]]
 
 <checkpoint>
 
-Greet them: [[@greet:greeting|name={{name}}]]
+Greet them: [[@greet:greeting|name=name]]
 """
 
 result = chatter(template, context={"input": "My name is Bob"})
 print(result['greeting'])  # "Hello, Bob!"
+```
+
+### Variable vs Literal Syntax
+
+The syntax distinguishes between variable references and literal values:
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `key=varname` | Variable reference | `query=topic` looks up `topic` in context |
+| `key="literal"` | Literal string | `query="hello"` passes the string "hello" |
+| `key=123` | Literal number | `n=5` passes the number 5 |
+
+```python
+# Variable reference - looks up 'extracted_query' in context
+[[@search:results|query=extracted_query,n=5]]
+
+# Literal value - passes the string "hello world" directly
+[[@search:results|query="hello world",n=5]]
+```
+
+For **positional arguments** in actions, unquoted values are also variable references:
+
+```python
+# Positional variable reference - looks up 'topic' in context
+[[@evidence|topic]]
+
+# Positional literal - passes the string "climate change" directly
+[[@evidence|"climate change"]]
 ```
 
 ### Type Coercion
@@ -209,7 +237,7 @@ template = """
 User question: {{question}}
 
 Relevant docs:
-[[@search_docs:context|query={{question}},n=5]]
+[[@search_docs:context|query=question,n=5]]
 
 <checkpoint>
 
@@ -250,7 +278,7 @@ Email from logs: [[extract:email]]
 
 <checkpoint>
 
-User info: [[@query_users:user|email={{email}}]]
+User info: [[@query_users:user|email=email]]
 
 Personalized response for {{user}}: [[response]]
 """
@@ -284,7 +312,7 @@ Extract city: [[city]]
 
 <checkpoint>
 
-Weather: [[@weather:conditions|city={{city}}]]
+Weather: [[@weather:conditions|city=city]]
 
 Travel advice for {{city}} given {{conditions}}: [[advice]]
 """
@@ -317,8 +345,8 @@ Extract birth date (ISO format): [[date:birth]]
 
 <checkpoint>
 
-Birth date: [[@format_date:formatted|iso_date={{birth}},format=%d/%m/%Y]]
-Age: [[@calculate_age:age|birth_date={{birth}}]]
+Birth date: [[@format_date:formatted|iso_date=birth,format="%d/%m/%Y"]]
+Age: [[@calculate_age:age|birth_date=birth]]
 
 Birthday message for someone aged {{age}}: [[message]]
 """

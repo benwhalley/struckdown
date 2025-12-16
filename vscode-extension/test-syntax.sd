@@ -90,6 +90,15 @@ def example():
 
 ---
 
+## Action Calls
+
+Actions use `@` prefix and call Python functions directly:
+
+- Variable reference: [[@search:results|query=topic,n=5]]
+- Literal string: [[@search:results|query="climate change",n=3]]
+- Mixed: [[@fetch:content|url=page_url,timeout=30]]
+- Positional variable: [[@evidence|topic]]
+
 ## Complete Workflow Example
 
 <system>

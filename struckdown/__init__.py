@@ -43,7 +43,8 @@ from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
                   _call_llm_cached, disable_api_debug, enable_api_debug,
                   get_embedding, get_llm_semaphore, structured_chat)
 from .parsing import (_add_default_completion_if_needed, parser,
-                      parser_with_state, resolve_includes, split_by_checkpoint)
+                      parser_with_state, resolve_includes, split_by_checkpoint,
+                      extract_slot_variable_refs)
 from .response_types import ResponseTypes
 # Re-export from results module
 from .results import (ChatterResult, CostSummary, SegmentResult,
@@ -152,17 +153,26 @@ async def chatter_async(
             slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
 
     # Build dependency graph: which raw segments depend on which others
-    raw_dependencies = {idx: set() for idx in slots_by_raw_idx}
-    for raw_idx, slots in slots_by_raw_idx.items():
-        # Check what variables this segment references
-        body = segment_data[raw_idx]["body_template"]
-        referenced_vars = extract_jinja_variables(body)
-        # Find which earlier segments define those variables
-        for earlier_idx in range(raw_idx):
-            if earlier_idx in slots_by_raw_idx:
-                earlier_slots = slots_by_raw_idx[earlier_idx]
-                if referenced_vars & earlier_slots:
-                    raw_dependencies[raw_idx].add(earlier_idx)
+    def get_referenced_vars(body: str) -> set:
+        """Get all variable references from template body (Jinja + action params)."""
+        return extract_jinja_variables(body) | extract_slot_variable_refs(body)
+
+    def find_dependencies(raw_idx: int, referenced_vars: set) -> set:
+        """Find earlier segments that define variables this segment references."""
+        return {
+            earlier_idx
+            for earlier_idx in range(raw_idx)
+            if earlier_idx in slots_by_raw_idx
+            and referenced_vars & slots_by_raw_idx[earlier_idx]
+        }
+
+    raw_dependencies = {
+        raw_idx: find_dependencies(
+            raw_idx,
+            get_referenced_vars(segment_data[raw_idx]["body_template"])
+        )
+        for raw_idx in slots_by_raw_idx
+    }
 
     # Build execution plan from raw segment dependencies
     def get_raw_execution_plan():
@@ -260,12 +270,36 @@ async def chatter_async(
         if len(batch) > 1:
             logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
+        # For parallel batches, pre-collect system/header from all segments in the batch
+        # so all segments see globals from earlier-indexed segments in the same batch
+        batch_globals = accumulated_globals.copy()
+        batch_header_globals = accumulated_header_globals.copy()
+
+        for seg_idx in sorted(batch):
+            data = segment_data[seg_idx]
+            if data["system_template"]:
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered = env.from_string(data["system_template"]).render(
+                    **accumulated_context
+                )
+                batch_globals.append(rendered)
+            if data["header_template"]:
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered = env.from_string(data["header_template"]).render(
+                    **accumulated_context
+                )
+                batch_header_globals.append(rendered)
+
         tasks = [
             process_single_segment(
                 seg_idx,
                 accumulated_context,
-                accumulated_globals,
-                accumulated_header_globals,
+                batch_globals,
+                batch_header_globals,
             )
             for seg_idx in batch
         ]
@@ -438,15 +472,26 @@ async def chatter_incremental_async(
             slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
 
     # Build dependency graph
-    raw_dependencies = {idx: set() for idx in slots_by_raw_idx}
-    for raw_idx, slots in slots_by_raw_idx.items():
-        body = segment_data[raw_idx]["body_template"]
-        referenced_vars = extract_jinja_variables(body)
-        for earlier_idx in range(raw_idx):
-            if earlier_idx in slots_by_raw_idx:
-                earlier_slots = slots_by_raw_idx[earlier_idx]
-                if referenced_vars & earlier_slots:
-                    raw_dependencies[raw_idx].add(earlier_idx)
+    def get_referenced_vars(body: str) -> set:
+        """Get all variable references from template body (Jinja + action params)."""
+        return extract_jinja_variables(body) | extract_slot_variable_refs(body)
+
+    def find_dependencies(raw_idx: int, referenced_vars: set) -> set:
+        """Find earlier segments that define variables this segment references."""
+        return {
+            earlier_idx
+            for earlier_idx in range(raw_idx)
+            if earlier_idx in slots_by_raw_idx
+            and referenced_vars & slots_by_raw_idx[earlier_idx]
+        }
+
+    raw_dependencies = {
+        raw_idx: find_dependencies(
+            raw_idx,
+            get_referenced_vars(segment_data[raw_idx]["body_template"])
+        )
+        for raw_idx in slots_by_raw_idx
+    }
 
     # Build execution plan
     def get_raw_execution_plan():
@@ -549,13 +594,37 @@ async def chatter_incremental_async(
             if len(batch) > 1:
                 logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
-            # Launch all segment tasks in parallel
+            # For parallel batches, pre-collect system/header from all segments in the batch
+            # so all segments see globals from earlier-indexed segments in the same batch
+            batch_globals = accumulated_globals.copy()
+            batch_header_globals = accumulated_header_globals.copy()
+
+            for seg_idx in sorted(batch):
+                data = segment_data[seg_idx]
+                if data["system_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered = env.from_string(data["system_template"]).render(
+                        **accumulated_context
+                    )
+                    batch_globals.append(rendered)
+                if data["header_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered = env.from_string(data["header_template"]).render(
+                        **accumulated_context
+                    )
+                    batch_header_globals.append(rendered)
+
+            # Launch all segment tasks in parallel with batch-accumulated globals
             tasks = [
                 process_segment_collect_events(
                     seg_idx,
                     accumulated_context,
-                    accumulated_globals,
-                    accumulated_header_globals,
+                    batch_globals,
+                    batch_header_globals,
                 )
                 for seg_idx in batch
             ]

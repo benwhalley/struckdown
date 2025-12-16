@@ -58,8 +58,8 @@ class OptionParsingTestCase(unittest.TestCase):
         self.assertEqual(prompt_part.options, [])  # No plain options
 
     def test_parse_model_override(self):
-        """Test parsing [[extract:quote|model=gpt-4o-mini]]"""
-        template = "Extract this: [[extract:quote|model=gpt-4o-mini]]"
+        """Test parsing [[extract:quote|model="gpt-4o-mini"]] (quoted for hyphens)"""
+        template = 'Extract this: [[extract:quote|model="gpt-4o-mini"]]'
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
 
@@ -67,8 +67,8 @@ class OptionParsingTestCase(unittest.TestCase):
         self.assertEqual(prompt_part.options, [])
 
     def test_parse_multiple_overrides(self):
-        """Test parsing [[extract:quote|temperature=0.5,model=gpt-4o-mini]]"""
-        template = "Extract this: [[extract:quote|temperature=0.5,model=gpt-4o-mini]]"
+        """Test parsing [[extract:quote|temperature=0.5,model="gpt-4o-mini"]]"""
+        template = 'Extract this: [[extract:quote|temperature=0.5,model="gpt-4o-mini"]]'
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
 
@@ -84,7 +84,9 @@ class OptionParsingTestCase(unittest.TestCase):
         prompt_part = list(sections[0].values())[0]
 
         self.assertEqual(prompt_part.llm_kwargs, {"temperature": 0.2})
-        self.assertEqual(prompt_part.options, ["required"])  # Plain option preserved
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in prompt_part.options]
+        self.assertEqual(option_values, ["required"])
 
     def test_parse_number_with_constraints_and_temp(self):
         """Test parsing [[number:score|min=0,max=100,temperature=0.0]]"""
@@ -95,8 +97,10 @@ class OptionParsingTestCase(unittest.TestCase):
         # min/max should be in options (used by number_response_model)
         # temperature should be in llm_kwargs
         self.assertEqual(prompt_part.llm_kwargs, {"temperature": 0.0})
-        self.assertIn("min=0", prompt_part.options)
-        self.assertIn("max=100", prompt_part.options)
+        # options are now OptionValue namedtuples
+        option_keys = {opt.key for opt in prompt_part.options if opt.key}
+        self.assertIn("min", option_keys)
+        self.assertIn("max", option_keys)
 
     def test_temperature_validation(self):
         """Test that invalid temperatures raise errors"""
@@ -147,7 +151,9 @@ class BackwardCompatibilityTestCase(unittest.TestCase):
         template = "Choose: [[pick:choice|red,green,blue]]"
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
-        self.assertEqual(prompt_part.options, ["red", "green", "blue"])
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in prompt_part.options]
+        self.assertEqual(option_values, ["red", "green", "blue"])
         self.assertEqual(prompt_part.llm_kwargs, {})
 
     def test_quantifier_still_works(self):
@@ -156,7 +162,9 @@ class BackwardCompatibilityTestCase(unittest.TestCase):
         sections = parse_syntax(template)
         prompt_part = list(sections[0].values())[0]
         self.assertEqual(prompt_part.quantifier, (0, None))
-        self.assertEqual(prompt_part.options, ["a", "b", "c"])
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in prompt_part.options]
+        self.assertEqual(option_values, ["a", "b", "c"])
 
 
 if __name__ == "__main__":

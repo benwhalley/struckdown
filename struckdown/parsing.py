@@ -11,6 +11,22 @@ from .actions import Actions
 from .jinja_utils import extract_jinja_variables
 from .response_types import ResponseTypes
 from .return_type_models import LLMConfig
+from typing import NamedTuple, Optional, Any
+
+
+class OptionValue(NamedTuple):
+    """
+    Structured representation of parsed option values
+    """
+    
+    key: Optional[str]
+    value: Any
+    is_variable_ref: bool
+
+    def __str__(self):
+        if self.key:
+            return f"{self.key}={self.value}"
+        return str(self.value)
 
 try:
     mindframe_grammar = (files(__package__) / "grammar.lark").read_text(
@@ -53,10 +69,24 @@ quantifier: "*"                           -> zero_or_more
           | "{" NUMBER "," NUMBER "}"     -> between
 
 option_list: option ("," option)*
-option: STRING | /[^,\\]\\|]+/
+option: CNAME "=" option_value -> keyed_option
+      | positional_value -> positional_option
+
+// keyed option values: unquoted = variable reference
+option_value: STRING -> literal_string
+            | SIGNED_FLOAT -> literal_float
+            | NUMBER -> literal_number
+            | CNAME -> variable_ref
+
+// positional values: unquoted = literal string (for pick choices etc)
+?positional_value: STRING -> literal_string
+                 | SIGNED_FLOAT -> literal_float
+                 | NUMBER -> literal_number
+                 | CNAME -> literal_cname
 
 %import common.CNAME
 %import common.INT -> NUMBER
+%import common.SIGNED_FLOAT
 %import common.ESCAPED_STRING -> STRING
 %ignore _WHITESPACE
 """
@@ -78,10 +108,20 @@ class SlotKeyTransformer(Transformer):
     Returns a dict with 'key', 'type', 'is_action', 'options', and 'auto' fields.
     """
 
+    def _options_for_action(self, options):
+        """Convert positional options to variable references for action calls."""
+        result = []
+        for opt in options:
+            if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
+                result.append(OptionValue(key=None, value=opt.value, is_variable_ref=True))
+            else:
+                result.append(opt)
+        return result
+
     def action_call_with_var(self, items):
         action_name = str(items[0])
         var_name = str(items[1])
-        options = items[2] if len(items) > 2 else []
+        options = self._options_for_action(items[2] if len(items) > 2 else [])
         return {
             "key": var_name,
             "type": action_name,
@@ -92,7 +132,7 @@ class SlotKeyTransformer(Transformer):
 
     def action_call_auto_var(self, items):
         action_name = str(items[0])
-        options = items[1] if len(items) > 1 else []
+        options = self._options_for_action(items[1] if len(items) > 1 else [])
         return {
             "key": None,
             "type": action_name,
@@ -103,7 +143,7 @@ class SlotKeyTransformer(Transformer):
 
     def action_call_no_var(self, items):
         action_name = str(items[0])
-        options = items[1] if len(items) > 1 else []
+        options = self._options_for_action(items[1] if len(items) > 1 else [])
         return {
             "key": action_name,
             "type": action_name,
@@ -188,10 +228,34 @@ class SlotKeyTransformer(Transformer):
         return (int(str(items[0])), int(str(items[1])))
 
     def option_list(self, items):
-        return list(map(str, items))
+        return list(items)
 
-    def option(self, item):
-        return str(item[0]).strip()
+    def keyed_option(self, items):
+        key = str(items[0])
+        value, is_var = items[1]
+        return OptionValue(key=key, value=value, is_variable_ref=is_var)
+
+    def positional_option(self, items):
+        value, is_var = items[0]
+        return OptionValue(key=None, value=value, is_variable_ref=is_var)
+
+    def literal_string(self, items):
+        # strip quotes from STRING token
+        s = str(items[0])
+        return (s[1:-1] if s.startswith(('"', "'")) else s, False)
+
+    def literal_float(self, items):
+        return (float(str(items[0])), False)
+
+    def literal_number(self, items):
+        return (int(str(items[0])), False)
+
+    def variable_ref(self, items):
+        return (str(items[0]), True)
+
+    def literal_cname(self, items):
+        # unquoted positional value - treat as literal string, not variable ref
+        return (str(items[0]), False)
 
     def start(self, items):
         return items[0]
@@ -222,6 +286,40 @@ def extract_slot_key(inner_text: str) -> str:
     """
     result = parse_slot_body(inner_text)
     return result["key"] if result["key"] else result["type"]
+
+
+def extract_option_variable_refs(options: list) -> set:
+    """Extract variable reference names from a list of OptionValue.
+
+    Args:
+        options: List of OptionValue namedtuples from parsed slot
+
+    Returns:
+        Set of variable names that are referenced in the options
+    """
+    return {opt.value for opt in (options or []) if opt.is_variable_ref}
+
+
+def extract_slot_variable_refs(text: str) -> set:
+    """Extract all variable references from action parameters in template text.
+
+    Parses each slot in the text and collects variable references from options.
+    E.g., [[@evidence|query=topics,n=10]] → {"topics"}
+
+    Args:
+        text: Template string potentially containing [[@ action calls
+
+    Returns:
+        Set of variable names referenced in action parameters
+    """
+    variables = set()
+    for match in SLOT_PATTERN.finditer(text):
+        try:
+            parsed = parse_slot_body(match.group(1))
+            variables |= extract_option_variable_refs(parsed.get("options", []))
+        except Exception:
+            continue
+    return variables
 
 
 def find_slots_with_positions(text: str) -> list:
@@ -780,16 +878,17 @@ class MindframeTransformer(Transformer):
         prompt = self._collapse_prompt_text()
 
         # Check for "block" flag before parsing options
+        # Options are now OptionValue namedtuples with (key, value, is_variable_ref)
         options_list = body.get("options", [])
         block = False
         filtered_options = []
         for opt in options_list:
-            if opt == "block":
+            if opt.key == "block":
+                # block=true or block=false
+                block = str(opt.value).lower() in ("true", "1", "yes")
+            elif opt.key is None and opt.value == "block":
+                # positional "block" option
                 block = True
-            elif opt.startswith("block="):
-                # Handle block=true or block=false
-                value = opt.split("=", 1)[1].lower()
-                block = value in ("true", "1", "yes")
             else:
                 filtered_options.append(opt)
 
@@ -820,14 +919,14 @@ class MindframeTransformer(Transformer):
         self.completions_in_current_checkpoint.append(body["key"])
 
     def _parse_options(self, options_list):
-        """Parse options list into separate plain options and key=value kwargs.
+        """Parse options list into separate plain options and LLM kwargs.
 
         Args:
-            options_list: List of option strings that may contain key=value pairs
+            options_list: List of OptionValue namedtuples
 
         Returns:
             tuple: (plain_options, kwargs_dict)
-                plain_options: List of strings without '=' OR model-specific key=value like min=0
+                plain_options: List of OptionValue not matching LLM params
                 kwargs_dict: Dict of LLM parameter key=value pairs (temperature, model)
         """
         LLM_PARAM_KEYS = set(LLMConfig.model_fields.keys())
@@ -836,23 +935,16 @@ class MindframeTransformer(Transformer):
         kwargs_dict = {}
 
         for opt in options_list:
-            if "=" in opt:
-                key, value = opt.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-
-                if key in LLM_PARAM_KEYS:
-                    try:
-                        test_config = {key: value}
-                        validated = LLMConfig.model_validate(test_config, strict=False)
-                        kwargs_dict[key] = getattr(validated, key)
-                    except ValidationError as e:
-                        error_msg = e.errors()[0]["msg"] if e.errors() else str(e)
-                        raise ValueError(f"Invalid value for '{key}': {error_msg}")
-                else:
-                    # Model-specific options like min=0, max=100 stay as plain options
-                    plain_options.append(opt)
+            if opt.key in LLM_PARAM_KEYS:
+                try:
+                    test_config = {opt.key: opt.value}
+                    validated = LLMConfig.model_validate(test_config, strict=False)
+                    kwargs_dict[opt.key] = getattr(validated, opt.key)
+                except ValidationError as e:
+                    error_msg = e.errors()[0]["msg"] if e.errors() else str(e)
+                    raise ValueError(f"Invalid value for '{opt.key}': {error_msg}")
             else:
+                # non-LLM options stay as-is
                 plain_options.append(opt)
 
         return plain_options, kwargs_dict
@@ -1080,6 +1172,22 @@ class MindframeTransformer(Transformer):
     # Action call handlers - function calls with @ prefix
     # -------------------------------------------------------------------------
 
+    def _options_for_action(self, options):
+        """Convert positional options to variable references for action calls.
+
+        In action calls like [[@evidence|topics]], positional options should be
+        variable references (looked up from context), not literal strings.
+        This differs from pick/extract slots where positional options are choices.
+        """
+        result = []
+        for opt in options:
+            if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
+                # positional string option in action -> convert to variable reference
+                result.append(OptionValue(key=None, value=opt.value, is_variable_ref=True))
+            else:
+                result.append(opt)
+        return result
+
     def action_call_with_var(self, items):
         """Handle [[@action:var]] - action call with explicit variable name.
 
@@ -1092,7 +1200,7 @@ class MindframeTransformer(Transformer):
 
         action_name = str(items[0])
         var_name = str(items[1])
-        options = items[2] if len(items) > 2 else []
+        options = self._options_for_action(items[2] if len(items) > 2 else [])
 
         if not Actions.is_registered(action_name):
             warnings.warn(
@@ -1125,7 +1233,7 @@ class MindframeTransformer(Transformer):
         line_number = self._extract_line_number(items)
 
         action_name = str(items[0])
-        options = items[1] if len(items) > 1 else []
+        options = self._options_for_action(items[1] if len(items) > 1 else [])
 
         if not Actions.is_registered(action_name):
             warnings.warn(
@@ -1162,7 +1270,7 @@ class MindframeTransformer(Transformer):
         line_number = self._extract_line_number(items)
 
         action_name = str(items[0])
-        options = items[1] if len(items) > 1 else []
+        options = self._options_for_action(items[1] if len(items) > 1 else [])
 
         original_action_name = action_name
         if not Actions.is_registered(action_name):
@@ -1189,12 +1297,40 @@ class MindframeTransformer(Transformer):
     # -------------------------------------------------------------------------
 
     def option_list(self, items):
-        """Handle option_list: option ("," option)* -> list of option strings."""
-        return list(map(str, items))
+        """Handle option_list: option ("," option)* -> list of OptionValue."""
+        return list(items)
 
-    def option(self, item):
-        """Handle option: STRING | /[^,\\]\\|]+/ -> single option string."""
-        return str(item[0]).strip()
+    def keyed_option(self, items):
+        """Handle keyed_option: CNAME "=" option_value -> OptionValue with key."""
+        key = str(items[0])
+        value, is_var = items[1]
+        return OptionValue(key=key, value=value, is_variable_ref=is_var)
+
+    def positional_option(self, items):
+        """Handle positional_option: option_value -> OptionValue without key."""
+        value, is_var = items[0]
+        return OptionValue(key=None, value=value, is_variable_ref=is_var)
+
+    def literal_string(self, items):
+        """Handle literal_string: STRING -> (value, False)."""
+        s = str(items[0])
+        return (s[1:-1] if s.startswith(('"', "'")) else s, False)
+
+    def literal_float(self, items):
+        """Handle literal_float: SIGNED_FLOAT -> (value, False)."""
+        return (float(str(items[0])), False)
+
+    def literal_number(self, items):
+        """Handle literal_number: NUMBER -> (value, False)."""
+        return (int(str(items[0])), False)
+
+    def variable_ref(self, items):
+        """Handle variable_ref: CNAME -> (varname, True)."""
+        return (str(items[0]), True)
+
+    def literal_cname(self, items):
+        """Handle literal_cname: CNAME in positional context -> (value, False)."""
+        return (str(items[0]), False)
 
     def var_path(self, items):
         """Handle var_path: CNAME ("." CNAME)* -> list of path components."""

@@ -193,9 +193,11 @@ With multiple lines"""
 
         part = sections[0]["color"]
         self.assertEqual(part.action_type, "pick")
-        self.assertIn("red", part.options)
-        self.assertIn("blue", part.options)
-        self.assertIn("green", part.options)
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in part.options]
+        self.assertIn("red", option_values)
+        self.assertIn("blue", option_values)
+        self.assertIn("green", option_values)
 
 
 class NonFinalSegmentValidationTestCase(unittest.TestCase):

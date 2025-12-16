@@ -17,6 +17,7 @@ Example usage in templates:
     [[@search:results|query="python tutorials"]]
 """
 
+import asyncio
 import importlib.util
 import inspect
 import logging
@@ -24,6 +25,8 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, get_type_hints
+
+from asgiref.sync import sync_to_async
 
 import markdownify as markdownify_lib
 import requests
@@ -90,6 +93,81 @@ except ImportError:
     MAGIC_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Parameter Resolution
+# =============================================================================
+
+
+def resolve_option_value(opt, context: dict):
+    """Resolve an OptionValue by looking up variable references in context.
+
+    Args:
+        opt: OptionValue namedtuple with (key, value, is_variable_ref)
+        context: Context dict with extracted variables
+
+    Returns:
+        Resolved value (from context if variable_ref, otherwise literal value)
+    """
+    if not opt.is_variable_ref:
+        return opt.value
+
+    # variable reference - look up in context
+    var_name = opt.value
+    if var_name in context:
+        return context[var_name]
+
+    # fallback: warning + treat as literal
+    logger.warning(
+        f"Variable '{var_name}' not found in context, treating as literal string. "
+        f"Available: {list(context.keys())}"
+    )
+    return var_name
+
+
+# =============================================================================
+# Parameter Coercion
+# =============================================================================
+
+
+def _coerce_params(func: Callable, action_name: str, rendered_params: dict) -> dict:
+    """Coerce parameters to match function signature types via Pydantic."""
+    try:
+        type_hints = get_type_hints(func)
+        sig = inspect.signature(func)
+        field_defs = {}
+
+        for param_name, param in sig.parameters.items():
+            if param_name == "context":
+                continue
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+
+            param_type = type_hints.get(param_name, str)
+            if param.default is inspect.Parameter.empty:
+                field_defs[param_name] = (param_type, ...)
+            else:
+                field_defs[param_name] = (param_type, param.default)
+
+        if not field_defs:
+            return rendered_params
+
+        from pydantic import ConfigDict
+
+        CoercionModel = create_model(
+            f"{action_name.title()}Params",
+            __config__=ConfigDict(extra="allow"),
+            **field_defs,
+        )
+        try:
+            return CoercionModel(**rendered_params).model_dump()
+        except ValidationError as ve:
+            raise ValueError(f"Parameter validation failed for '{action_name}': {ve}") from ve
+
+    except Exception as e:
+        logger.debug(f"Type coercion failed for '{action_name}': {e}")
+        return rendered_params
 
 
 # =============================================================================
@@ -236,156 +314,62 @@ class Actions:
                 default="", description=f"Result from {action_name} action"
             )
 
-        def executor(context: dict, rendered_prompt: str, **kwargs):
-            """Generic executor that calls the registered function.
+        async def executor(context: dict, rendered_prompt: str, **kwargs):
+            """Async executor that calls the registered function.
 
-            Args:
-                context: Accumulated context dict (all extracted variables)
-                rendered_prompt: Rendered prompt text (not used for actions)
-                **kwargs: Additional parameters from struckdown
-
-            Returns:
-                (ActionResult, None): Result and completion object
+            Automatically wraps sync functions with sync_to_async for safe
+            execution in async contexts (e.g., Django ORM operations).
             """
-            # parse options to dict, handling both positional and keyword arguments
-            # Example: [[@evidence|"CBT",3,types="techniques"]]
-            #   positional: ["CBT", 3]
-            #   keyword: {types: "techniques"}
+            from struckdown.parsing import OptionValue
 
-            positional_args = []
-            keyword_args = {}
+            def ensure_option_value(opt):
+                if isinstance(opt, str):
+                    if "=" in opt:
+                        key, value = opt.split("=", 1)
+                        key, value = key.strip(), value.strip()
+                    else:
+                        key, value = None, opt.strip()
+                    is_var_ref = value.startswith("{{") and value.endswith("}}")
+                    if is_var_ref:
+                        value = value[2:-2].strip()
+                    return OptionValue(key=key, value=value, is_variable_ref=is_var_ref)
+                return opt
 
-            for opt in options or []:
-                if "=" in opt:
-                    # keyword argument
-                    key, value = opt.split("=", 1)
-                    keyword_args[key.strip()] = value.strip()
-                else:
-                    # positional argument
-                    positional_args.append(opt.strip())
+            normalized_options = [ensure_option_value(opt) for opt in (options or [])]
 
-            # get function signature to map positional args to parameter names
             sig = inspect.signature(func)
-            param_names = [
-                name
-                for name in sig.parameters.keys()
-                if name != "context"  # skip context parameter
-            ]
+            param_names = [n for n in sig.parameters.keys() if n != "context"]
 
-            # map positional args to parameter names
-            params = {}
-            for i, value in enumerate(positional_args):
+            positional_opts = [opt for opt in normalized_options if opt.key is None]
+            keyed_opts = [opt for opt in normalized_options if opt.key is not None]
+
+            rendered_params = {}
+            for i, opt in enumerate(positional_opts):
                 if i < len(param_names):
-                    params[param_names[i]] = value
+                    rendered_params[param_names[i]] = resolve_option_value(opt, context)
                 else:
                     logger.warning(
-                        f"Action '{action_name}' received too many positional args. "
-                        f"Expected at most {len(param_names)}, got {len(positional_args)}"
+                        f"Action '{action_name}': too many positional args "
+                        f"(expected {len(param_names)}, got {len(positional_opts)})"
                     )
                     break
 
-            # merge keyword args (they override positional if there's a conflict)
-            params.update(keyword_args)
+            for opt in keyed_opts:
+                rendered_params[opt.key] = resolve_option_value(opt, context)
 
-            # debug logging to understand context state
-            logger.debug(f"Executor called for action '{action_name}'")
-            logger.debug(f"Context keys available: {list(context.keys())}")
-            logger.debug(
-                f"Positional args: {positional_args}, Keyword args: {keyword_args}"
-            )
-            logger.debug(f"Mapped params to render: {params}")
+            logger.debug(f"Executor '{action_name}': params={rendered_params}")
 
-            # render Jinja2 variables in parameter values
-            # this allows: query={{extracted_var}} in templates
-            rendered_params = {}
-            for k, v in params.items():
-                try:
-                    # try rendering as Jinja2 template with StrictUndefined
-                    # this will error if variables are missing instead of silently rendering to ''
-                    rendered_value = Template(str(v), undefined=StrictUndefined).render(
-                        **context
-                    )
-                    logger.debug(f"Rendered '{k}': '{v}' → '{rendered_value}'")
-                    rendered_params[k] = rendered_value
-                except Exception as e:
-                    # fallback: try variable lookup, or use literal value
-                    logger.warning(
-                        f"Jinja2 rendering failed for action '{action_name}' parameter '{k}={v}': {e}. "
-                        f"Available context keys: {list(context.keys())}. "
-                        f"Keeping unresolved value."
-                    )
-                    # Keep the original value (with template syntax) so it's visible that it failed
-                    rendered_params[k] = v
+            # type coercion via pydantic
+            coerced_params = _coerce_params(func, action_name, rendered_params)
 
-            # automatic type coercion based on function signature
+            # call function, wrapping sync functions automatically
             try:
-                # get type hints from the function
-                type_hints = get_type_hints(func)
-
-                # build field definitions for Pydantic model (skip 'context' parameter)
-                # (reuse sig from positional arg parsing above)
-                field_defs = {}
-
-                for param_name, param in sig.parameters.items():
-                    if param_name == "context":
-                        continue  # context is always dict, passed separately
-
-                    # skip *args and **kwargs - they're catch-alls, not validated params
-                    if param.kind in (
-                        inspect.Parameter.VAR_POSITIONAL,
-                        inspect.Parameter.VAR_KEYWORD,
-                    ):
-                        continue
-
-                    # get type hint for this parameter
-                    param_type = type_hints.get(
-                        param_name, str
-                    )  # default to str if no hint
-
-                    # get default value if specified
-                    if param.default is inspect.Parameter.empty:
-                        # no default - required field
-                        field_defs[param_name] = (param_type, ...)
-                    else:
-                        # has default - optional field
-                        field_defs[param_name] = (param_type, param.default)
-
-                # create temporary Pydantic model for validation/coercion
-                if field_defs:
-                    from pydantic import ConfigDict
-
-                    CoercionModel = create_model(
-                        f"{action_name.title()}Params",
-                        __config__=ConfigDict(extra="allow"),
-                        **field_defs,
-                    )
-
-                    # validate and coerce the parameters
-                    # extra="allow" preserves unknown fields for **kwargs
-                    try:
-                        coerced = CoercionModel(**rendered_params)
-                        coerced_params = coerced.model_dump()
-                    except ValidationError as ve:
-                        # provide helpful error message
-                        error_msg = f"Parameter validation failed for action '{action_name}': {ve}"
-                        logger.error(error_msg)
-                        raise ValueError(error_msg) from ve
+                if asyncio.iscoroutinefunction(func):
+                    result_text = await func(context=context, **coerced_params)
                 else:
-                    # no type hints - use rendered params as-is
-                    coerced_params = rendered_params
-
-            except Exception as e:
-                # if type introspection fails, fall back to uncoerced params
-                logger.debug(
-                    f"Type coercion failed for action '{action_name}': {e}. Using uncoerced params."
-                )
-                coerced_params = rendered_params
-
-            # call the registered function
-            try:
-                result_text = func(context=context, **coerced_params)
-
-                # Create action result and attach resolved params for display
+                    result_text = await sync_to_async(func, thread_sensitive=True)(
+                        context=context, **coerced_params
+                    )
                 action_result = ActionResult(response=result_text)
                 action_result._resolved_params = coerced_params
                 return action_result, None
@@ -393,16 +377,9 @@ class Actions:
             except Exception as e:
                 if on_error == "propagate":
                     raise
-                elif on_error == "return_empty":
-                    logger.warning(
-                        f"Action '{action_name}' failed with error: {e}. Returning empty string."
-                    )
-                    return ActionResult(response=""), None
-                elif on_error == "return_default":
-                    logger.warning(
-                        f"Action '{action_name}' failed with error: {e}. Returning default value: {default_value!r}"
-                    )
-                    return ActionResult(response=default_value), None
+                logger.warning(f"Action '{action_name}' failed: {e}")
+                fallback = "" if on_error == "return_empty" else default_value
+                return ActionResult(response=fallback), None
 
         # attach executor and metadata to response model
         ActionResult._executor = executor

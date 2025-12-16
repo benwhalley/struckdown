@@ -5,7 +5,7 @@ Learn the "Extract → Search → Generate" pattern for building RAG systems wit
 ## The Pattern
 
 1. **Extract** -- LLM identifies what information is needed: `[[query]]`
-2. **Search** -- Custom function retrieves context: `[[@search:context|query={{query}}]]`
+2. **Search** -- Custom function retrieves context: `[[@search:context|query=query]]`
 3. **Generate** -- LLM generates answer using context: `[[answer]]`
 
 ## Example: Knowledge Base Search
@@ -43,7 +43,7 @@ Extract topic: [[topic]]
 <checkpoint>
 
 Relevant info:
-[[@search_docs:context|query={{topic}},n=3]]
+[[@search_docs:context|query=topic,n=3]]
 
 <checkpoint>
 
@@ -68,10 +68,10 @@ Extract topic: [[topic]]
 ```python
 <checkpoint>
 
-[[@search_docs:context|query={{topic}},n=3]]
+[[@search_docs:context|query=topic,n=3]]
 ```
 
-The function receives `query="insomnia treatment"` and returns docs.
+The function receives `query="insomnia treatment"` (looked up from `topic` variable) and returns docs.
 
 **Result**: `context = "CBT-I is the first-line treatment..."`
 
@@ -110,7 +110,7 @@ Extract key terms: [[terms]]
 <checkpoint>
 
 Retrieved docs:
-[[@search:docs|query={{terms}},n=5]]
+[[@search:docs|query=terms,n=5]]
 
 <checkpoint>
 
@@ -138,8 +138,8 @@ You send 500 fewer tokens to the LLM!
 
 ### Multiple Searches
 ```python
-[[@search:context1|query={{topic1}}]]
-[[@search:context2|query={{topic2}}]]
+[[@search:context1|query=topic1]]
+[[@search:context2|query=topic2]]
 ```
 
 Both execute in the same segment, results available to next segment.
@@ -147,7 +147,7 @@ Both execute in the same segment, results available to next segment.
 ### Conditional Search
 ```python
 {% if needs_context %}
-[[@search:docs|query={{query}}]]
+[[@search:docs|query=query]]
 {% endif %}
 ```
 

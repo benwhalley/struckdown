@@ -5,6 +5,7 @@ Tests custom action registration, parameter parsing, type coercion,
 error handling, and integration with template syntax.
 """
 
+import asyncio
 import unittest
 
 from struckdown.actions import Actions
@@ -12,12 +13,21 @@ from struckdown.parsing import parse_syntax
 from struckdown.return_type_models import ResponseModel
 
 
+def run_executor(executor, context=None, rendered_prompt="", **kwargs):
+    """Helper to run async executor in tests."""
+    return asyncio.run(executor(context=context or {}, rendered_prompt=rendered_prompt, **kwargs))
+
+
 class ActionRegistryTestCase(unittest.TestCase):
     """Test basic action registration and lookup"""
 
     def setUp(self):
-        # clear registry before each test
+        # save and clear registry before each test
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
     def test_register_action(self):
         """Test registering a simple action"""
@@ -55,6 +65,7 @@ class SimpleActionsTestCase(unittest.TestCase):
     """Test simple actions without parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action
@@ -80,9 +91,8 @@ class SimpleActionsTestCase(unittest.TestCase):
     def test_uppercase_action_execution(self):
         """Test executing uppercase action"""
         model = Actions.create_action_model("uppercase", None, None, False)
-        executor = model._executor
 
-        result, completion = executor(context={}, rendered_prompt="")
+        result, completion = run_executor(model._executor)
 
         self.assertIsInstance(result, ResponseModel)
         self.assertEqual(result.response, "HELLO WORLD")
@@ -93,11 +103,15 @@ class SimpleActionsTestCase(unittest.TestCase):
         model = Actions.create_action_model("nonexistent", None, None, False)
         self.assertIsNone(model)
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class ParameterizedActionsTestCase(unittest.TestCase):
     """Test actions with parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register repeat action
@@ -118,8 +132,7 @@ class ParameterizedActionsTestCase(unittest.TestCase):
             "repeat", ["text=hello", "times=3"], None, False
         )
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, "hellohellohello")
 
@@ -127,8 +140,7 @@ class ParameterizedActionsTestCase(unittest.TestCase):
         """Test action using default parameter value"""
         model = Actions.create_action_model("repeat", ["text=hi"], None, False)
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, "hihi")  # default times=2
 
@@ -138,8 +150,7 @@ class ParameterizedActionsTestCase(unittest.TestCase):
             "concat", ["prefix=START-", "suffix=-END"], None, False
         )
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, "START-MIDDLE-END")
 
@@ -147,16 +158,19 @@ class ParameterizedActionsTestCase(unittest.TestCase):
         """Test action with some parameters omitted"""
         model = Actions.create_action_model("concat", ["prefix=>>>"], None, False)
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, ">>>MIDDLE")
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 class TypeCoercionTestCase(unittest.TestCase):
     """Test automatic type coercion of parameters"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register multiply action with int type
@@ -179,8 +193,7 @@ class TypeCoercionTestCase(unittest.TestCase):
             "multiply", ["value=10", "factor=5"], None, False
         )
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, "50")
 
@@ -190,22 +203,25 @@ class TypeCoercionTestCase(unittest.TestCase):
             "ifelse", ["condition=true", "true_val=YES", "false_val=NO"], None, False
         )
 
-        executor = model._executor
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
 
         self.assertEqual(result.response, "YES")
 
         # test with false
         model2 = Actions.create_action_model("ifelse", ["condition=false"], None, False)
 
-        result2, _ = model2._executor(context={}, rendered_prompt="")
+        result2, _ = run_executor(model2._executor)
         self.assertEqual(result2.response, "no")
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 class ContextVariablesTestCase(unittest.TestCase):
     """Test actions using context variables"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register action that uses context
@@ -224,9 +240,7 @@ class ContextVariablesTestCase(unittest.TestCase):
         """Test parameter value resolved from context"""
         model = Actions.create_action_model("greet", ["name={{username}}"], None, False)
 
-        # execute with context containing username
-        executor = model._executor
-        result, _ = executor(context={"username": "Alice"}, rendered_prompt="")
+        result, _ = run_executor(model._executor, context={"username": "Alice"})
 
         self.assertEqual(result.response, "Hello, Alice!")
 
@@ -234,18 +248,21 @@ class ContextVariablesTestCase(unittest.TestCase):
         """Test action that reads context directly"""
         model = Actions.create_action_model("count_vars", None, None, False)
 
-        executor = model._executor
-        result, _ = executor(
-            context={"var1": "a", "var2": "b", "var3": "c"}, rendered_prompt=""
+        result, _ = run_executor(
+            model._executor, context={"var1": "a", "var2": "b", "var3": "c"}
         )
 
         self.assertEqual(result.response, "Context has 3 variables")
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 class ErrorHandlingTestCase(unittest.TestCase):
     """Test error handling strategies"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
     def test_error_propagate_strategy(self):
@@ -256,10 +273,9 @@ class ErrorHandlingTestCase(unittest.TestCase):
             raise ValueError("Intentional error")
 
         model = Actions.create_action_model("failing", None, None, False)
-        executor = model._executor
 
         with self.assertRaises(ValueError) as ctx:
-            executor(context={}, rendered_prompt="")
+            run_executor(model._executor)
 
         self.assertIn("Intentional error", str(ctx.exception))
 
@@ -271,9 +287,8 @@ class ErrorHandlingTestCase(unittest.TestCase):
             raise ValueError("Intentional error")
 
         model = Actions.create_action_model("failing", None, None, False)
-        executor = model._executor
 
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "")
 
     def test_error_return_default_strategy(self):
@@ -286,9 +301,8 @@ class ErrorHandlingTestCase(unittest.TestCase):
             raise ValueError("Intentional error")
 
         model = Actions.create_action_model("failing", None, None, False)
-        executor = model._executor
 
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "fallback value")
 
     def test_error_return_default_with_empty_string(self):
@@ -299,9 +313,8 @@ class ErrorHandlingTestCase(unittest.TestCase):
             raise ValueError("Intentional error")
 
         model = Actions.create_action_model("failing2", None, None, False)
-        executor = model._executor
 
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "")
 
     def test_error_return_default_with_numeric_string(self):
@@ -312,16 +325,19 @@ class ErrorHandlingTestCase(unittest.TestCase):
             raise ValueError("Intentional error")
 
         model = Actions.create_action_model("failing3", None, None, False)
-        executor = model._executor
 
-        result, _ = executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "0")
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
     """Test actions integrated with template parsing"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action
@@ -337,8 +353,8 @@ class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
             return text[::-1]
 
     def test_parse_function_call_syntax(self):
-        """Test parsing [[@action:var|params]] syntax"""
-        template = "Convert this: [[@uppercase:result|text=hello]]"
+        """Test parsing [[@action:var|params]] syntax with quoted literal"""
+        template = 'Convert this: [[@uppercase:result|text="hello"]]'
         sections = parse_syntax(template)
 
         self.assertEqual(len(sections), 1)
@@ -347,11 +363,13 @@ class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
         part = sections[0]["result"]
         self.assertEqual(part.action_type, "uppercase")
         self.assertTrue(part.is_function)
-        self.assertIn("text=hello", part.options)
+        self.assertEqual(part.options[0].key, "text")
+        self.assertEqual(part.options[0].value, "hello")
+        self.assertFalse(part.options[0].is_variable_ref)
 
     def test_action_in_template_with_variable(self):
-        """Test action using template variable"""
-        template = "Original: [[input]]\n\n<checkpoint>\n\nReversed: [[@reverse:output|text={{input}}]]"
+        """Test action using template variable (new unquoted syntax for var refs)"""
+        template = "Original: [[input]]\n\n<checkpoint>\n\nReversed: [[@reverse:output|text=input]]"
         sections = parse_syntax(template)
 
         self.assertEqual(len(sections), 2)
@@ -382,11 +400,15 @@ class TemplateSyntaxIntegrationTestCase(unittest.TestCase):
         self.assertEqual(section["upper"].action_type, "uppercase")
         self.assertEqual(section["rev"].action_type, "reverse")
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 class RealWorldExampleTestCase(unittest.TestCase):
     """Test realistic action use cases"""
 
     def setUp(self):
+        self._saved_registry = Actions._registry.copy()
         Actions._registry.clear()
 
         # register uppercase action (like the user requested)
@@ -416,7 +438,7 @@ class RealWorldExampleTestCase(unittest.TestCase):
             "uppercase", ["text=hello world"], None, False
         )
 
-        result, _ = model._executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "HELLO WORLD")
 
     def test_uppercase_with_context_variable(self):
@@ -425,9 +447,7 @@ class RealWorldExampleTestCase(unittest.TestCase):
             "uppercase", ["text={{user_input}}"], None, False
         )
 
-        result, _ = model._executor(
-            context={"user_input": "make me loud"}, rendered_prompt=""
-        )
+        result, _ = run_executor(model._executor, context={"user_input": "make me loud"})
         self.assertEqual(result.response, "MAKE ME LOUD")
 
     def test_transform_with_different_operations(self):
@@ -436,38 +456,38 @@ class RealWorldExampleTestCase(unittest.TestCase):
         model = Actions.create_action_model(
             "transform", ["text=hello", "operation=upper"], None, False
         )
-        result, _ = model._executor(context={}, rendered_prompt="")
+        result, _ = run_executor(model._executor)
         self.assertEqual(result.response, "HELLO")
 
         # test lower
         model2 = Actions.create_action_model(
             "transform", ["text=HELLO", "operation=lower"], None, False
         )
-        result2, _ = model2._executor(context={}, rendered_prompt="")
+        result2, _ = run_executor(model2._executor)
         self.assertEqual(result2.response, "hello")
 
         # test title
         model3 = Actions.create_action_model(
             "transform", ["text=hello world", "operation=title"], None, False
         )
-        result3, _ = model3._executor(context={}, rendered_prompt="")
+        result3, _ = run_executor(model3._executor)
         self.assertEqual(result3.response, "Hello World")
 
         # test reverse
         model4 = Actions.create_action_model(
             "transform", ["text=hello", "operation=reverse"], None, False
         )
-        result4, _ = model4._executor(context={}, rendered_prompt="")
+        result4, _ = run_executor(model4._executor)
         self.assertEqual(result4.response, "olleh")
 
     def test_uppercase_in_complete_template(self):
-        """Test uppercase action in a complete template workflow"""
+        """Test uppercase action in a complete template workflow (new syntax: unquoted = var ref)"""
         template = """
         Get user input: [[user_text]]
 
         <checkpoint>
 
-        Transform to uppercase: [[@uppercase:loud_text|text={{user_text}}]]
+        Transform to uppercase: [[@uppercase:loud_text|text=user_text]]
         """
 
         sections = parse_syntax(template)
@@ -476,11 +496,16 @@ class RealWorldExampleTestCase(unittest.TestCase):
         # verify first section
         self.assertIn("user_text", sections[0])
 
-        # verify second section has action
+        # verify second section has action with variable reference
         self.assertIn("loud_text", sections[1])
         action_part = sections[1]["loud_text"]
         self.assertEqual(action_part.action_type, "uppercase")
         self.assertTrue(action_part.is_function)
+        self.assertTrue(action_part.options[0].is_variable_ref)
+        self.assertEqual(action_part.options[0].value, "user_text")
+
+    def tearDown(self):
+        Actions._registry = self._saved_registry
 
 
 if __name__ == "__main__":

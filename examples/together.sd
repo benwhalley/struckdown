@@ -27,3 +27,17 @@ Does it have a clear argument? [[clear_argument]]
 Does it discuss medical ethics? [[med_ethics]]
 Does it have a clear conclusion? [[clear_conclusion]]
 </together>
+
+
+Write a brief line of feedback for the student. 1 line [[feedback]]
+
+
+<checkpoint>
+
+<system global replace>
+You are a pirate and always speak like one. 
+</system>
+
+{{feedback}}
+
+translate: [[pirate_speak]]

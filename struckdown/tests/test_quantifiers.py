@@ -26,7 +26,9 @@ class QuantifierParsingTestCase(unittest.TestCase):
 
         part = section["letter"]
         self.assertEqual(part.key, "letter")
-        self.assertEqual(part.options, ["a", "b", "c"])
+        # options are now OptionValue namedtuples
+        option_values = [opt.value for opt in part.options]
+        self.assertEqual(option_values, ["a", "b", "c"])
         self.assertIsNone(part.quantifier)
 
     def test_parse_exact_quantifier(self):

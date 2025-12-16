@@ -63,7 +63,8 @@ class TestExtractRequiredInputs:
 
     def test_action_slot(self):
         """Action slots correctly extracted."""
-        syntax = "[[@search:results|query={{topic}}]]"
+        # Use new Python-like syntax: unquoted = variable reference
+        syntax = "[[@search:results|query=topic]]"
         result = extract_required_inputs(syntax)
         assert "results" in result["slots_defined"]
         assert "topic" in result["inputs_required"]

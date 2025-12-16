@@ -17,8 +17,8 @@ from lark.exceptions import UnexpectedCharacters, UnexpectedToken
 
 from struckdown import (LLM, LLMCredentials, chatter_async,
                         extract_jinja_variables)
-from struckdown.parsing import (extract_slot_key, find_slots_with_positions,
-                                parser)
+from struckdown.parsing import (extract_slot_key, extract_slot_variable_refs,
+                                find_slots_with_positions, parser)
 
 # Security configuration from environment
 STRUCKDOWN_ZIP_MAX_SIZE = int(
@@ -38,8 +38,10 @@ def extract_required_inputs(syntax: str) -> Dict[str, List[str]]:
         inputs_required: {{vars}} not filled by [[slots]]
         slots_defined: [[slots]] that will be created
     """
-    # Get all {{var}} references
+    # Get all variable references: {{var}} syntax + unquoted action parameters
     jinja_vars = extract_jinja_variables(syntax)
+    action_param_vars = extract_slot_variable_refs(syntax)
+    all_vars = jinja_vars | action_param_vars
 
     # Get all [[slot]] definitions in order they appear
     slots = find_slots_with_positions(syntax)
@@ -54,7 +56,7 @@ def extract_required_inputs(syntax: str) -> Dict[str, List[str]]:
             slots_ordered.append(s[0])
 
     # Inputs are vars not defined by slots
-    inputs_required = sorted(jinja_vars - slot_names_set)
+    inputs_required = sorted(all_vars - slot_names_set)
 
     return {
         "inputs_required": inputs_required,

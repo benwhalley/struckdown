@@ -434,8 +434,8 @@ from struckdown import Actions, chatter
 def uppercase_text(context, text: str):
     return text.upper()
 
-# Use in template
-result = chatter("[[uppercase:loud|text={{input}}]]")
+# Use in template - unquoted 'input' is a variable reference
+result = chatter("[[@uppercase:loud|text=input]]", context={"input": "hello"})
 ```
 
 See **[Custom Actions Guide](docs/CUSTOM_ACTIONS.md)** for details.

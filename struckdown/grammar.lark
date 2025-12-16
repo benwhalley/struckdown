@@ -117,10 +117,24 @@ quantifier: "*"                           -> zero_or_more
           | "{" NUMBER "," NUMBER "}"     -> between
 
 option_list: option ("," option)*
-option: STRING | /[^,\]\|]+/
+option: CNAME "=" option_value -> keyed_option
+      | positional_value -> positional_option
+
+// keyed option values: unquoted = variable reference
+option_value: STRING -> literal_string
+            | SIGNED_FLOAT -> literal_float
+            | NUMBER -> literal_number
+            | CNAME -> variable_ref
+
+// positional values: unquoted = literal string (for pick choices etc)
+?positional_value: STRING -> literal_string
+                 | SIGNED_FLOAT -> literal_float
+                 | NUMBER -> literal_number
+                 | CNAME -> literal_cname
 
 %import common.CNAME
 %import common.INT -> NUMBER
+%import common.SIGNED_FLOAT
 %import common.ESCAPED_STRING -> STRING
 %import common.NEWLINE
 %ignore _WHITESPACE
