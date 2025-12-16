@@ -49,9 +49,9 @@ def format_parse_error(e: UnexpectedToken | UnexpectedCharacters) -> str:
 
     return '\n'.join(parts)
 
-# Concurrency settings
-MAX_CONCURRENCY = env_config("SD_MAX_CONCURRENCY", default=20, cast=int)
-semaphore = anyio.Semaphore(MAX_CONCURRENCY)
+# Concurrency settings - use shared semaphore from llm module
+from .llm import get_llm_semaphore, MAX_LLM_CONCURRENCY
+MAX_CONCURRENCY = MAX_LLM_CONCURRENCY  # Keep for backward compatibility
 
 
 def version_callback(value: bool):

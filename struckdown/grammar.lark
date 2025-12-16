@@ -1,7 +1,7 @@
 // Struckdown Grammar v2.0 - XML-style syntax
 // Single-stage parsing of all syntax elements
 
-start: (block_comment | checkpoint_tag | obliviate_tag | system_tag | header_tag | user_tag | assistant_tag | include_tag | single_completion | placeholder | templatetag | markdown)*
+start: (block_comment | checkpoint_tag | obliviate_tag | system_tag | header_tag | user_tag | assistant_tag | include_tag | together_open_tag | together_close_tag | single_completion | placeholder | templatetag | markdown)*
 
 // HTML comments (dropped from LLM prompt)
 block_comment: BLOCK_COMMENT_START BLOCK_COMMENT_CONTENT? BLOCK_COMMENT_END
@@ -60,6 +60,15 @@ include_tag: "<include" _WHITESPACE "src=" INCLUDE_SRC _WHITESPACE? "/>"
 
 INCLUDE_SRC: /"[^"]*"/ | /'[^']*'/
 
+// Together tags: markers for parallel slot groups
+// Slots inside <together>...</together> are evaluated simultaneously
+// and don't see each other's results (context isolation)
+together_open_tag: TOGETHER_OPEN
+together_close_tag: TOGETHER_CLOSE
+
+TOGETHER_OPEN.2: /<together\s*>/
+TOGETHER_CLOSE.2: /<\/together>/
+
 // Content terminals for tags (must match at least 1 character to avoid zero-width issues)
 // Negative lookahead (?!\[\[) prevents completion slots [[...]] inside these tags
 SYSTEM_CONTENT: /(?:(?!\[\[)[\s\S])+?(?=<\/system>)/
@@ -70,7 +79,7 @@ ASSISTANT_CONTENT: /(?:(?!\[\[)[\s\S])+?(?=<\/assistant>)/
 // Markdown: everything else (with negative lookahead to exclude our syntax)
 // Matches anything that's NOT our special tags, completions, or variables
 // Note: <break> is now handled as [[@break|msg]] action, so not excluded here
-markdown: /(?:(?!<(?:checkpoint|obliviate|system|header|user|assistant|include|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
+markdown: /(?:(?!<(?:checkpoint|obliviate|system|header|user|assistant|include|together|\/together|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
 
 // Template variables: {{variable}} or {{variable.path}}
 placeholder: "{{" _WHITESPACE? var_path _WHITESPACE? "}}"

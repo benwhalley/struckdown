@@ -46,11 +46,26 @@ from litellm.exceptions import (
 from more_itertools import chunked
 from pydantic import BaseModel, Field
 
+import anyio
+
 from .cache import hash_return_type, memory
 from .errors import StruckdownLLMError
 from .results import get_run_id
 
 logger = logging.getLogger(__name__)
+
+# Shared concurrency control for all LLM calls
+# This limits concurrent API calls across templates AND within together blocks
+MAX_LLM_CONCURRENCY = env_config("SD_MAX_CONCURRENCY", default=20, cast=int)
+_llm_semaphore = None
+
+
+def get_llm_semaphore() -> anyio.Semaphore:
+    """Get the shared LLM concurrency semaphore (lazy initialization)."""
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        _llm_semaphore = anyio.Semaphore(MAX_LLM_CONCURRENCY)
+    return _llm_semaphore
 
 
 # ANSI colour codes for terminal output
@@ -219,6 +234,7 @@ def structured_chat(
         max_tokens: Maximum tokens in response
         extra_kwargs: Additional LLM parameters
     """
+    import time
 
     from struckdown import __version__
 
@@ -232,10 +248,21 @@ def structured_chat(
     elif messages is None:
         raise ValueError("Either prompt or messages must be provided")
 
+    # Extract a hint for logging from the last user message
+    call_hint = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")[:50].replace("\n", " ")
+            call_hint = f" ({content}...)" if len(msg.get("content", "")) > 50 else f" ({content})"
+            break
+
     logger.debug(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
     logger.debug(f"LLM kwargs: {extra_kwargs}")
+
+    start_time = time.monotonic()
+    logger.info(f"{LC.CYAN}LLM CALL START{call_hint}{LC.RESET}")
 
     try:
         res_dict, com_dict = _call_llm_cached(
@@ -254,13 +281,19 @@ def structured_chat(
         res = return_type.model_validate(res_dict)
         com = Box(com_dict)
 
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        was_cached = com.get("_run_id") != get_run_id()
+        cache_status = " (cached)" if was_cached else ""
+        logger.info(f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}")
+
         logger.debug(
             f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
         )
         return res, com
 
     except (EOFError, Exception) as e:
-        logger.warning(f"Cache/LLM error: {e}")
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.warning(f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}")
         raise e
 
 

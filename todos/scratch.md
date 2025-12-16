@@ -1,3 +1,28 @@
+
+
+some rules about pipelines/dags we should enforce
+
+- no loops
+- no [[output]] from reduce nodes
+
+
+- fix naming of analyses in similarity comparison
+
+
+- check unzipping better
+- allow for max_file sizes by-user
+- make credentials per-user
+- allow user to add credentials when starting the run (store in localstorage not the db)
+
+
+
+
+
+
+
+
+
+
 in a future version of struckdown we would like to offer 
 
 

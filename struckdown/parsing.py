@@ -8,6 +8,7 @@ from lark import Lark, Transformer
 from pydantic import ValidationError
 
 from .actions import Actions
+from .jinja_utils import extract_jinja_variables
 from .response_types import ResponseTypes
 from .return_type_models import LLMConfig
 
@@ -237,6 +238,7 @@ PromptPart = namedtuple(
         "block",  # If True, all subsequent segments depend on this completion's segment
         "is_break",  # If True, this is a break tag (early termination)
         "break_message",  # Optional message for break tag
+        "together_group",  # If set, slots with same group ID are evaluated simultaneously
     ],
 )
 
@@ -303,6 +305,10 @@ class MindframeTransformer(Transformer):
 
         # track completions for validating local system tags
         self.completions_in_current_checkpoint = []
+
+        # together group tracking (for parallel slot execution)
+        self.together_group_stack = []  # stack of active group IDs
+        self.together_group_counter = 0  # counter for generating unique group IDs
 
     def _flush_section(self):
         """Flush current section and clear locals"""
@@ -643,6 +649,57 @@ class MindframeTransformer(Transformer):
         })
         return None
 
+    # -------------------------------------------------------------------------
+    # Together tag handlers - parallel slot groups
+    # -------------------------------------------------------------------------
+
+    def together_open_tag(self, items):
+        """Handle <together> - start a parallel group.
+
+        Slots inside <together>...</together> are evaluated simultaneously
+        and don't see each other's results (context isolation).
+        """
+        self.together_group_counter += 1
+        group_id = f"together_{self.together_group_counter}"
+        self.together_group_stack.append(group_id)
+        return None
+
+    def together_close_tag(self, items):
+        """Handle </together> - end current parallel group with validation.
+
+        Validates that no slot inside the group references another slot
+        from the same group (which would be undefined at execution time).
+        """
+        if not self.together_group_stack:
+            raise ValueError("</together> without matching <together>")
+
+        group_id = self.together_group_stack.pop()
+
+        # Validate: check for invalid variable references within the group
+        # Get all slots in this group (from current_parts)
+        group_slot_keys = {
+            key for key, part in self.current_parts
+            if part.together_group == group_id
+        }
+
+        # Check if any slot's prompt text references another slot in the same group
+        for key, part in self.current_parts:
+            if part.together_group == group_id:
+                referenced_vars = extract_jinja_variables(part.text)
+                invalid_refs = referenced_vars & group_slot_keys
+                if invalid_refs:
+                    raise ValueError(
+                        f"Invalid reference in <together> block: {invalid_refs} "
+                        f"cannot be used because slots in a <together> block "
+                        f"are evaluated simultaneously and don't see each other's results."
+                    )
+
+        return None
+
+    def _get_current_together_group(self):
+        """Get current parallel group ID, or None if not in a group."""
+        return self.together_group_stack[-1] if self.together_group_stack else None
+
     def _compute_effective_system(self):
         """Compute effective system prompt = globals + locals."""
         all_parts = self.globals + self.locals
@@ -711,6 +768,7 @@ class MindframeTransformer(Transformer):
             block=block,
             is_break=False,
             break_message=None,
+            together_group=self._get_current_together_group(),
         )
         self.current_parts.append((body["key"], part))
         self.current_buf = []

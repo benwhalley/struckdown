@@ -60,6 +60,8 @@ from .llm import (
     _call_llm_cached,
     enable_api_debug,
     disable_api_debug,
+    get_llm_semaphore,
+    MAX_LLM_CONCURRENCY,
 )
 
 # Re-export from execution module
@@ -118,6 +120,8 @@ async def chatter_async(
        then parsed and executed. Jinja conditionals can react to slot values
        filled within the same segment via delta-based re-rendering.
 
+    Independent segments (no variable dependencies) are processed in parallel.
+
     Args:
         multipart_prompt: Struckdown template string
         model: LLM configuration (default: from environment)
@@ -128,6 +132,10 @@ async def chatter_async(
         include_paths: Additional directories to search for <include> files
         strict_undefined: If True, raise error when template variables not found
     """
+    import asyncio
+    from .segment_processor import extract_system_message, extract_header_message
+    from .parsing import parse_syntax
+
     if model is None:
         model = LLM()
 
@@ -148,7 +156,7 @@ async def chatter_async(
     raw_segments = split_by_checkpoint(resolved_template)
     logger.debug(f"Split into {len(raw_segments)} raw segments")
 
-    # EXECUTION TIME: Process each segment with accumulated context
+    # EXECUTION TIME: Process segments in batches (parallel within each batch)
     final = ChatterResult()
     accumulated_context = context.copy()
 
@@ -157,55 +165,148 @@ async def chatter_async(
     # Track global header messages (persist across checkpoints, sent as user role)
     accumulated_header_globals: List[str] = []
 
+    # Pre-extract system/header messages and analyze each segment
+    segment_data = []
     for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
-        from .segment_processor import extract_system_message, extract_header_message
-
-        # Extract system message from this segment
-        system_template, body_template = extract_system_message(raw_segment_text)
-
-        # Extract header message from this segment
-        header_template, body_template = extract_header_message(body_template)
-
-        # System messages accumulate across segments (globals persist)
-        if system_template:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_system = env.from_string(system_template).render(**accumulated_context)
-            accumulated_globals.append(rendered_system)
-
-        # Header messages accumulate across segments (globals persist, sent as user role)
-        if header_template:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_header = env.from_string(header_template).render(**accumulated_context)
-            accumulated_header_globals.append(rendered_header)
-
-        # Analyze template structure for smart re-rendering
+        system_template, body_after_system = extract_system_message(raw_segment_text)
+        header_template, body_template = extract_header_message(body_after_system)
         analysis = analyze_template(body_template)
+        segment_data.append({
+            "idx": seg_idx,
+            "name": segment_name,
+            "system_template": system_template,
+            "header_template": header_template,
+            "body_template": body_template,
+            "analysis": analysis,
+            "has_slots": len(analysis.slots) > 0,
+        })
+
+    # Build dependency graph from raw segments (only those with slots)
+    # Map: parsed_idx -> raw_idx for segments that have slots
+    slots_by_raw_idx = {}
+    for data in segment_data:
+        if data["has_slots"]:
+            # analysis.slots is a list of SlotDependency namedtuples
+            slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
+
+    # Build dependency graph: which raw segments depend on which others
+    raw_dependencies = {idx: set() for idx in slots_by_raw_idx}
+    for raw_idx, slots in slots_by_raw_idx.items():
+        # Check what variables this segment references
+        body = segment_data[raw_idx]["body_template"]
+        referenced_vars = extract_jinja_variables(body)
+        # Find which earlier segments define those variables
+        for earlier_idx in range(raw_idx):
+            if earlier_idx in slots_by_raw_idx:
+                earlier_slots = slots_by_raw_idx[earlier_idx]
+                if referenced_vars & earlier_slots:
+                    raw_dependencies[raw_idx].add(earlier_idx)
+
+    # Build execution plan from raw segment dependencies
+    def get_raw_execution_plan():
+        remaining = set(raw_dependencies.keys())
+        plan = []
+        while remaining:
+            ready = {
+                idx for idx in remaining
+                if all(dep not in remaining for dep in raw_dependencies[idx])
+            }
+            if not ready and remaining:
+                logger.warning(f"Circular dependency in segments: {remaining}")
+                plan.extend([[idx] for idx in remaining])
+                break
+            plan.append(sorted(ready))
+            remaining -= ready
+        return plan
+
+    execution_plan = get_raw_execution_plan()
+    logger.debug(f"Execution plan (raw indices): {execution_plan}")
+
+    async def process_single_segment(seg_idx: int, ctx_snapshot: dict, globals_snapshot: list, header_globals_snapshot: list):
+        """Process a single segment with the given context snapshot."""
+        data = segment_data[seg_idx]
+        body_template = data["body_template"]
+
+        # Extract and render system/header messages with current context
+        local_globals = globals_snapshot.copy()
+        local_header_globals = header_globals_snapshot.copy()
+
+        if data["system_template"]:
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+            rendered_system = env.from_string(data["system_template"]).render(**ctx_snapshot)
+            local_globals.append(rendered_system)
+
+        if data["header_template"]:
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+            rendered_header = env.from_string(data["header_template"]).render(**ctx_snapshot)
+            local_header_globals.append(rendered_header)
+
         logger.debug(
             f"Segment {seg_idx} analysis: "
-            f"{len(analysis.slots)} slots, triggers={analysis.triggers}"
+            f"{len(data['analysis'].slots)} slots, triggers={data['analysis'].triggers}"
         )
 
-        try:
-            result = await process_segment_with_delta(
-                body_template,
-                accumulated_context,
-                model,
-                credentials,
-                analysis=analysis,
-                global_system_messages=accumulated_globals,
-                global_header_messages=accumulated_header_globals,
-                strict_undefined=strict_undefined,
-                **(extra_kwargs or {}),
-            )
-            final.update(result.results)
+        result = await process_segment_with_delta(
+            body_template,
+            ctx_snapshot.copy(),
+            model,
+            credentials,
+            analysis=data["analysis"],
+            global_system_messages=local_globals,
+            global_header_messages=local_header_globals,
+            strict_undefined=strict_undefined,
+            **(extra_kwargs or {}),
+        )
+        return seg_idx, result, data["system_template"], data["header_template"]
 
-            # Update accumulated context with results for next segment
-            for key, seg_result in result.results.items():
-                escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
-                accumulated_context[key] = escaped_value
+    # Process segments without slots first (they just accumulate system/header messages)
+    for seg_idx, data in enumerate(segment_data):
+        if not data["has_slots"]:
+            if data["system_template"]:
+                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                rendered_system = env.from_string(data["system_template"]).render(**accumulated_context)
+                accumulated_globals.append(rendered_system)
+            if data["header_template"]:
+                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                rendered_header = env.from_string(data["header_template"]).render(**accumulated_context)
+                accumulated_header_globals.append(rendered_header)
+
+    # Process batches according to execution plan
+    for batch in execution_plan:
+        if len(batch) > 1:
+            logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
+
+        tasks = [
+            process_single_segment(
+                seg_idx, accumulated_context, accumulated_globals, accumulated_header_globals
+            )
+            for seg_idx in batch
+        ]
+
+        try:
+            results = await asyncio.gather(*tasks)
+
+            # Process results in segment order for deterministic output
+            for seg_idx, result, sys_tpl, hdr_tpl in sorted(results, key=lambda x: x[0]):
+                final.update(result.results)
+
+                # Accumulate system/header messages
+                if sys_tpl:
+                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                    rendered_system = env.from_string(sys_tpl).render(**accumulated_context)
+                    accumulated_globals.append(rendered_system)
+                if hdr_tpl:
+                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                    rendered_header = env.from_string(hdr_tpl).render(**accumulated_context)
+                    accumulated_header_globals.append(rendered_header)
+
+                # Update context
+                for key, seg_result in result.results.items():
+                    escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
+                    accumulated_context[key] = escaped_value
 
         except Exception as e:
-            logger.error(f"Segment {seg_idx} error: {e}")
+            logger.error(f"Batch {batch} error: {e}")
             raise
 
     logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
@@ -253,7 +354,7 @@ async def chatter_incremental_async(
 
     This is the incremental (generator) version of chatter_async. It yields
     events after each slot completion, allowing consumers to display progress
-    in real-time.
+    in real-time. Independent segments are processed in parallel.
 
     Example:
         async for event in chatter_incremental_async("tell a joke [[joke]]"):
@@ -277,6 +378,9 @@ async def chatter_incremental_async(
         - ProcessingComplete: final event with aggregated ChatterResult
         - ProcessingError: if an error occurs (includes partial results)
     """
+    import asyncio
+    from .segment_processor import extract_system_message, extract_header_message
+
     if model is None:
         model = LLM()
 
@@ -297,7 +401,7 @@ async def chatter_incremental_async(
     raw_segments = split_by_checkpoint(resolved_template)
     logger.debug(f"Split into {len(raw_segments)} raw segments")
 
-    # EXECUTION TIME: Process each segment with accumulated context
+    # EXECUTION TIME: Process segments in batches (parallel within each batch)
     all_results = ChatterResult()
     accumulated_context = context.copy()
 
@@ -306,69 +410,155 @@ async def chatter_incremental_async(
     # Track global header messages (persist across checkpoints, sent as user role)
     accumulated_header_globals: List[str] = []
 
-    seg_idx = 0  # Track for error reporting
+    # Pre-extract system/header messages and analyze each segment
+    segment_data = []
+    for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
+        system_template, body_after_system = extract_system_message(raw_segment_text)
+        header_template, body_template = extract_header_message(body_after_system)
+        analysis = analyze_template(body_template)
+        segment_data.append({
+            "idx": seg_idx,
+            "name": segment_name,
+            "system_template": system_template,
+            "header_template": header_template,
+            "body_template": body_template,
+            "analysis": analysis,
+            "has_slots": len(analysis.slots) > 0,
+        })
 
-    try:
-        for seg_idx, (raw_segment_text, segment_name) in enumerate(raw_segments):
-            from .segment_processor import extract_system_message, extract_header_message
+    # Build dependency graph from raw segments (only those with slots)
+    slots_by_raw_idx = {}
+    for data in segment_data:
+        if data["has_slots"]:
+            slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
 
-            # Extract system message from this segment
-            system_template, body_template = extract_system_message(raw_segment_text)
+    # Build dependency graph
+    raw_dependencies = {idx: set() for idx in slots_by_raw_idx}
+    for raw_idx, slots in slots_by_raw_idx.items():
+        body = segment_data[raw_idx]["body_template"]
+        referenced_vars = extract_jinja_variables(body)
+        for earlier_idx in range(raw_idx):
+            if earlier_idx in slots_by_raw_idx:
+                earlier_slots = slots_by_raw_idx[earlier_idx]
+                if referenced_vars & earlier_slots:
+                    raw_dependencies[raw_idx].add(earlier_idx)
 
-            # Extract header message from this segment
-            header_template, body_template = extract_header_message(body_template)
+    # Build execution plan
+    def get_raw_execution_plan():
+        remaining = set(raw_dependencies.keys())
+        plan = []
+        while remaining:
+            ready = {
+                idx for idx in remaining
+                if all(dep not in remaining for dep in raw_dependencies[idx])
+            }
+            if not ready and remaining:
+                logger.warning(f"Circular dependency in segments: {remaining}")
+                plan.extend([[idx] for idx in remaining])
+                break
+            plan.append(sorted(ready))
+            remaining -= ready
+        return plan
 
-            # System messages accumulate across segments (globals persist)
-            if system_template:
+    execution_plan = get_raw_execution_plan()
+    logger.debug(f"Incremental execution plan (raw indices): {execution_plan}")
+
+    # Process segments without slots first (they just accumulate system/header messages)
+    for seg_idx, data in enumerate(segment_data):
+        if not data["has_slots"]:
+            if data["system_template"]:
                 env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_system = env.from_string(system_template).render(**accumulated_context)
+                rendered_system = env.from_string(data["system_template"]).render(**accumulated_context)
                 accumulated_globals.append(rendered_system)
-
-            # Header messages accumulate across segments (globals persist, sent as user role)
-            if header_template:
+            if data["header_template"]:
                 env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_header = env.from_string(header_template).render(**accumulated_context)
+                rendered_header = env.from_string(data["header_template"]).render(**accumulated_context)
                 accumulated_header_globals.append(rendered_header)
 
-            # Analyze template structure for smart re-rendering
-            analysis = analyze_template(body_template)
-            logger.debug(
-                f"Segment {seg_idx} analysis: "
-                f"{len(analysis.slots)} slots, triggers={analysis.triggers}"
-            )
+    async def process_segment_collect_events(seg_idx: int, ctx_snapshot: dict, globals_snapshot: list, header_globals_snapshot: list):
+        """Process a segment and collect all events."""
+        data = segment_data[seg_idx]
+        body_template = data["body_template"]
 
-            # Yield slot events as they complete
-            async for event in process_segment_with_delta_incremental(
-                body_template,
-                accumulated_context,
-                model,
-                credentials,
-                analysis=analysis,
-                global_system_messages=accumulated_globals,
-                global_header_messages=accumulated_header_globals,
-                segment_index=seg_idx,
-                strict_undefined=strict_undefined,
-                **(extra_kwargs or {}),
-            ):
-                all_results[event.slot_key] = event.result
-                yield event
+        local_globals = globals_snapshot.copy()
+        local_header_globals = header_globals_snapshot.copy()
 
-            # Yield checkpoint event after segment completes
-            yield CheckpointReached(
-                segment_index=seg_idx,
-                segment_name=segment_name,
-                accumulated_results=dict(all_results.results),
-            )
+        if data["system_template"]:
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+            rendered_system = env.from_string(data["system_template"]).render(**ctx_snapshot)
+            local_globals.append(rendered_system)
 
-            # Update accumulated context with results for next segment
-            for key, seg_result in all_results.results.items():
-                escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
-                accumulated_context[key] = escaped_value
+        if data["header_template"]:
+            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+            rendered_header = env.from_string(data["header_template"]).render(**ctx_snapshot)
+            local_header_globals.append(rendered_header)
+
+        events = []
+        async for event in process_segment_with_delta_incremental(
+            body_template,
+            ctx_snapshot.copy(),
+            model,
+            credentials,
+            analysis=data["analysis"],
+            global_system_messages=local_globals,
+            global_header_messages=local_header_globals,
+            segment_index=seg_idx,
+            strict_undefined=strict_undefined,
+            **(extra_kwargs or {}),
+        ):
+            events.append(event)
+
+        return seg_idx, events, data["system_template"], data["header_template"], data["name"]
+
+    try:
+        # Process batches according to execution plan
+        for batch in execution_plan:
+            if len(batch) > 1:
+                logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
+
+            # Launch all segment tasks in parallel
+            tasks = [
+                process_segment_collect_events(
+                    seg_idx, accumulated_context, accumulated_globals, accumulated_header_globals
+                )
+                for seg_idx in batch
+            ]
+
+            # Wait for all tasks to complete
+            results = await asyncio.gather(*tasks)
+
+            # Yield events in segment order for determinism
+            for seg_idx, events, sys_tpl, hdr_tpl, seg_name in sorted(results, key=lambda x: x[0]):
+                for event in events:
+                    all_results[event.slot_key] = event.result
+                    yield event
+
+                # Yield checkpoint event
+                yield CheckpointReached(
+                    segment_index=seg_idx,
+                    segment_name=seg_name,
+                    accumulated_results=dict(all_results.results),
+                )
+
+                # Accumulate system/header messages
+                if sys_tpl:
+                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                    rendered_system = env.from_string(sys_tpl).render(**accumulated_context)
+                    accumulated_globals.append(rendered_system)
+                if hdr_tpl:
+                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+                    rendered_header = env.from_string(hdr_tpl).render(**accumulated_context)
+                    accumulated_header_globals.append(rendered_header)
+
+                # Update context from this segment's results
+                for event in events:
+                    escaped_value, _ = escape_struckdown_syntax(event.result.output, var_name=event.slot_key)
+                    accumulated_context[event.slot_key] = escaped_value
 
     except Exception as e:
-        logger.error(f"Segment {seg_idx} error: {e}")
+        logger.error(f"Incremental processing error: {e}")
         yield ProcessingError(
-            segment_index=seg_idx,
+            segment_index=0,
             slot_key=None,
             error_message=str(e),
             partial_results=all_results,

@@ -1,0 +1,29 @@
+<system>
+You are an experienced academic, keen to help students with their work. Be kind.
+
+</system>
+
+<header>
+# Student work
+
+
+> Prejudice has been studied a lot in psychology because it is seen as something that affects how groups relate to each other in society, but it often feels like a very broad idea that is hard to pin down. Generally, prejudice is about people not liking other people because they are part of a different group, but there is actually more to it than that, and many theorists have talked about it in different ways. The lecture mentioned that prejudice includes things like feelings and beliefs and behaviour, but it can be confusing because these all overlap, and sometimes researchers do not really agree about which part is the most important. In everyday life it just means treating people unfairly, really.
+
+</header>
+
+# Summary
+
+3 line summary: [[summary]]
+
+
+<checkpoint>
+
+# Feedback task
+
+Extract the following information about the student essay:
+
+<together>
+Does it have a clear argument? [[clear_argument]]
+Does it discuss medical ethics? [[med_ethics]]
+Does it have a clear conclusion? [[clear_conclusion]]
+</together>
