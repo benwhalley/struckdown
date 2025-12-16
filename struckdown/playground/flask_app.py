@@ -19,37 +19,89 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import (Flask, Response, jsonify, render_template, request,
+                   stream_with_context)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from litellm.exceptions import (APIConnectionError, AuthenticationError,
+                                ContentPolicyViolationError,
+                                ContextWindowExceededError, RateLimitError,
+                                Timeout)
 from werkzeug.utils import secure_filename
-from litellm.exceptions import (
-    APIConnectionError,
-    AuthenticationError,
-    ContentPolicyViolationError,
-    ContextWindowExceededError,
-    RateLimitError,
-    Timeout,
-)
 
 from . import core, prompt_cache
 
 # Security configuration from environment
 STRUCKDOWN_RATE_LIMIT = os.environ.get("STRUCKDOWN_RATE_LIMIT", "100/hour")
-STRUCKDOWN_UPLOAD_RATE_LIMIT = os.environ.get("STRUCKDOWN_UPLOAD_RATE_LIMIT", "100/minute")
-STRUCKDOWN_PROMPT_RATE_LIMIT = os.environ.get("STRUCKDOWN_PROMPT_RATE_LIMIT", "20/minute")
-STRUCKDOWN_MAX_SYNTAX_LENGTH = int(os.environ.get("STRUCKDOWN_MAX_SYNTAX_LENGTH", "1000000"))
-STRUCKDOWN_MAX_UPLOAD_SIZE = int(os.environ.get("STRUCKDOWN_MAX_UPLOAD_SIZE", "5242880"))  # 5MB
-STRUCKDOWN_ZIP_MAX_SIZE = int(os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800"))  # 50MB
+STRUCKDOWN_UPLOAD_RATE_LIMIT = os.environ.get(
+    "STRUCKDOWN_UPLOAD_RATE_LIMIT", "100/minute"
+)
+STRUCKDOWN_PROMPT_RATE_LIMIT = os.environ.get(
+    "STRUCKDOWN_PROMPT_RATE_LIMIT", "20/minute"
+)
+STRUCKDOWN_MAX_SYNTAX_LENGTH = int(
+    os.environ.get("STRUCKDOWN_MAX_SYNTAX_LENGTH", "1000000")
+)
+STRUCKDOWN_MAX_UPLOAD_SIZE = int(
+    os.environ.get("STRUCKDOWN_MAX_UPLOAD_SIZE", "5242880")
+)  # 5MB
+STRUCKDOWN_ZIP_MAX_SIZE = int(
+    os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800")
+)  # 50MB
 STRUCKDOWN_ZIP_MAX_FILES = int(os.environ.get("STRUCKDOWN_ZIP_MAX_FILES", "500"))
-STRUCKDOWN_BATCH_TIMEOUT = int(os.environ.get("STRUCKDOWN_BATCH_TIMEOUT", "300"))  # 5 minutes
+STRUCKDOWN_BATCH_TIMEOUT = int(
+    os.environ.get("STRUCKDOWN_BATCH_TIMEOUT", "300")
+)  # 5 minutes
 # Threshold for spooling to disk (files smaller than this stay in memory)
-STRUCKDOWN_SPOOL_THRESHOLD = int(os.environ.get("STRUCKDOWN_SPOOL_THRESHOLD", "1048576"))  # 1MB
+STRUCKDOWN_SPOOL_THRESHOLD = int(
+    os.environ.get("STRUCKDOWN_SPOOL_THRESHOLD", "1048576")
+)  # 1MB
 
 # Allowed file extensions
 ALLOWED_BATCH_EXTENSIONS = {".xlsx", ".csv", ".zip"}
 # Binary file types that should be rejected for source upload
-BINARY_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".exe", ".dll", ".so", ".dylib", ".bin", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg", ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flv", ".ogg", ".woff", ".woff2", ".ttf", ".otf", ".eot"}
+BINARY_EXTENSIONS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".7z",
+    ".rar",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".bin",
+    ".dat",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".webp",
+    ".svg",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".avi",
+    ".mov",
+    ".mkv",
+    ".flv",
+    ".ogg",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",
+}
 
 
 def safe_error_message(e: Exception, remote_mode: bool) -> str:
@@ -68,7 +120,9 @@ def safe_error_message(e: Exception, remote_mode: bool) -> str:
     elif isinstance(e, RateLimitError):
         return "Rate limited by API provider. Please try again later."
     elif isinstance(e, ContextWindowExceededError):
-        return "Prompt too long for this model. Try a shorter prompt or different model."
+        return (
+            "Prompt too long for this model. Try a shorter prompt or different model."
+        )
     elif isinstance(e, ContentPolicyViolationError):
         return "Content blocked by API provider's content policy."
     elif isinstance(e, (APIConnectionError, Timeout)):
@@ -98,7 +152,9 @@ def sanitise_error_string(error_str: str, remote_mode: bool) -> str:
     elif "ratelimit" in error_lower:
         return "Rate limited by API provider. Please try again later."
     elif "context" in error_lower and "exceed" in error_lower:
-        return "Prompt too long for this model. Try a shorter prompt or different model."
+        return (
+            "Prompt too long for this model. Try a shorter prompt or different model."
+        )
     elif "content" in error_lower and "policy" in error_lower:
         return "Content blocked by API provider's content policy."
     elif "connection" in error_lower or "timeout" in error_lower:
@@ -137,7 +193,9 @@ def find_available_port(start: int = 9000, max_attempts: int = 100) -> int:
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"No available port found in range {start}-{start + max_attempts - 1}")
+    raise RuntimeError(
+        f"No available port found in range {start}-{start + max_attempts - 1}"
+    )
 
 
 def get_random_placeholder() -> str:
@@ -197,7 +255,7 @@ def _cleanup_old_files():
     _last_cleanup = now
 
     # Import here to avoid circular imports
-    from . import upload_cache, task_cache
+    from . import task_cache, upload_cache
 
     # Clean up upload cache (handles expiry and size limits)
     upload_cache.cleanup_cache()
@@ -227,7 +285,7 @@ def create_app(
         allowed_models: Optional list of allowed model names. If provided,
                         the UI shows a dropdown instead of free text input.
     """
-    from . import upload_cache, task_cache
+    from . import task_cache, upload_cache
 
     app = Flask(
         __name__,
@@ -258,7 +316,8 @@ def create_app(
     if not remote_mode and include_paths:
         try:
             from struckdown.actions import discover_actions, load_actions
-            from struckdown.type_loader import discover_yaml_types, load_yaml_types
+            from struckdown.type_loader import (discover_yaml_types,
+                                                load_yaml_types)
 
             search_paths = include_paths + [Path.cwd()]
             action_files = discover_actions(search_paths)
@@ -298,7 +357,9 @@ def create_app(
             # Get path relative to workspace
             if workspace_dir:
                 try:
-                    current_file_path = str(prompt_file.resolve().relative_to(workspace_dir.resolve()))
+                    current_file_path = str(
+                        prompt_file.resolve().relative_to(workspace_dir.resolve())
+                    )
                 except ValueError:
                     current_file_path = prompt_file.name
             else:
@@ -413,14 +474,18 @@ def create_app(
         files = []
         for sd_file in sorted(workspace.rglob("*.sd")):
             # Skip hidden files/directories
-            if any(part.startswith(".") for part in sd_file.relative_to(workspace).parts):
+            if any(
+                part.startswith(".") for part in sd_file.relative_to(workspace).parts
+            ):
                 continue
             rel_path = str(sd_file.relative_to(workspace))
-            files.append({
-                "path": rel_path,
-                "name": sd_file.name,
-                "mtime": sd_file.stat().st_mtime,
-            })
+            files.append(
+                {
+                    "path": rel_path,
+                    "name": sd_file.name,
+                    "mtime": sd_file.stat().st_mtime,
+                }
+            )
 
         return jsonify({"files": files, "workspace": str(workspace)})
 
@@ -453,11 +518,13 @@ def create_app(
         if not file_path.exists():
             return jsonify({"error": "File not found"}), 404
 
-        return jsonify({
-            "content": file_path.read_text(),
-            "mtime": file_path.stat().st_mtime,
-            "path": filepath
-        })
+        return jsonify(
+            {
+                "content": file_path.read_text(),
+                "mtime": file_path.stat().st_mtime,
+                "path": filepath,
+            }
+        )
 
     @app.route("/api/files/<path:filepath>", methods=["POST"])
     def save_file(filepath: str):
@@ -476,10 +543,7 @@ def create_app(
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(syntax)
 
-        return jsonify({
-            "success": True,
-            "mtime": file_path.stat().st_mtime
-        })
+        return jsonify({"success": True, "mtime": file_path.stat().st_mtime})
 
     @app.route("/api/files/new", methods=["POST"])
     def create_file():
@@ -511,13 +575,13 @@ def create_app(
 
         # Create with default content
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text("# LLM Instructions\n\nUse markdown-style syntax (see the help tab for details) \n\n[[response]]\n")
+        file_path.write_text(
+            "# LLM Instructions\n\nUse markdown-style syntax (see the help tab for details) \n\n[[response]]\n"
+        )
 
-        return jsonify({
-            "success": True,
-            "path": filename,
-            "mtime": file_path.stat().st_mtime
-        })
+        return jsonify(
+            {"success": True, "path": filename, "mtime": file_path.stat().st_mtime}
+        )
 
     @app.route("/api/analyse", methods=["POST"])
     def analyse():
@@ -534,18 +598,21 @@ def create_app(
         # Check for @history usage
         uses_history = core.uses_history_action(syntax)
 
-        return jsonify({
-            "valid": validation["valid"],
-            "error": validation["error"],
-            "inputs_required": extraction["inputs_required"],
-            "slots_defined": extraction["slots_defined"],
-            "uses_history": uses_history,
-        })
+        return jsonify(
+            {
+                "valid": validation["valid"],
+                "error": validation["error"],
+                "inputs_required": extraction["inputs_required"],
+                "slots_defined": extraction["slots_defined"],
+                "uses_history": uses_history,
+            }
+        )
 
     @app.route("/api/run", methods=["POST"])
     def run():
         """Execute template with inputs."""
         import anyio
+
         from struckdown import LLMCredentials
         from struckdown.errors import StruckdownLLMError
 
@@ -557,21 +624,31 @@ def create_app(
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
-            return jsonify({
-                "error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})",
-                "outputs": {},
-                "cost": None
-            }), 400
+            return (
+                jsonify(
+                    {
+                        "error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})",
+                        "outputs": {},
+                        "cost": None,
+                    }
+                ),
+                400,
+            )
 
         # Check for disallowed actions in remote mode
         if remote_mode:
             disallowed = core.check_disallowed_actions(syntax)
             if disallowed:
-                return jsonify({
-                    "error": f"Actions not allowed in remote mode: {', '.join(disallowed)}",
-                    "outputs": {},
-                    "cost": None
-                }), 400
+                return (
+                    jsonify(
+                        {
+                            "error": f"Actions not allowed in remote mode: {', '.join(disallowed)}",
+                            "outputs": {},
+                            "cost": None,
+                        }
+                    ),
+                    400,
+                )
 
         # Determine credentials
         credentials = None
@@ -587,18 +664,28 @@ def create_app(
                 # User must provide both api_key and api_base, or api_base from env
                 api_base = user_api_base or os.environ.get("LLM_API_BASE")
                 if not api_base:
-                    return jsonify({
-                        "error": "API base URL required. Set it in Settings or contact the administrator.",
-                        "outputs": {},
-                        "cost": None
-                    }), 400
+                    return (
+                        jsonify(
+                            {
+                                "error": "API base URL required. Set it in Settings or contact the administrator.",
+                                "outputs": {},
+                                "cost": None,
+                            }
+                        ),
+                        400,
+                    )
                 credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
             else:
-                return jsonify({
-                    "error": "API key required. Enter your API key in Settings.",
-                    "outputs": {},
-                    "cost": None
-                }), 400
+                return (
+                    jsonify(
+                        {
+                            "error": "API key required. Enter your API key in Settings.",
+                            "outputs": {},
+                            "cost": None,
+                        }
+                    ),
+                    400,
+                )
         # In local mode, credentials=None will use environment variables
 
         async def execute():
@@ -640,6 +727,7 @@ def create_app(
         - error: processing error
         """
         import asyncio
+
         from struckdown import LLMCredentials, chatter_incremental_async
 
         data = get_json_safe()
@@ -650,8 +738,10 @@ def create_app(
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
+
             def error_gen():
                 yield f'event: error\ndata: {json.dumps({"error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"})}\n\n'
+
             return Response(
                 stream_with_context(error_gen()),
                 mimetype="text/event-stream",
@@ -662,8 +752,10 @@ def create_app(
         if remote_mode:
             disallowed = core.check_disallowed_actions(syntax)
             if disallowed:
+
                 def error_gen():
                     yield f'event: error\ndata: {json.dumps({"error": f"Actions not allowed in remote mode: {", ".join(disallowed)}"})}\n\n'
+
                 return Response(
                     stream_with_context(error_gen()),
                     mimetype="text/event-stream",
@@ -681,17 +773,24 @@ def create_app(
             elif user_api_key:
                 api_base = user_api_base or os.environ.get("LLM_API_BASE")
                 if not api_base:
+
                     def error_gen():
                         yield f'event: error\ndata: {json.dumps({"error": "API base URL required."})}\n\n'
+
                     return Response(
                         stream_with_context(error_gen()),
                         mimetype="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "X-Accel-Buffering": "no",
+                        },
                     )
                 credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
             else:
+
                 def error_gen():
                     yield f'event: error\ndata: {json.dumps({"error": "API key required."})}\n\n'
+
                 return Response(
                     stream_with_context(error_gen()),
                     mimetype="text/event-stream",
@@ -716,7 +815,8 @@ def create_app(
                         yield event
                 except Exception as e:
                     # Yield error event
-                    from struckdown import ProcessingError, ChatterResult
+                    from struckdown import ChatterResult, ProcessingError
+
                     yield ProcessingError(
                         segment_index=0,
                         slot_key=None,
@@ -763,6 +863,7 @@ def create_app(
         - error: processing error
         """
         import asyncio
+
         from struckdown import LLMCredentials, chatter_incremental_async
 
         data = get_json_safe()
@@ -774,8 +875,10 @@ def create_app(
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
+
             def error_gen():
                 yield f'event: error\ndata: {json.dumps({"error_message": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"})}\n\n'
+
             return Response(
                 stream_with_context(error_gen()),
                 mimetype="text/event-stream",
@@ -786,8 +889,10 @@ def create_app(
         if remote_mode:
             disallowed = core.check_disallowed_actions(syntax)
             if disallowed:
+
                 def error_gen():
                     yield f'event: error\ndata: {json.dumps({"error_message": f"Actions not allowed in remote mode: {", ".join(disallowed)}"})}\n\n'
+
                 return Response(
                     stream_with_context(error_gen()),
                     mimetype="text/event-stream",
@@ -805,17 +910,24 @@ def create_app(
             elif user_api_key:
                 api_base = user_api_base or os.environ.get("LLM_API_BASE")
                 if not api_base:
+
                     def error_gen():
                         yield f'event: error\ndata: {json.dumps({"error_message": "API base URL required."})}\n\n'
+
                     return Response(
                         stream_with_context(error_gen()),
                         mimetype="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "X-Accel-Buffering": "no",
+                        },
                     )
                 credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
             else:
+
                 def error_gen():
                     yield f'event: error\ndata: {json.dumps({"error_message": "API key required."})}\n\n'
+
                 return Response(
                     stream_with_context(error_gen()),
                     mimetype="text/event-stream",
@@ -845,7 +957,8 @@ def create_app(
                         yield event
                 except Exception as e:
                     # Yield error event
-                    from struckdown import ProcessingError, ChatterResult
+                    from struckdown import ChatterResult, ProcessingError
+
                     yield ProcessingError(
                         segment_index=0,
                         slot_key=None,
@@ -911,13 +1024,14 @@ def create_app(
                 # Single xlsx/csv/zip: use existing parsing logic
                 try:
                     with tempfile.SpooledTemporaryFile(
-                        max_size=STRUCKDOWN_SPOOL_THRESHOLD,
-                        suffix=suffix
+                        max_size=STRUCKDOWN_SPOOL_THRESHOLD, suffix=suffix
                     ) as spooled:
                         file.save(spooled)
                         spooled.seek(0)
 
-                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                        with tempfile.NamedTemporaryFile(
+                            suffix=suffix, delete=False
+                        ) as tmp:
                             tmp.write(spooled.read())
                             tmp_path = Path(tmp.name)
 
@@ -926,19 +1040,24 @@ def create_app(
                         finally:
                             tmp_path.unlink(missing_ok=True)
 
-                    upload_cache.store_upload(file_id, {
-                        "type": "batch",
-                        "filename": file.filename,
-                        "data": data,
-                    })
+                    upload_cache.store_upload(
+                        file_id,
+                        {
+                            "type": "batch",
+                            "filename": file.filename,
+                            "data": data,
+                        },
+                    )
 
-                    return jsonify({
-                        "file_id": file_id,
-                        "filename": file.filename,
-                        "row_count": data["row_count"],
-                        "columns": data["columns"],
-                        "preview": data["rows"][:5],
-                    })
+                    return jsonify(
+                        {
+                            "file_id": file_id,
+                            "filename": file.filename,
+                            "row_count": data["row_count"],
+                            "columns": data["columns"],
+                            "preview": data["rows"][:5],
+                        }
+                    )
                 except Exception as e:
                     error_msg = safe_error_message(e, remote_mode)
                     return jsonify({"error": error_msg}), 400
@@ -947,7 +1066,14 @@ def create_app(
         # Each file becomes a row with 'source' and 'filename' columns (like zip handling)
         try:
             if len(files) > STRUCKDOWN_ZIP_MAX_FILES:
-                return jsonify({"error": f"Too many files. Maximum is {STRUCKDOWN_ZIP_MAX_FILES}."}), 400
+                return (
+                    jsonify(
+                        {
+                            "error": f"Too many files. Maximum is {STRUCKDOWN_ZIP_MAX_FILES}."
+                        }
+                    ),
+                    400,
+                )
 
             rows = []
             total_size = 0
@@ -967,7 +1093,14 @@ def create_app(
                 total_size += len(content)
 
                 if total_size > STRUCKDOWN_ZIP_MAX_SIZE:
-                    return jsonify({"error": f"Total file size exceeds {STRUCKDOWN_ZIP_MAX_SIZE // (1024*1024)}MB limit."}), 400
+                    return (
+                        jsonify(
+                            {
+                                "error": f"Total file size exceeds {STRUCKDOWN_ZIP_MAX_SIZE // (1024*1024)}MB limit."
+                            }
+                        ),
+                        400,
+                    )
 
                 # Decode as UTF-8 with replacement for invalid chars
                 try:
@@ -979,7 +1112,14 @@ def create_app(
 
             if not rows:
                 if skipped_binary:
-                    return jsonify({"error": f"All files were binary and skipped: {', '.join(skipped_binary)}"}), 400
+                    return (
+                        jsonify(
+                            {
+                                "error": f"All files were binary and skipped: {', '.join(skipped_binary)}"
+                            }
+                        ),
+                        400,
+                    )
                 return jsonify({"error": "No valid files to process"}), 400
 
             data = {
@@ -989,13 +1129,18 @@ def create_app(
             }
 
             # Determine display name
-            display_name = f"{len(files)} files" if len(files) > 1 else files[0].filename
+            display_name = (
+                f"{len(files)} files" if len(files) > 1 else files[0].filename
+            )
 
-            upload_cache.store_upload(file_id, {
-                "type": "batch",
-                "filename": display_name,
-                "data": data,
-            })
+            upload_cache.store_upload(
+                file_id,
+                {
+                    "type": "batch",
+                    "filename": display_name,
+                    "data": data,
+                },
+            )
 
             response_data = {
                 "file_id": file_id,
@@ -1006,7 +1151,9 @@ def create_app(
             }
 
             if skipped_binary:
-                response_data["warning"] = f"Skipped binary files: {', '.join(skipped_binary)}"
+                response_data["warning"] = (
+                    f"Skipped binary files: {', '.join(skipped_binary)}"
+                )
 
             return jsonify(response_data)
 
@@ -1037,7 +1184,14 @@ def create_app(
         # Reject binary file types
         suffix = Path(file.filename).suffix.lower()
         if suffix in BINARY_EXTENSIONS:
-            return jsonify({"error": f"Binary file type '{suffix}' not supported. Please upload a text-based file."}), 400
+            return (
+                jsonify(
+                    {
+                        "error": f"Binary file type '{suffix}' not supported. Please upload a text-based file."
+                    }
+                ),
+                400,
+            )
 
         # Generate unique file ID
         file_id = str(uuid.uuid4())
@@ -1050,18 +1204,23 @@ def create_app(
             content = file_bytes.decode("utf-8", errors="replace")
 
             # Store to disk cache
-            upload_cache.store_upload(file_id, {
-                "type": "source",
-                "filename": file.filename,
-                "content": content,
-                "size": file_size,
-            })
+            upload_cache.store_upload(
+                file_id,
+                {
+                    "type": "source",
+                    "filename": file.filename,
+                    "content": content,
+                    "size": file_size,
+                },
+            )
 
-            return jsonify({
-                "file_id": file_id,
-                "filename": file.filename,
-                "size": file_size,
-            })
+            return jsonify(
+                {
+                    "file_id": file_id,
+                    "filename": file.filename,
+                    "size": file_size,
+                }
+            )
         except Exception as e:
             error_msg = safe_error_message(e, remote_mode)
             return jsonify({"error": error_msg}), 400
@@ -1074,6 +1233,7 @@ def create_app(
     def run_file():
         """Execute template with uploaded file as {{source}}."""
         import anyio
+
         from struckdown import LLMCredentials
         from struckdown.errors import StruckdownLLMError
 
@@ -1085,28 +1245,48 @@ def create_app(
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
-            return jsonify({
-                "error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})",
-                "outputs": {},
-                "cost": None
-            }), 400
+            return (
+                jsonify(
+                    {
+                        "error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})",
+                        "outputs": {},
+                        "cost": None,
+                    }
+                ),
+                400,
+            )
 
         # Check for disallowed actions in remote mode
         if remote_mode:
             disallowed = core.check_disallowed_actions(syntax)
             if disallowed:
-                return jsonify({
-                    "error": f"Actions not allowed in remote mode: {', '.join(disallowed)}",
-                    "outputs": {},
-                    "cost": None
-                }), 400
+                return (
+                    jsonify(
+                        {
+                            "error": f"Actions not allowed in remote mode: {', '.join(disallowed)}",
+                            "outputs": {},
+                            "cost": None,
+                        }
+                    ),
+                    400,
+                )
 
         try:
             file_data = upload_cache.get_upload(file_id)
             if file_data.get("type") != "source":
-                return jsonify({"error": "Invalid file type", "outputs": {}, "cost": None}), 400
+                return (
+                    jsonify(
+                        {"error": "Invalid file type", "outputs": {}, "cost": None}
+                    ),
+                    400,
+                )
         except (FileNotFoundError, ValueError):
-            return jsonify({"error": "File not found or expired", "outputs": {}, "cost": None}), 400
+            return (
+                jsonify(
+                    {"error": "File not found or expired", "outputs": {}, "cost": None}
+                ),
+                400,
+            )
 
         # Determine credentials
         credentials = None
@@ -1119,18 +1299,28 @@ def create_app(
             elif user_api_key:
                 api_base = user_api_base or os.environ.get("LLM_API_BASE")
                 if not api_base:
-                    return jsonify({
-                        "error": "API base URL required. Set it in Settings or contact the administrator.",
-                        "outputs": {},
-                        "cost": None
-                    }), 400
+                    return (
+                        jsonify(
+                            {
+                                "error": "API base URL required. Set it in Settings or contact the administrator.",
+                                "outputs": {},
+                                "cost": None,
+                            }
+                        ),
+                        400,
+                    )
                 credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
             else:
-                return jsonify({
-                    "error": "API key required. Enter your API key in Settings.",
-                    "outputs": {},
-                    "cost": None
-                }), 400
+                return (
+                    jsonify(
+                        {
+                            "error": "API key required. Enter your API key in Settings.",
+                            "outputs": {},
+                            "cost": None,
+                        }
+                    ),
+                    400,
+                )
 
         # Inject file content as {{source}}
         inputs = {"source": file_data["content"]}
@@ -1175,13 +1365,27 @@ def create_app(
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
-            return jsonify({"error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"}), 400
+            return (
+                jsonify(
+                    {
+                        "error": f"Syntax too long ({len(syntax)} chars, max {STRUCKDOWN_MAX_SYNTAX_LENGTH})"
+                    }
+                ),
+                400,
+            )
 
         # Check for disallowed actions in remote mode
         if remote_mode:
             disallowed = core.check_disallowed_actions(syntax)
             if disallowed:
-                return jsonify({"error": f"Actions not allowed in remote mode: {', '.join(disallowed)}"}), 400
+                return (
+                    jsonify(
+                        {
+                            "error": f"Actions not allowed in remote mode: {', '.join(disallowed)}"
+                        }
+                    ),
+                    400,
+                )
 
         try:
             file_data = upload_cache.get_upload(file_id)
@@ -1201,26 +1405,39 @@ def create_app(
             elif user_api_key:
                 api_base = user_api_base or os.environ.get("LLM_API_BASE")
                 if not api_base:
-                    return jsonify({
-                        "error": "API base URL required. Set it in Settings or contact the administrator."
-                    }), 400
+                    return (
+                        jsonify(
+                            {
+                                "error": "API base URL required. Set it in Settings or contact the administrator."
+                            }
+                        ),
+                        400,
+                    )
                 credentials = LLMCredentials(api_key=user_api_key, base_url=api_base)
             else:
-                return jsonify({"error": "API key required. Enter your API key in Settings."}), 400
+                return (
+                    jsonify(
+                        {"error": "API key required. Enter your API key in Settings."}
+                    ),
+                    400,
+                )
         # In local mode, credentials=None will use environment variables
 
         rows = file_data["data"]["rows"]
 
         # Create task in file-based cache
         task_id = str(uuid.uuid4())
-        task_cache.create_task(task_id, {
-            "status": "pending",
-            "total": len(rows),
-            "completed": 0,
-            "columns": file_data["data"]["columns"],
-            "results": [],
-            "events": [],
-        })
+        task_cache.create_task(
+            task_id,
+            {
+                "status": "pending",
+                "total": len(rows),
+                "completed": 0,
+                "columns": file_data["data"]["columns"],
+                "results": [],
+                "events": [],
+            },
+        )
 
         # Start background processing with timeout
         def process_batch():
@@ -1242,7 +1459,9 @@ def create_app(
                 # Check timeout on each row completion
                 elapsed = time.time() - start_time
                 if elapsed > STRUCKDOWN_BATCH_TIMEOUT:
-                    raise TimeoutError(f"Batch timeout exceeded ({STRUCKDOWN_BATCH_TIMEOUT}s)")
+                    raise TimeoutError(
+                        f"Batch timeout exceeded ({STRUCKDOWN_BATCH_TIMEOUT}s)"
+                    )
 
             try:
                 # Run with timeout using anyio
@@ -1268,13 +1487,11 @@ def create_app(
                 task_cache.update_task(
                     task_id,
                     status="error",
-                    error=f"Batch processing timed out after {STRUCKDOWN_BATCH_TIMEOUT} seconds"
+                    error=f"Batch processing timed out after {STRUCKDOWN_BATCH_TIMEOUT} seconds",
                 )
             except Exception as e:
                 task_cache.update_task(
-                    task_id,
-                    status="error",
-                    error=safe_error_message(e, remote_mode)
+                    task_id, status="error", error=safe_error_message(e, remote_mode)
                 )
 
         thread = threading.Thread(target=process_batch, daemon=True)
@@ -1342,8 +1559,9 @@ def create_app(
     @app.route("/api/download/<task_id>")
     def download(task_id: str):
         """Download completed batch results as xlsx."""
-        import pandas as pd
         from io import BytesIO
+
+        import pandas as pd
 
         task = task_cache.get_task(task_id)
         if not task:
@@ -1370,7 +1588,9 @@ def create_app(
         return Response(
             output.getvalue(),
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=results_{task_id[:8]}.xlsx"},
+            headers={
+                "Content-Disposition": f"attachment; filename=results_{task_id[:8]}.xlsx"
+            },
         )
 
     @app.route("/api/encode-state", methods=["POST"])

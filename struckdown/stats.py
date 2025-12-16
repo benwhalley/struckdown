@@ -107,12 +107,14 @@ def build_crosstab(
         for pred in labels:
             count = matrix[actual][pred]
             if count > 0:
-                crosstab.append({
-                    column_name: actual,
-                    completion_name: pred,
-                    "count": count,
-                    "match": actual == pred,
-                })
+                crosstab.append(
+                    {
+                        column_name: actual,
+                        completion_name: pred,
+                        "count": count,
+                        "match": actual == pred,
+                    }
+                )
     return crosstab
 
 
@@ -143,7 +145,12 @@ def calculate_f1_metrics(
         recall[label] = tp / (tp + fn) if (tp + fn) > 0 else 0.0
 
         if precision[label] + recall[label] > 0:
-            f1[label] = 2 * precision[label] * recall[label] / (precision[label] + recall[label])
+            f1[label] = (
+                2
+                * precision[label]
+                * recall[label]
+                / (precision[label] + recall[label])
+            )
         else:
             f1[label] = 0.0
 
@@ -181,7 +188,9 @@ def calculate_agreement_metrics(
         (kappa, balanced_accuracy, mutual_information, normalised_mi)
     """
     # convert dict-of-dicts to numpy array
-    C = np.array([[matrix[actual][pred] for pred in labels] for actual in labels], dtype=float)
+    C = np.array(
+        [[matrix[actual][pred] for pred in labels] for actual in labels], dtype=float
+    )
     N = C.sum()
 
     if N == 0:
@@ -195,7 +204,9 @@ def calculate_agreement_metrics(
     p_true = row_sums / N
     p_pred = col_sums / N
     expected_acc = (p_true * p_pred).sum()
-    kappa = (observed_acc - expected_acc) / (1 - expected_acc) if expected_acc < 1 else 1.0
+    kappa = (
+        (observed_acc - expected_acc) / (1 - expected_acc) if expected_acc < 1 else 1.0
+    )
 
     # balanced accuracy (mean per-class recall)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -275,7 +286,9 @@ def calculate_column_stats(
     accuracy = matching_samples / valid_samples
 
     labels, matrix = build_confusion_matrix(gt_values, pred_values)
-    precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(labels, matrix, min_n)
+    precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(
+        labels, matrix, min_n
+    )
     kappa, balanced_acc, mi, nmi = calculate_agreement_metrics(labels, matrix)
     crosstab = build_crosstab(labels, matrix, column_name, completion_name)
 
@@ -341,7 +354,9 @@ def format_stats_table(stats: dict[str, ColumnStats]) -> str:
         if stat.column_name == stat.completion_name:
             lines.append(f"{stat.column_name}")
         else:
-            lines.append(f"{stat.column_name} (column) vs {stat.completion_name} (completion)")
+            lines.append(
+                f"{stat.column_name} (column) vs {stat.completion_name} (completion)"
+            )
         lines.append("-" * len(lines[-1]))
 
         lines.append(f"Samples: {stat.total_samples} ({stat.valid_samples} valid)")
@@ -358,12 +373,26 @@ def format_stats_table(stats: dict[str, ColumnStats]) -> str:
             num_width = value_width + 2
 
             # row header label
-            row_header = f"data ({stat.column_name})" if stat.column_name != stat.completion_name else "actual"
-            col_header = f"predicted ({stat.completion_name})" if stat.column_name != stat.completion_name else "predicted"
+            row_header = (
+                f"data ({stat.column_name})"
+                if stat.column_name != stat.completion_name
+                else "actual"
+            )
+            col_header = (
+                f"predicted ({stat.completion_name})"
+                if stat.column_name != stat.completion_name
+                else "predicted"
+            )
 
             # calculate totals
-            row_totals = {label: sum(stat.confusion_matrix[label].values()) for label in stat.labels}
-            col_totals = {label: sum(stat.confusion_matrix[row][label] for row in stat.labels) for label in stat.labels}
+            row_totals = {
+                label: sum(stat.confusion_matrix[label].values())
+                for label in stat.labels
+            }
+            col_totals = {
+                label: sum(stat.confusion_matrix[row][label] for row in stat.labels)
+                for label in stat.labels
+            }
             grand_total = sum(row_totals.values())
 
             # build table with clear structure
@@ -372,7 +401,10 @@ def format_stats_table(stats: dict[str, ColumnStats]) -> str:
             lines.append(f"  {'':<{value_width}} | {col_header:^{data_width}}")
 
             # Value labels row
-            col_labels = "".join(f"{label:>{num_width}}" for label in stat.labels) + f"{'total':>{num_width}}"
+            col_labels = (
+                "".join(f"{label:>{num_width}}" for label in stat.labels)
+                + f"{'total':>{num_width}}"
+            )
             lines.append(f"  {'':<{value_width}} | {col_labels}")
 
             # separator
@@ -385,12 +417,18 @@ def format_stats_table(stats: dict[str, ColumnStats]) -> str:
                     for pred in stat.labels
                 )
                 row_label = row_header if i == 0 else ""
-                lines.append(f"  {actual:>{value_width}} | {row_data}{row_totals[actual]:>{num_width}}")
+                lines.append(
+                    f"  {actual:>{value_width}} | {row_data}{row_totals[actual]:>{num_width}}"
+                )
 
             # separator and totals
             lines.append(f"  {'-' * value_width}-+-{'-' * data_width}")
-            total_row = "".join(f"{col_totals[label]:>{num_width}}" for label in stat.labels)
-            lines.append(f"  {'total':>{value_width}} | {total_row}{grand_total:>{num_width}}")
+            total_row = "".join(
+                f"{col_totals[label]:>{num_width}}" for label in stat.labels
+            )
+            lines.append(
+                f"  {'total':>{value_width}} | {total_row}{grand_total:>{num_width}}"
+            )
 
             # Show row header label below table
             lines.append(f"  (rows: {row_header})")
@@ -485,7 +523,9 @@ def collect_error_examples(
     return errors
 
 
-def format_error_examples(errors: dict[str, list[dict]], max_field_length: int = 500) -> str:
+def format_error_examples(
+    errors: dict[str, list[dict]], max_field_length: int = 500
+) -> str:
     """Format error examples for terminal display."""
     if not errors:
         return ""

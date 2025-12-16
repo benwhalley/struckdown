@@ -4,6 +4,7 @@ Tests the two-list model (globals + locals) for system prompts.
 """
 
 import unittest
+
 from struckdown.parsing import parse_syntax
 
 
@@ -250,9 +251,7 @@ Make up a cool name? [[name]]"""
         # Section 2: drunken_sailor (with appended system)
         self.assertIn("drunken_sailor", sections[2])
         self.assertEqual(sections[2].segment_name, "Pirate Mode")
-        expected_system = (
-            "You are a kind and helpful therapist.\n\nTalk like a pirate."
-        )
+        expected_system = "You are a kind and helpful therapist.\n\nTalk like a pirate."
         self.assertEqual(sections[2]["drunken_sailor"].system_message, expected_system)
 
         # Section 3: name (system persists from previous)

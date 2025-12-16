@@ -73,7 +73,9 @@ print(f"✓ Duration: {duration1:.3f}s")
 after_first_size = get_cache_size(cache_dir)
 after_first_files = count_cache_files(cache_dir)
 
-print(f"✓ Cache size: {after_first_size:,} bytes (+{after_first_size - initial_size:,})")
+print(
+    f"✓ Cache size: {after_first_size:,} bytes (+{after_first_size - initial_size:,})"
+)
 print(f"✓ Cache files: {after_first_files} (+{after_first_files - initial_files})")
 
 if after_first_size <= initial_size:
@@ -99,7 +101,9 @@ after_second_files = count_cache_files(cache_dir)
 print(
     f"✓ Cache size: {after_second_size:,} bytes (+{after_second_size - after_first_size:,})"
 )
-print(f"✓ Cache files: {after_second_files} (+{after_second_files - after_first_files})")
+print(
+    f"✓ Cache files: {after_second_files} (+{after_second_files - after_first_files})"
+)
 
 # Verify results
 print("\n" + "=" * 70)

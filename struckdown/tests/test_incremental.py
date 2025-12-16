@@ -1,12 +1,7 @@
 """Tests for incremental result yielding."""
 
-from struckdown import (
-    chatter_incremental,
-    CheckpointReached,
-    ProcessingComplete,
-    ProcessingError,
-    SlotCompleted,
-)
+from struckdown import (CheckpointReached, ProcessingComplete, ProcessingError,
+                        SlotCompleted, chatter_incremental)
 
 
 class TestIncrementalEventTypes:
@@ -127,7 +122,9 @@ class TestChatterIncremental:
 
     def test_multiple_slots_yield_in_order(self):
         """Multiple slots yield events in template order."""
-        events = list(chatter_incremental("Say a: [[a]] then say b: [[b]] then say c: [[c]]"))
+        events = list(
+            chatter_incremental("Say a: [[a]] then say b: [[b]] then say c: [[c]]")
+        )
 
         slot_events = [e for e in events if e.type == "slot_completed"]
         slot_keys = [e.slot_key for e in slot_events]

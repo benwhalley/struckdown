@@ -9,14 +9,15 @@ import logging
 import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, Union, get_args, get_origin
+from typing import (Annotated, Any, Literal, Optional, Union, get_args,
+                    get_origin)
 
 import yaml
 from pydantic import Field, create_model
 
-from .validation import ParsedOptions, parse_options
 from .response_types import ResponseTypes
 from .return_type_models import LLMConfig, ResponseModel
+from .validation import ParsedOptions, parse_options
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,9 @@ class YAMLTypeLoader:
                 model._yaml_options = defn["options"]
 
             self._models[type_name] = model
-            logger.debug(f"Built model '{type_name}' with fields: {list(field_defs.keys())}")
+            logger.debug(
+                f"Built model '{type_name}' with fields: {list(field_defs.keys())}"
+            )
 
             return model
 
@@ -483,11 +486,15 @@ class YAMLTypeLoader:
             # rebuild annotation with metadata (constraints like Ge, Le, etc.)
             base_annotation = field_info.annotation
             if field_info.metadata:
-                base_annotation = Annotated[(base_annotation,) + tuple(field_info.metadata)]
+                base_annotation = Annotated[
+                    (base_annotation,) + tuple(field_info.metadata)
+                ]
 
             field_kwargs = {
                 "description": field_info.description,
-                "default": field_info.default if field_info.default is not None else ...,
+                "default": (
+                    field_info.default if field_info.default is not None else ...
+                ),
             }
 
             if field_name in field_mods:
@@ -496,7 +503,9 @@ class YAMLTypeLoader:
 
             new_field_defs[field_name] = (base_annotation, Field(**field_kwargs))
 
-        capitalized_name = type_name[0].upper() + type_name[1:] if type_name else type_name
+        capitalized_name = (
+            type_name[0].upper() + type_name[1:] if type_name else type_name
+        )
 
         constrained_model = create_model(
             f"{capitalized_name}Constrained",
@@ -533,7 +542,9 @@ class YAMLTypeLoader:
             desc = f"Between {min_items} and {max_items}"
 
         description = f"{desc} {type_name} items."
-        capitalized_name = type_name[0].upper() + type_name[1:] if type_name else type_name
+        capitalized_name = (
+            type_name[0].upper() + type_name[1:] if type_name else type_name
+        )
 
         list_model = create_model(
             f"Multi{capitalized_name}Response",
@@ -563,7 +574,9 @@ class YAMLTypeLoader:
             base_annotation = field_info.annotation
             if field_info.metadata:
                 # wrap annotation with its constraints
-                base_annotation = Annotated[(base_annotation,) + tuple(field_info.metadata)]
+                base_annotation = Annotated[
+                    (base_annotation,) + tuple(field_info.metadata)
+                ]
 
             field_kwargs = {"description": field_info.description}
 
@@ -587,7 +600,9 @@ class YAMLTypeLoader:
                     ),
                 )
 
-        capitalized_name = type_name[0].upper() + type_name[1:] if type_name else type_name
+        capitalized_name = (
+            type_name[0].upper() + type_name[1:] if type_name else type_name
+        )
 
         optional_model = create_model(
             f"Optional{capitalized_name}Response",

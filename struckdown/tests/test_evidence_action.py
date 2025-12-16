@@ -13,7 +13,8 @@ import pytest
 
 from struckdown import chatter
 from struckdown.actions import Actions
-from struckdown.actions.evidence import chunk_text, evidence_search, load_evidence_files
+from struckdown.actions.evidence import (chunk_text, evidence_search,
+                                         load_evidence_files)
 
 
 class TestChunkText:
@@ -147,7 +148,9 @@ class TestEvidenceSearch:
         with tempfile.TemporaryDirectory() as tmpdir:
             folder = Path(tmpdir)
             for i in range(5):
-                (folder / f"doc{i}.txt").write_text(f"Document {i} about python programming")
+                (folder / f"doc{i}.txt").write_text(
+                    f"Document {i} about python programming"
+                )
 
             context = {"evidence_folder": str(folder)}
             result = evidence_search(context, query="python programming", n=2)
@@ -160,12 +163,16 @@ class TestEvidenceSearch:
         with tempfile.TemporaryDirectory() as tmpdir:
             folder = Path(tmpdir)
             # BM25 needs at least 3 docs for proper IDF
-            (folder / "anxiety.txt").write_text("treatment approaches for anxiety disorders")
+            (folder / "anxiety.txt").write_text(
+                "treatment approaches for anxiety disorders"
+            )
             (folder / "depression.txt").write_text("managing depression with therapy")
             (folder / "sleep.txt").write_text("improving sleep quality and rest")
 
             context = {"evidence_folder": str(folder)}
-            result = evidence_search(context, query=["anxiety treatment", "depression therapy"], n=3)
+            result = evidence_search(
+                context, query=["anxiety treatment", "depression therapy"], n=3
+            )
 
             # should find content from both topics
             assert len(result) > 0
@@ -219,8 +226,7 @@ class TestEvidenceIntegration:
             folder = Path(tmpdir)
             # avoid punctuation for simple tokenizer
             (folder / "facts.txt").write_text(
-                "the capital of France is Paris "
-                "Paris is known for the Eiffel Tower"
+                "the capital of France is Paris " "Paris is known for the Eiffel Tower"
             )
 
             template = """
@@ -302,7 +308,7 @@ What is the speed of light?
                 # pass _template_path to trigger auto-discovery
                 result = chatter(
                     template,
-                    context={"_template_path": str(template_dir / "prompt.sd")}
+                    context={"_template_path": str(template_dir / "prompt.sd")},
                 )
 
                 # verify LLM was called with evidence in context
@@ -338,8 +344,7 @@ class TestBM25Ranking:
 
             # irrelevant
             (folder / "irrelevant.txt").write_text(
-                "Cooking recipes for pasta and pizza. "
-                "Italian cuisine is delicious."
+                "Cooking recipes for pasta and pizza. " "Italian cuisine is delicious."
             )
 
             context = {"evidence_folder": str(folder)}

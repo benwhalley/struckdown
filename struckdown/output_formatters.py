@@ -58,7 +58,11 @@ def write_csv(data: List[Dict[str, Any]], output_path: Path) -> None:
         # only include original columns that actually exist in output
         existing_orig_cols = [col for col in original_columns if col in all_keys]
         # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
-        new_columns = [k for k in flattened[0].keys() if k not in original_columns and k != "_original_columns"]
+        new_columns = [
+            k
+            for k in flattened[0].keys()
+            if k not in original_columns and k != "_original_columns"
+        ]
         fieldnames = existing_orig_cols + new_columns
     else:
         # default: alphabetical order
@@ -106,7 +110,11 @@ def write_xlsx(data: List[Dict[str, Any]], output_path: Path) -> None:
         # only include original columns that actually exist in output
         existing_orig_cols = [col for col in original_columns if col in all_keys]
         # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
-        new_columns = [k for k in flattened[0].keys() if k not in original_columns and k != "_original_columns"]
+        new_columns = [
+            k
+            for k in flattened[0].keys()
+            if k not in original_columns and k != "_original_columns"
+        ]
         fieldnames = existing_orig_cols + new_columns
     else:
         # default: alphabetical order

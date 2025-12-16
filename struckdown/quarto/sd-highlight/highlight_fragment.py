@@ -8,11 +8,13 @@ from pathlib import Path
 # Inline the minimal highlighting logic to avoid importing struckdown package
 # This only needs lark, which is a lightweight dependency
 
+
 def get_input():
     """Get input from file arg or stdin."""
     if len(sys.argv) > 1:
         return Path(sys.argv[1]).read_text(encoding="utf-8")
     return sys.stdin.read()
+
 
 try:
     from lark import Lark, Token, Tree
@@ -158,7 +160,9 @@ def highlight_struckdown_with_system_blocks(text):
         )
 
         if content.strip():
-            inner_highlighted = _highlight_segment(content, other_spans, block.start + open_end)
+            inner_highlighted = _highlight_segment(
+                content, other_spans, block.start + open_end
+            )
             result.append(f'<span class="sd-system-content">{inner_highlighted}</span>')
         elif content:
             result.append(f'<span class="sd-system-content">{escape(content)}</span>')

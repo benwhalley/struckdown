@@ -12,15 +12,11 @@ Based on conditionals.sd test scenarios:
 import pytest
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from struckdown.jinja_analysis import (
-    analyze_template,
-    extract_variables_from_expression,
-    SlotDependency,
-    TemplateAnalysis,
-)
-from struckdown.segment_processor import render_template
+from struckdown.jinja_analysis import (SlotDependency, TemplateAnalysis,
+                                       analyze_template,
+                                       extract_variables_from_expression)
 from struckdown.parsing import find_slots_with_positions
-
+from struckdown.segment_processor import render_template
 
 # =============================================================================
 # Test Templates (extracted from conditionals.sd)
@@ -83,6 +79,7 @@ No action needed. Comfortable!
 # TestJinjaAnalysis - Pure unit tests for jinja_analysis.py
 # =============================================================================
 
+
 class TestJinjaAnalysis:
     """Test the AST analysis of conditional templates."""
 
@@ -94,11 +91,17 @@ class TestJinjaAnalysis:
         assert analysis.triggers_rerender("sunhot"), "sunhot should trigger re-render"
 
         # mooncold triggers re-render because forestwet depends on it
-        assert analysis.triggers_rerender("mooncold"), "mooncold should trigger re-render"
+        assert analysis.triggers_rerender(
+            "mooncold"
+        ), "mooncold should trigger re-render"
 
         # description is unconditional, forestwet doesn't trigger anything
-        assert not analysis.triggers_rerender("description"), "description shouldn't trigger"
-        assert not analysis.triggers_rerender("forestwet"), "forestwet shouldn't trigger"
+        assert not analysis.triggers_rerender(
+            "description"
+        ), "description shouldn't trigger"
+        assert not analysis.triggers_rerender(
+            "forestwet"
+        ), "forestwet shouldn't trigger"
 
     def test_nested_slot_dependencies(self):
         """Nested slots have correct dependency chains."""
@@ -197,6 +200,7 @@ class TestJinjaAnalysis:
 # =============================================================================
 # TestSlotVisibility - Test slot visibility after Jinja rendering
 # =============================================================================
+
 
 class TestSlotVisibility:
     """Test which slots are visible after Jinja rendering with various contexts."""
@@ -316,6 +320,7 @@ class TestSlotVisibility:
 # TestEdgeCases - Truthiness and edge cases
 # =============================================================================
 
+
 class TestEdgeCases:
     """Test truthiness edge cases and boundary conditions."""
 
@@ -416,6 +421,7 @@ class TestEdgeCases:
 # =============================================================================
 # TestSlotPositionTracking - Test find_slots_with_positions
 # =============================================================================
+
 
 class TestSlotPositionTracking:
     """Test slot position tracking for delta computation."""

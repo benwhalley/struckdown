@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from .validation import parse_options
 from .response_types import ResponseTypes
+from .validation import parse_options
 
 # Standard RTs for template syntax
 

@@ -1,9 +1,12 @@
 """Built-in @fetch action for fetching URLs."""
 
-from . import Actions, fetch_and_parse, is_url, DEFAULT_MAX_CHARS, DEFAULT_TIMEOUT
+from . import (DEFAULT_MAX_CHARS, DEFAULT_TIMEOUT, Actions, fetch_and_parse,
+               is_url)
 
 
-@Actions.register("fetch", on_error="propagate", default_save=True, allow_remote_use=False)
+@Actions.register(
+    "fetch", on_error="propagate", default_save=True, allow_remote_use=False
+)
 def fetch_action(
     context: dict,
     url: str = "",
@@ -40,4 +43,6 @@ def fetch_action(
     if not is_url(url):
         raise ValueError(f"Invalid URL: {url}")
 
-    return fetch_and_parse(url, raw=raw, timeout=timeout, max_chars=max_chars, playwright=playwright)
+    return fetch_and_parse(
+        url, raw=raw, timeout=timeout, max_chars=max_chars, playwright=playwright
+    )

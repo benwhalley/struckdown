@@ -12,20 +12,17 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from .jinja_analysis import (
-    TemplateAnalysis,
-    analyze_template,
-    find_slots_with_positions,
-)
+from .jinja_analysis import (TemplateAnalysis, analyze_template,
+                             find_slots_with_positions)
 from .jinja_utils import SilentUndefined
-from .parsing import parser_with_state, PromptPart
+from .parsing import PromptPart, parser_with_state
 
 logger = logging.getLogger(__name__)
 
 
 def _strip_html_comments(text: str) -> str:
     """Remove HTML comments from text."""
-    return re.sub(r'<!--(.|\n)*?-->', '', text)
+    return re.sub(r"<!--(.|\n)*?-->", "", text)
 
 
 def split_content_by_role(content: str) -> List[Dict[str, str]]:
@@ -45,17 +42,14 @@ def split_content_by_role(content: str) -> List[Dict[str, str]]:
          {"role": "user", "content": "Bye"}]
     """
     # Pattern matches <user>...</user> or <assistant>...</assistant>
-    pattern = re.compile(
-        r'<(user|assistant)>(.*?)</\1>',
-        re.DOTALL | re.IGNORECASE
-    )
+    pattern = re.compile(r"<(user|assistant)>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
 
     messages = []
     last_end = 0
 
     for match in pattern.finditer(content):
         # Add any content before this tag as user
-        before = content[last_end:match.start()].strip()
+        before = content[last_end : match.start()].strip()
         if before:
             messages.append({"role": "user", "content": before})
 
@@ -88,16 +82,16 @@ def extract_system_message(template_str: str) -> Tuple[str, str]:
     clean_template = _strip_html_comments(template_str)
 
     # Pattern to match <system>...</system> blocks
-    pattern = re.compile(r'<system[^>]*>(.*?)</system>', re.DOTALL | re.IGNORECASE)
+    pattern = re.compile(r"<system[^>]*>(.*?)</system>", re.DOTALL | re.IGNORECASE)
 
     system_parts = []
     remaining = clean_template
 
     for match in pattern.finditer(clean_template):
         system_parts.append(match.group(1).strip())
-        remaining = remaining.replace(match.group(0), '', 1)
+        remaining = remaining.replace(match.group(0), "", 1)
 
-    system_message = '\n\n'.join(system_parts) if system_parts else ''
+    system_message = "\n\n".join(system_parts) if system_parts else ""
     return system_message, remaining.strip()
 
 
@@ -114,16 +108,16 @@ def extract_header_message(template_str: str) -> Tuple[str, str]:
     clean_template = _strip_html_comments(template_str)
 
     # Pattern to match <header>...</header> blocks
-    pattern = re.compile(r'<header[^>]*>(.*?)</header>', re.DOTALL | re.IGNORECASE)
+    pattern = re.compile(r"<header[^>]*>(.*?)</header>", re.DOTALL | re.IGNORECASE)
 
     header_parts = []
     remaining = clean_template
 
     for match in pattern.finditer(clean_template):
         header_parts.append(match.group(1).strip())
-        remaining = remaining.replace(match.group(0), '', 1)
+        remaining = remaining.replace(match.group(0), "", 1)
 
-    header_message = '\n\n'.join(header_parts) if header_parts else ''
+    header_message = "\n\n".join(header_parts) if header_parts else ""
     return header_message, remaining.strip()
 
 
@@ -174,6 +168,7 @@ def render_template(
         Rendered string
     """
     from jinja2 import StrictUndefined
+
     undefined_class = StrictUndefined if strict_undefined else SilentUndefined
     env = ImmutableSandboxedEnvironment(undefined=undefined_class)
     template = env.from_string(template_str)
@@ -214,18 +209,21 @@ async def _process_together_group(
     Yields:
         SlotCompleted events for each slot in the group
     """
-    from .results import SegmentResult, get_progress_callback, get_run_id
-    from .incremental import SlotCompleted
-    from .llm import structured_chat
-    from .jinja_utils import escape_struckdown_syntax
-    from struckdown.actions import MessageList
     import anyio
+
+    from struckdown.actions import MessageList
+
+    from .incremental import SlotCompleted
+    from .jinja_utils import escape_struckdown_syntax
+    from .llm import structured_chat
+    from .results import SegmentResult, get_progress_callback, get_run_id
 
     # Find all unfilled slots in this together group
     group_slots = [
         (key, start, end, inner)
         for key, start, end, inner in unfilled_slots
-        if slot_info_map.get(key) and slot_info_map[key].together_group == together_group
+        if slot_info_map.get(key)
+        and slot_info_map[key].together_group == together_group
     ]
 
     if not group_slots:
@@ -234,7 +232,9 @@ async def _process_together_group(
     # Sort by position in the rendered text
     group_slots_sorted = sorted(group_slots, key=lambda x: x[1])
 
-    logger.debug(f"Processing together group {together_group} with {len(group_slots_sorted)} slots")
+    logger.debug(
+        f"Processing together group {together_group} with {len(group_slots_sorted)} slots"
+    )
 
     # Find the start position for content calculation
     # (position after the last filled slot, or 0)
@@ -248,7 +248,7 @@ async def _process_together_group(
 
     # Find the <together> tag position to split shared preamble from slot-specific content
     # The preamble is everything from base_position up to (but not including) <together>
-    together_tag_pos = rendered.find('<together>', base_position)
+    together_tag_pos = rendered.find("<together>", base_position)
     if together_tag_pos == -1:
         # Fallback if tag not found (shouldn't happen, but be safe)
         together_tag_pos = base_position
@@ -257,9 +257,11 @@ async def _process_together_group(
     else:
         shared_preamble = rendered[base_position:together_tag_pos]
         # Find end of <together> tag (position after the tag and any following whitespace)
-        together_tag_end = rendered.find('>', together_tag_pos) + 1
+        together_tag_end = rendered.find(">", together_tag_pos) + 1
         # Skip any whitespace/newline after the tag
-        while together_tag_end < len(rendered) and rendered[together_tag_end] in ' \t\n':
+        while (
+            together_tag_end < len(rendered) and rendered[together_tag_end] in " \t\n"
+        ):
             together_tag_end += 1
         together_content_start = together_tag_end
 
@@ -271,7 +273,7 @@ async def _process_together_group(
         """Process a single slot within the together group."""
         slot_info = slot_info_map[slot_key]
         return_type = slot_info.return_type
-        is_action = slot_info.is_function or hasattr(return_type, '_executor')
+        is_action = slot_info.is_function or hasattr(return_type, "_executor")
 
         # Build messages for this slot: base messages + content before this slot
         slot_messages = messages.copy()
@@ -281,7 +283,7 @@ async def _process_together_group(
 
         start_time = time.monotonic()
 
-        if is_action and hasattr(return_type, '_executor'):
+        if is_action and hasattr(return_type, "_executor"):
             # Execute action function
             logger.debug(f"Together group action: {slot_info.action_type}:{slot_key}")
             res, completion_obj = return_type._executor(
@@ -302,8 +304,18 @@ async def _process_together_group(
             )
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
-        logger.debug(f"Together: COMPLETED LLM call for {slot_key} ({elapsed_ms:.0f}ms)")
-        return slot_key, res, completion_obj, elapsed_ms, slot_info, content_before, slot_messages
+        logger.debug(
+            f"Together: COMPLETED LLM call for {slot_key} ({elapsed_ms:.0f}ms)"
+        )
+        return (
+            slot_key,
+            res,
+            completion_obj,
+            elapsed_ms,
+            slot_info,
+            content_before,
+            slot_messages,
+        )
 
     # Build tasks for parallel execution
     # Each slot gets: shared_preamble + its own question (not other slots' questions)
@@ -320,6 +332,7 @@ async def _process_together_group(
 
     # Execute all slots in parallel, respecting shared LLM concurrency limit
     from .llm import get_llm_semaphore
+
     sem = get_llm_semaphore()
 
     async def run_with_semaphore(task_coro):
@@ -329,8 +342,16 @@ async def _process_together_group(
     results = await asyncio.gather(*[run_with_semaphore(t) for t in tasks])
 
     # Process results and yield events
-    for slot_key, res, completion_obj, elapsed_ms, slot_info, content_before, slot_messages in results:
-        extracted_value = res.response if hasattr(res, 'response') else res
+    for (
+        slot_key,
+        res,
+        completion_obj,
+        elapsed_ms,
+        slot_info,
+        content_before,
+        slot_messages,
+    ) in results:
+        extracted_value = res.response if hasattr(res, "response") else res
 
         # Build segment result
         segment_result = SegmentResult(
@@ -346,7 +367,7 @@ async def _process_together_group(
         # Determine if result was cached
         current_run_id = get_run_id()
         was_cached = False
-        if completion_obj and hasattr(completion_obj, 'get'):
+        if completion_obj and hasattr(completion_obj, "get"):
             was_cached = completion_obj.get("_run_id") != current_run_id
 
         # Yield the event
@@ -402,11 +423,12 @@ async def process_segment_with_delta_incremental(
         SlotCompleted events as each slot is filled
     """
     # Import here to avoid circular imports
-    from .results import SegmentResult, get_progress_callback, get_run_id
-    from .incremental import SlotCompleted
-    from .llm import structured_chat
-    from .jinja_utils import escape_struckdown_syntax
     import anyio
+
+    from .incremental import SlotCompleted
+    from .jinja_utils import escape_struckdown_syntax
+    from .llm import structured_chat
+    from .results import SegmentResult, get_progress_callback, get_run_id
 
     # template_str is the body only (system already extracted by caller)
     body_template = template_str
@@ -488,10 +510,13 @@ async def process_segment_with_delta_incremental(
             needs_rerender = any(
                 analysis.triggers_rerender(k)
                 for k in filled_slots
-                if slot_info_map.get(k) and slot_info_map[k].together_group == together_group
+                if slot_info_map.get(k)
+                and slot_info_map[k].together_group == together_group
             )
             if needs_rerender:
-                rendered = render_template(body_template, accumulated_context, strict_undefined)
+                rendered = render_template(
+                    body_template, accumulated_context, strict_undefined
+                )
                 last_slot_end = 0
 
             continue
@@ -527,12 +552,12 @@ async def process_segment_with_delta_incremental(
         return_type = slot_info.return_type
 
         # Check if this is an action (function call) vs LLM completion
-        is_action = slot_info.is_function or hasattr(return_type, '_executor')
+        is_action = slot_info.is_function or hasattr(return_type, "_executor")
 
         # Track timing
         start_time = time.monotonic()
 
-        if is_action and hasattr(return_type, '_executor'):
+        if is_action and hasattr(return_type, "_executor"):
             # Execute action function
             logger.debug(f"Executing action: {slot_info.action_type}:{slot_key}")
             res, completion_obj = return_type._executor(
@@ -555,7 +580,7 @@ async def process_segment_with_delta_incremental(
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
         # Extract response value
-        extracted_value = res.response if hasattr(res, 'response') else res
+        extracted_value = res.response if hasattr(res, "response") else res
 
         # Import MessageList to check for multi-message returns
         from struckdown.actions import MessageList
@@ -570,7 +595,7 @@ async def process_segment_with_delta_incremental(
         else:
             # Single message - use registered role for actions, "assistant" for LLM
             completion_str = str(extracted_value)
-            action_role = getattr(return_type, '_role', 'assistant')
+            action_role = getattr(return_type, "_role", "assistant")
             messages.append({"role": action_role, "content": completion_str})
 
         # Build result
@@ -587,7 +612,7 @@ async def process_segment_with_delta_incremental(
         # Determine if result was cached
         current_run_id = get_run_id()
         was_cached = False
-        if completion_obj and hasattr(completion_obj, 'get'):
+        if completion_obj and hasattr(completion_obj, "get"):
             was_cached = completion_obj.get("_run_id") != current_run_id
 
         # Yield the event
@@ -615,7 +640,9 @@ async def process_segment_with_delta_incremental(
         # Re-render if this slot triggers conditional changes
         if analysis.triggers_rerender(slot_key):
             logger.debug(f"Slot {slot_key} triggers re-render")
-            rendered = render_template(body_template, accumulated_context, strict_undefined)
+            rendered = render_template(
+                body_template, accumulated_context, strict_undefined
+            )
             # Reset last_slot_end since positions changed
             # Will be recalculated from filled_slots on next iteration
             last_slot_end = 0

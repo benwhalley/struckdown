@@ -7,7 +7,7 @@ enabling smart re-rendering decisions during execution.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import FrozenSet, List, Dict, Tuple
+from typing import Dict, FrozenSet, List, Tuple
 
 from jinja2 import nodes
 from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -18,8 +18,11 @@ from .parsing import SLOT_PATTERN, extract_slot_key, find_slots_with_positions
 @dataclass(frozen=True)
 class SlotDependency:
     """A slot and its conditional dependencies."""
+
     key: str
-    conditions: Tuple[Tuple[FrozenSet[str], bool], ...]  # ((test_vars, must_be_truthy), ...)
+    conditions: Tuple[
+        Tuple[FrozenSet[str], bool], ...
+    ]  # ((test_vars, must_be_truthy), ...)
 
     @property
     def is_conditional(self) -> bool:
@@ -36,6 +39,7 @@ class SlotDependency:
 @dataclass
 class TemplateAnalysis:
     """Result of analyzing a template's structure."""
+
     slots: List[SlotDependency] = field(default_factory=list)
     triggers: Dict[str, List[str]] = field(default_factory=dict)
 
@@ -72,8 +76,8 @@ def extract_variables_from_expression(node: nodes.Node) -> FrozenSet[str]:
         return frozenset()
 
     # Attributes that might contain sub-expressions
-    expr_attrs = ('left', 'right', 'expr', 'node', 'test', 'arg', 'operand')
-    list_attrs = ('args', 'ops', 'items', 'kwargs', 'values', 'keys')
+    expr_attrs = ("left", "right", "expr", "node", "test", "arg", "operand")
+    list_attrs = ("args", "ops", "items", "kwargs", "values", "keys")
 
     result = frozenset()
 
@@ -125,7 +129,9 @@ def analyze_template(template_str: str) -> TemplateAnalysis:
 
     slots: List[SlotDependency] = []
 
-    def walk(node: nodes.Node, conditions: Tuple[Tuple[FrozenSet[str], bool], ...] = ()):
+    def walk(
+        node: nodes.Node, conditions: Tuple[Tuple[FrozenSet[str], bool], ...] = ()
+    ):
         """Recursively walk AST, tracking active conditions."""
 
         if isinstance(node, nodes.TemplateData):
@@ -169,7 +175,7 @@ def analyze_template(template_str: str) -> TemplateAnalysis:
             for child in node.nodes:
                 walk(child, conditions)
 
-        elif hasattr(node, 'body') and isinstance(node.body, list):
+        elif hasattr(node, "body") and isinstance(node.body, list):
             # Generic container - walk children
             for child in node.body:
                 walk(child, conditions)

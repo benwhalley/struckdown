@@ -62,4 +62,6 @@ class ProcessingError(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-IncrementalEvent = Union[SlotCompleted, CheckpointReached, ProcessingComplete, ProcessingError]
+IncrementalEvent = Union[
+    SlotCompleted, CheckpointReached, ProcessingComplete, ProcessingError
+]

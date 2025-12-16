@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 _default_cache_dir = Path("~/.struckdown/prompts").expanduser()
-PROMPT_CACHE_DIR = Path(os.environ.get("STRUCKDOWN_PROMPT_CACHE_DIR", str(_default_cache_dir)))
+PROMPT_CACHE_DIR = Path(
+    os.environ.get("STRUCKDOWN_PROMPT_CACHE_DIR", str(_default_cache_dir))
+)
 
 
 def _ensure_cache_dir() -> None:

@@ -24,7 +24,7 @@ class SegmentDependencyGraph:
         idx = int(segment_id.split("_")[1])
         if idx < len(self.segments):
             segment = self.segments[idx]
-            segment_name = getattr(segment, 'segment_name', None)
+            segment_name = getattr(segment, "segment_name", None)
             if segment_name:
                 return f"{segment_name} ({segment_id})"
         return segment_id
@@ -43,10 +43,17 @@ class SegmentDependencyGraph:
             for prompt_part in segment.values():
                 template_vars.update(extract_jinja_variables(prompt_part.text))
 
-                if hasattr(prompt_part, 'system_message') and prompt_part.system_message:
-                    template_vars.update(extract_jinja_variables(prompt_part.system_message))
+                if (
+                    hasattr(prompt_part, "system_message")
+                    and prompt_part.system_message
+                ):
+                    template_vars.update(
+                        extract_jinja_variables(prompt_part.system_message)
+                    )
 
-                if prompt_part.options and isinstance(prompt_part.options, (list, tuple)):
+                if prompt_part.options and isinstance(
+                    prompt_part.options, (list, tuple)
+                ):
                     for option in prompt_part.options:
                         template_vars.update(extract_jinja_variables(option))
 
@@ -60,8 +67,7 @@ class SegmentDependencyGraph:
         for i, segment in enumerate(self.segments):
             segment_id = f"segment_{i}"
             has_blocking = any(
-                hasattr(part, 'block') and part.block
-                for part in segment.values()
+                hasattr(part, "block") and part.block for part in segment.values()
             )
             if has_blocking:
                 for j in range(i + 1, len(self.segments)):
@@ -85,7 +91,9 @@ class SegmentDependencyGraph:
             }
 
             if not ready and remaining:
-                logging.warning(f"Circular dependency detected in segments: {remaining}")
+                logging.warning(
+                    f"Circular dependency detected in segments: {remaining}"
+                )
                 execution_plan.extend([[seg_id] for seg_id in remaining])
                 break
 

@@ -2,18 +2,11 @@
 
 import pytest
 
-from struckdown.stats import (
-    ColumnStats,
-    build_confusion_matrix,
-    build_crosstab,
-    calculate_batch_stats,
-    calculate_column_stats,
-    calculate_f1_metrics,
-    format_stats_table,
-    normalise_value,
-    parse_compare_spec,
-    stats_to_json,
-)
+from struckdown.stats import (ColumnStats, build_confusion_matrix,
+                              build_crosstab, calculate_batch_stats,
+                              calculate_column_stats, calculate_f1_metrics,
+                              format_stats_table, normalise_value,
+                              parse_compare_spec, stats_to_json)
 
 
 class TestParseCompareSpec:
@@ -148,7 +141,9 @@ class TestCalculateF1Metrics:
         labels = ["m", "f"]
         matrix = {"m": {"m": 5, "f": 0}, "f": {"m": 0, "f": 5}}
 
-        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(labels, matrix)
+        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(
+            labels, matrix
+        )
 
         assert precision["m"] == 1.0
         assert precision["f"] == 1.0
@@ -165,7 +160,9 @@ class TestCalculateF1Metrics:
         # 7 correct f, 3 f predicted as m
         matrix = {"m": {"m": 8, "f": 2}, "f": {"m": 3, "f": 7}}
 
-        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(labels, matrix)
+        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(
+            labels, matrix
+        )
 
         # precision for m: 8 / (8 + 3) = 0.727...
         assert abs(precision["m"] - 8 / 11) < 0.001
@@ -182,7 +179,9 @@ class TestCalculateF1Metrics:
         # everything predicted as 'a'
         matrix = {"a": {"a": 5, "b": 0}, "b": {"a": 5, "b": 0}}
 
-        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(labels, matrix)
+        precision, recall, f1, macro_f1, weighted_f1 = calculate_f1_metrics(
+            labels, matrix
+        )
 
         assert precision["b"] == 0.0  # no predictions of b
         assert recall["b"] == 0.0  # no correct b

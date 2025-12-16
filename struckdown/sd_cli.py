@@ -17,11 +17,11 @@ from rich.console import Console
 from rich.progress import (BarColumn, Progress, SpinnerColumn,
                            TaskProgressColumn, TextColumn, TimeRemainingColumn)
 
-from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, StruckdownLLMError,
-               StruckdownTemplateError, __version__, chatter, chatter_async,
-               progress_tracking)
-from .output_formatters import render_template, write_output
+from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials,
+               StruckdownLLMError, StruckdownTemplateError, __version__,
+               chatter, chatter_async, progress_tracking)
 from .actions import discover_actions, load_actions
+from .output_formatters import render_template, write_output
 from .type_loader import discover_yaml_types, load_yaml_types
 
 app = typer.Typer(help="struckdown: structured conversations with language models")
@@ -33,24 +33,26 @@ def format_parse_error(e: UnexpectedToken | UnexpectedCharacters) -> str:
     """Format Lark parse error with user-friendly message."""
     parts = [f"Error: Parse error at line {e.line}, column {e.column}"]
 
-    if hasattr(e, 'expected') and e.expected:
+    if hasattr(e, "expected") and e.expected:
         parts.append(f"  Expected: {', '.join(sorted(e.expected))}")
 
-    if hasattr(e, 'token'):
+    if hasattr(e, "token"):
         token_type = e.token.type
         token_value = repr(e.token.value)
         # For anonymous tokens, just show the value
-        if token_type.startswith('__ANON'):
+        if token_type.startswith("__ANON"):
             parts.append(f"  Got: {token_value}")
         else:
             parts.append(f"  Got: {token_type} ({token_value})")
-    elif hasattr(e, 'char'):
+    elif hasattr(e, "char"):
         parts.append(f"  Got: {repr(e.char)}")
 
-    return '\n'.join(parts)
+    return "\n".join(parts)
+
 
 # Concurrency settings - use shared semaphore from llm module
-from .llm import get_llm_semaphore, MAX_LLM_CONCURRENCY
+from .llm import MAX_LLM_CONCURRENCY, get_llm_semaphore
+
 MAX_CONCURRENCY = MAX_LLM_CONCURRENCY  # Keep for backward compatibility
 
 
@@ -90,6 +92,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     """
     from jinja2 import FileSystemLoader
     from jinja2.sandbox import ImmutableSandboxedEnvironment
+
     from struckdown import SilentUndefined
     from struckdown.parsing import resolve_includes
 
@@ -99,11 +102,11 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     # Configure search paths (same as chatter)
     search_paths = [
         prompt_file.parent,
-        prompt_file.parent / 'templates',
+        prompt_file.parent / "templates",
         Path.cwd(),
-        Path.cwd() / 'includes',
-        Path.cwd() / 'templates',
-        Path.home() / '.struckdown' / 'includes'
+        Path.cwd() / "includes",
+        Path.cwd() / "templates",
+        Path.home() / ".struckdown" / "includes",
     ]
     search_paths = [p for p in search_paths if p.exists() and p.is_dir()]
 
@@ -117,8 +120,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     # NOTE: We don't use struckdown_finalize here because we're just expanding
     # includes, not substituting variables. The struckdown syntax must remain intact.
     env = ImmutableSandboxedEnvironment(
-        undefined=SilentUndefined,
-        loader=FileSystemLoader(search_paths)
+        undefined=SilentUndefined, loader=FileSystemLoader(search_paths)
     )
     template = env.from_string(template_text)
     # Render with empty context (just expand includes, don't substitute {{vars}})
@@ -156,7 +158,6 @@ def auto_prepend_input(prompt: str) -> str:
         return prompt
 
 
-
 def setup_logging(verbosity: int):
     """Set up logging based on verbosity level.
 
@@ -178,6 +179,7 @@ def setup_logging(verbosity: int):
         format="%(levelname)s: %(message)s",
     )
 
+
 async def _run_chat_incremental(
     prompt_str: str,
     model: "LLM",
@@ -198,7 +200,8 @@ async def _run_chat_incremental(
         3+ (-vvv): all above + response schema
     """
     from . import chatter_incremental_async
-    from .incremental import SlotCompleted, CheckpointReached, ProcessingComplete, ProcessingError
+    from .incremental import (CheckpointReached, ProcessingComplete,
+                              ProcessingError, SlotCompleted)
     from .results import ChatterResult
 
     break_result = None
@@ -219,7 +222,7 @@ async def _run_chat_incremental(
             seg_result = event.result
 
             # Skip break action (handle at end)
-            if seg_result.action == 'break':
+            if seg_result.action == "break":
                 break_result = seg_result
                 continue
 
@@ -230,8 +233,12 @@ async def _run_chat_incremental(
             # -vv and above: show detailed slot header
             if verbose >= 2:
                 typer.echo(f"\n{'='*80}")
-                typer.echo(f"Slot {slot_count}: `{event.slot_key}` (segment {event.segment_index})")
-                typer.echo(f"  Elapsed: {event.elapsed_ms:.0f}ms, Cached: {event.was_cached}")
+                typer.echo(
+                    f"Slot {slot_count}: `{event.slot_key}` (segment {event.segment_index})"
+                )
+                typer.echo(
+                    f"  Elapsed: {event.elapsed_ms:.0f}ms, Cached: {event.was_cached}"
+                )
                 typer.echo("-" * 80)
 
             # -v and above: show messages list
@@ -312,7 +319,7 @@ async def _run_chat_interactive(
     automatically if no --history file is specified.
     """
     from . import chatter_incremental_async, new_run
-    from .incremental import SlotCompleted, ProcessingComplete, ProcessingError
+    from .incremental import ProcessingComplete, ProcessingError, SlotCompleted
 
     # Determine which history file to use
     using_default_history = history_file is None
@@ -442,10 +449,15 @@ def chat(
         None, "-p", "--prompt-file", help="Path to file containing the prompt"
     ),
     source: Optional[str] = typer.Option(
-        None, "-s", "--source", help="Source file or URL to include as {{source}} in the template"
+        None,
+        "-s",
+        "--source",
+        help="Source file or URL to include as {{source}} in the template",
     ),
     raw_source: bool = typer.Option(
-        False, "--raw", help="When source is a URL, fetch raw HTML instead of extracted markdown"
+        False,
+        "--raw",
+        help="When source is a URL, fetch raw HTML instead of extracted markdown",
     ),
     context_vars: Optional[List[str]] = typer.Option(
         None, "-c", "--context", help="Context variable as key=value (can be repeated)"
@@ -540,6 +552,7 @@ def chat(
     # Enable API request logging if requested
     if debug_api:
         from struckdown.llm import enable_api_debug
+
         enable_api_debug()
 
     # load custom types and actions
@@ -598,8 +611,9 @@ def chat(
     # build context from source file/URL and context variables
     context = {}
     if source:
-        from struckdown.actions import is_url, fetch_and_parse
         from urllib.parse import urlparse
+
+        from struckdown.actions import fetch_and_parse, is_url
 
         source_path = Path(source)
         if source_path.exists():
@@ -627,7 +641,7 @@ def chat(
             context["filename"] = source
             # Extract last path component as basename
             path = urlparse(source).path
-            context["basename"] = path.split('/')[-1] if path else "index"
+            context["basename"] = path.split("/")[-1] if path else "index"
         else:
             typer.echo(f"Error: Source not found: {source}", err=True)
             raise typer.Exit(1)
@@ -636,7 +650,9 @@ def chat(
     if context_vars:
         for var in context_vars:
             if "=" not in var:
-                typer.echo(f"Error: Context variable must be key=value format: {var}", err=True)
+                typer.echo(
+                    f"Error: Context variable must be key=value format: {var}", err=True
+                )
                 raise typer.Exit(1)
             key, value = var.split("=", 1)
             context[key.strip()] = value.strip()
@@ -676,8 +692,8 @@ def chat(
 
     # Build include paths: cwd/templates as default, plus any user-provided -I paths
     all_include_paths = []
-    if (Path.cwd() / 'templates').is_dir():
-        all_include_paths.append(Path.cwd() / 'templates')
+    if (Path.cwd() / "templates").is_dir():
+        all_include_paths.append(Path.cwd() / "templates")
     if include_paths:
         all_include_paths.extend(include_paths)
 
@@ -737,13 +753,15 @@ def chat(
     # Show break notice if execution was terminated
     if break_result:
         if verbose:
-            typer.echo("="*80)
+            typer.echo("=" * 80)
             typer.echo("\033[1m⚠ EXECUTION TERMINATED BY BREAK\033[0m")
             if break_result.output:
                 typer.echo(f"\033[1mReason:\033[0m {break_result.output}")
-            typer.echo("="*80 + "\n")
+            typer.echo("=" * 80 + "\n")
         else:
-            typer.echo(f"\n\033[1m⚠ Break:\033[0m {break_result.output or 'execution terminated'}")
+            typer.echo(
+                f"\n\033[1m⚠ Break:\033[0m {break_result.output or 'execution terminated'}"
+            )
 
     if show_context:
         typer.echo("\nFinal context:")
@@ -761,9 +779,7 @@ def chat(
     typer.echo(summary.format_summary(), err=True)
 
 
-def _merge_result_with_input(
-    item: dict, result, keep_inputs: bool
-) -> dict:
+def _merge_result_with_input(item: dict, result, keep_inputs: bool) -> dict:
     """
     Merge input data with completion results, handling column name clashes.
 
@@ -890,7 +906,7 @@ async def batch_async(
                                     if progress_bar is not None:
                                         progress_bar.update(
                                             progress_task,
-                                            description=f"Processing ({api_call_count[0]} API calls)"
+                                            description=f"Processing ({api_call_count[0]} API calls)",
                                         )
 
                                 # Execute chatter_async with progress tracking
@@ -912,7 +928,9 @@ async def batch_async(
                                     chatter_results.append(result)
 
                                 # Merge input data with extracted results
-                                output_item = _merge_result_with_input(item, result, keep_inputs)
+                                output_item = _merge_result_with_input(
+                                    item, result, keep_inputs
+                                )
                                 results[index] = output_item
 
                                 if verbose:
@@ -935,7 +953,7 @@ async def batch_async(
                                     progress_bar.update(
                                         progress_task,
                                         advance=1,
-                                        description=f"Processing ({api_call_count[0]} API calls)"
+                                        description=f"Processing ({api_call_count[0]} API calls)",
                                     )
 
                     tg.start_soon(run_and_store)
@@ -970,7 +988,9 @@ async def batch_async(
                                 chatter_results.append(result)
 
                             # Merge input data with extracted results
-                            output_item = _merge_result_with_input(item, result, keep_inputs)
+                            output_item = _merge_result_with_input(
+                                item, result, keep_inputs
+                            )
                             results[index] = output_item
 
                             if verbose:
@@ -1018,21 +1038,18 @@ async def batch_async(
     stats = None
     error_examples = None
     if compare:
-        from .stats import (
-            calculate_batch_stats,
-            collect_error_examples,
-            format_error_examples,
-            format_stats_table,
-            parse_compare_spec,
-            stats_to_json,
-        )
+        from .stats import (calculate_batch_stats, collect_error_examples,
+                            format_error_examples, format_stats_table,
+                            parse_compare_spec, stats_to_json)
 
         # Get available column names from data
         input_cols = set()
         result_cols = set()
         completion_slots = set()
         if input_data_filtered:
-            input_cols = {k for k in input_data_filtered[0].keys() if not k.startswith("_")}
+            input_cols = {
+                k for k in input_data_filtered[0].keys() if not k.startswith("_")
+            }
         if results:
             result_cols = {k for k in results[0].keys() if not k.startswith("_")}
             # Get completion slots from metadata
@@ -1065,15 +1082,21 @@ async def batch_async(
 
             # Auto-resolve renamed columns due to clashes
             actual_col = f"{col}.data" if f"{col}.data" in input_cols else col
-            actual_comp = f"{comp}.predicted" if f"{comp}.predicted" in result_cols else comp
+            actual_comp = (
+                f"{comp}.predicted" if f"{comp}.predicted" in result_cols else comp
+            )
 
             compare_specs.append((actual_col, actual_comp))
 
-        stats = calculate_batch_stats(input_data_filtered, results, compare_specs, min_n_compare)
+        stats = calculate_batch_stats(
+            input_data_filtered, results, compare_specs, min_n_compare
+        )
 
         # Collect error examples if requested
         if classification_errors is not None:
-            max_examples = None if classification_errors == -1 else classification_errors
+            max_examples = (
+                None if classification_errors == -1 else classification_errors
+            )
             error_examples = collect_error_examples(
                 input_data_filtered, results, compare_specs, max_per_type=max_examples
             )
@@ -1255,7 +1278,9 @@ def batch(
 
     # Validate --statsonly requires --compare
     if statsonly and not compare:
-        typer.echo("Error: --statsonly requires at least one --compare option", err=True)
+        typer.echo(
+            "Error: --statsonly requires at least one --compare option", err=True
+        )
         raise typer.Exit(1)
 
     # Validate template usage
@@ -1380,8 +1405,8 @@ def batch(
 
     # Build include paths: cwd/templates as default, plus any user-provided -I paths
     all_include_paths = []
-    if (Path.cwd() / 'templates').is_dir():
-        all_include_paths.append(Path.cwd() / 'templates')
+    if (Path.cwd() / "templates").is_dir():
+        all_include_paths.append(Path.cwd() / "templates")
     if include_paths:
         all_include_paths.extend(include_paths)
 
@@ -1429,7 +1454,9 @@ def _extract_spreadsheet_rows(path: Path) -> tuple[List[dict], List[str]]:
     if suffix == ".csv":
         df = pd.read_csv(path, keep_default_na=False, na_values=[""])
     elif suffix == ".xlsx":
-        df = pd.read_excel(path, engine="openpyxl", keep_default_na=False, na_values=[""])
+        df = pd.read_excel(
+            path, engine="openpyxl", keep_default_na=False, na_values=[""]
+        )
     else:
         raise ValueError(f"Unsupported spreadsheet format: {suffix}")
 
@@ -1462,10 +1489,12 @@ def _read_input_file(path: Path) -> List[dict]:
         rows, original_columns = _extract_spreadsheet_rows(path)
         result = []
         for idx, row_data in enumerate(rows):
-            result.append({
-                "_original_columns": original_columns,  # track for output ordering
-                **row_data  # unpack all column data (original columns only)
-            })
+            result.append(
+                {
+                    "_original_columns": original_columns,  # track for output ordering
+                    **row_data,  # unpack all column data (original columns only)
+                }
+            )
         return result
 
     elif extension == ".json":
@@ -1547,7 +1576,7 @@ def graph(
     typer.echo(
         f"Analyzed: {len(structure['sections'])} sections, "
         f"{len(structure['all_completions'])} completions",
-        err=True
+        err=True,
     )
 
     # Generate simplified section DAG
@@ -1586,7 +1615,8 @@ def explain(
         sd explain prompt.sd -o plan.html
     """
     from .parsing import parse_syntax
-    from .visualize import analyze_sections, build_execution_plan_data, render_execution_plan
+    from .visualize import (analyze_sections, build_execution_plan_data,
+                            render_execution_plan)
 
     console = Console()
 
@@ -1608,10 +1638,7 @@ def explain(
     structure = analyze_sections(sections)
     console.print("[cyan]Generating summaries of prompts...[/cyan]")
     plan_data = build_execution_plan_data(
-        structure,
-        prompt_name=prompt_file.stem,
-        sections_data=sections,
-        summarize=True
+        structure, prompt_name=prompt_file.stem, sections_data=sections, summarize=True
     )
 
     if output:
@@ -1619,17 +1646,17 @@ def explain(
         ext = output.suffix.lower()
         if ext in [".html", ".htm"]:
             # Render as HTML
-            html_content = render_execution_plan(plan_data, format='html')
+            html_content = render_execution_plan(plan_data, format="html")
             output.write_text(html_content)
             console.print(f"[green]✓[/green] Wrote HTML to [cyan]{output}[/cyan]")
         else:
             # Render as plain text
-            text_content = render_execution_plan(plan_data, format='text')
+            text_content = render_execution_plan(plan_data, format="text")
             output.write_text(text_content)
             console.print(f"[green]✓[/green] Wrote plan to [cyan]{output}[/cyan]")
     else:
         # Print to stdout
-        text_content = render_execution_plan(plan_data, format='text')
+        text_content = render_execution_plan(plan_data, format="text")
         print(text_content)
 
 
@@ -1678,14 +1705,18 @@ def preview(
     """
     import tempfile
     import webbrowser
-    from .highlight import render_preview_html, highlight_struckdown_with_system_blocks
+
+    from .highlight import (highlight_struckdown_with_system_blocks,
+                            render_preview_html)
 
     console = Console()
 
     # handle stdin for fragment mode
     if prompt_file is None:
         if not fragment:
-            console.print("[red]Error: prompt_file required (or use --fragment with stdin)[/red]")
+            console.print(
+                "[red]Error: prompt_file required (or use --fragment with stdin)[/red]"
+            )
             raise typer.Exit(1)
         content = sys.stdin.read()
     else:
@@ -1698,15 +1729,16 @@ def preview(
             content = prompt_file.read_text(encoding="utf-8")
         else:
             from struckdown.parsing import resolve_includes
+
             try:
                 content = prompt_file.read_text(encoding="utf-8")
                 # only resolve <include src="..."/> tags, not Jinja {% include %}
                 search_paths = [
                     prompt_file.parent,
-                    prompt_file.parent / 'templates',
+                    prompt_file.parent / "templates",
                     Path.cwd(),
-                    Path.cwd() / 'includes',
-                    Path.cwd() / 'templates',
+                    Path.cwd() / "includes",
+                    Path.cwd() / "templates",
                 ]
                 search_paths = [p for p in search_paths if p.exists() and p.is_dir()]
                 content = resolve_includes(content, prompt_file.parent, search_paths)
@@ -1721,7 +1753,9 @@ def preview(
         return
 
     # full preview mode
-    html = render_preview_html(content, filename=prompt_file.name if prompt_file else "stdin")
+    html = render_preview_html(
+        content, filename=prompt_file.name if prompt_file else "stdin"
+    )
 
     if output:
         output.write_text(html, encoding="utf-8")
@@ -1729,24 +1763,27 @@ def preview(
     else:
         # write to /tmp (more accessible to sandboxed apps) or system temp
         import platform
-        if platform.system() == 'Darwin':
-            temp_dir = Path('/tmp')
+
+        if platform.system() == "Darwin":
+            temp_dir = Path("/tmp")
         else:
             temp_dir = Path(tempfile.gettempdir())
         temp_path = temp_dir / f'{prompt_file.stem if prompt_file else "preview"}.html'
-        temp_path.write_text(html, encoding='utf-8')
+        temp_path.write_text(html, encoding="utf-8")
 
-        file_url = f'file://{temp_path}'
+        file_url = f"file://{temp_path}"
         webbrowser.open(file_url)
 
         # copy file to clipboard on macOS
         import subprocess
+
         system = platform.system()
-        if system == 'Darwin':
-            subprocess.run([
-                'osascript', '-e',
-                f'set the clipboard to POSIX file "{temp_path}"'
-            ], check=False, capture_output=True)
+        if system == "Darwin":
+            subprocess.run(
+                ["osascript", "-e", f'set the clipboard to POSIX file "{temp_path}"'],
+                check=False,
+                capture_output=True,
+            )
 
         console.print(f"[green]Opened preview in browser[/green]")
         console.print(f"[dim]{temp_path}[/dim]")
@@ -1781,7 +1818,9 @@ def flat(
 
         if output:
             output.write_text(flattened)
-            console.print(f"[green]✓[/green] Wrote flattened template to [cyan]{output}[/cyan]")
+            console.print(
+                f"[green]✓[/green] Wrote flattened template to [cyan]{output}[/cyan]"
+            )
         else:
             # Use print() instead of console.print() to avoid Rich markup interpretation
             # which would strip out [[...]] struckdown completion slots
@@ -1795,28 +1834,31 @@ def flat(
 @app.command()
 def edit(
     path: Optional[Path] = typer.Argument(
-        None,
-        help="File or directory to edit (default: current directory as workspace)"
+        None, help="File or directory to edit (default: current directory as workspace)"
     ),
     port: Optional[int] = typer.Option(
-        None, "-p", "--port",
-        help="Port to run server on (default: auto-select from 9000+)"
+        None,
+        "-p",
+        "--port",
+        help="Port to run server on (default: auto-select from 9000+)",
     ),
     no_browser: bool = typer.Option(
-        False, "--no-browser",
-        help="Don't open browser automatically"
+        False, "--no-browser", help="Don't open browser automatically"
     ),
     include: List[Path] = typer.Option(
-        [], "-I", "--include",
-        help="Additional include paths for actions and types"
+        [], "-I", "--include", help="Additional include paths for actions and types"
     ),
     reload: bool = typer.Option(
-        False, "--reload", "-r",
-        help="Auto-reload server on file changes (development mode)"
+        False,
+        "--reload",
+        "-r",
+        help="Auto-reload server on file changes (development mode)",
     ),
     models: Optional[str] = typer.Option(
-        None, "--models", "-m",
-        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini')"
+        None,
+        "--models",
+        "-m",
+        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini')",
     ),
 ):
     """Open interactive playground for editing struckdown prompts.
@@ -1894,7 +1936,7 @@ def edit(
         console.print("[dim]Auto-reload enabled - watching for file changes[/dim]")
     console.print("[dim]Press Ctrl+C to stop[/dim]")
 
-    if not no_browser and not os.environ.get('WERKZEUG_RUN_MAIN'):
+    if not no_browser and not os.environ.get("WERKZEUG_RUN_MAIN"):
         # Delay browser open slightly to let server start
         # Only open in main process, not in reloader child process
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
@@ -1902,11 +1944,11 @@ def edit(
     # Run Flask app (blocks until Ctrl+C)
     try:
         flask_app.run(
-            host='localhost',
+            host="localhost",
             port=port,
             debug=reload,
             use_reloader=reload,
-            threaded=True
+            threaded=True,
         )
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped[/dim]")
@@ -1914,21 +1956,18 @@ def edit(
 
 @app.command()
 def serve(
-    port: int = typer.Option(
-        8000, "-p", "--port",
-        help="Port to run server on"
-    ),
-    host: str = typer.Option(
-        "0.0.0.0", "-h", "--host",
-        help="Host to bind to"
-    ),
+    port: int = typer.Option(8000, "-p", "--port", help="Port to run server on"),
+    host: str = typer.Option("0.0.0.0", "-h", "--host", help="Host to bind to"),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key",
-        help="Server-side API key (if not set, users must provide their own)"
+        None,
+        "--api-key",
+        help="Server-side API key (if not set, users must provide their own)",
     ),
     models: Optional[str] = typer.Option(
-        None, "--models", "-m",
-        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini'). Falls back to STRUCKDOWN_ALLOWED_MODELS env var."
+        None,
+        "--models",
+        "-m",
+        help="Comma-separated list of allowed models (e.g. 'gpt-4o,gpt-4o-mini'). Falls back to STRUCKDOWN_ALLOWED_MODELS env var.",
     ),
 ):
     """Run playground in remote/server mode for deployment.
@@ -1955,6 +1994,7 @@ def serve(
             "struckdown.playground:create_app(remote_mode=True)"
     """
     import os
+
     from struckdown.playground import create_app
 
     console = Console()

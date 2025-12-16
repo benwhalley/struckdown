@@ -14,11 +14,13 @@ class TestYAMLTypeLoader:
     def test_load_simple_type(self):
         """Load a simple type definition."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: TestType
 fields:
   response: str
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -38,7 +40,8 @@ fields:
     def test_load_type_with_constraints(self):
         """Load a type with field constraints."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: ConstrainedType
 fields:
   age:
@@ -50,7 +53,8 @@ fields:
     type: str
     min_length: 1
     max_length: 100
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -71,14 +75,16 @@ fields:
     def test_load_type_with_optional_field(self):
         """Load a type with optional field."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: OptionalType
 fields:
   required_field: str
   optional_field:
     type: str
     optional: true
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -96,13 +102,15 @@ fields:
     def test_load_type_with_choices(self):
         """Load a type with enumerated choices."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: ChoiceType
 fields:
   color:
     type: str
     choices: [red, green, blue]
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -119,13 +127,15 @@ fields:
     def test_load_type_with_list_field(self):
         """Load a type with list field."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: ListType
 fields:
   items:
     type: list[str]
     description: List of items
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -144,13 +154,15 @@ fields:
     def test_load_type_with_llm_config(self):
         """Load a type with LLM config."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: ConfiguredType
 llm_config:
   temperature: 0.9
 fields:
   response: str
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -170,16 +182,20 @@ fields:
             tmppath = Path(tmpdir)
 
             # create two type files
-            (tmppath / "type1.yaml").write_text("""
+            (tmppath / "type1.yaml").write_text(
+                """
 name: Type1
 fields:
   field1: str
-""")
-            (tmppath / "type2.yaml").write_text("""
+"""
+            )
+            (tmppath / "type2.yaml").write_text(
+                """
 name: Type2
 fields:
   field2: int
-""")
+"""
+            )
 
             loader = YAMLTypeLoader()
             loaded = loader.load_directory(tmppath)
@@ -196,17 +212,21 @@ fields:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            (tmppath / "base.yaml").write_text("""
+            (tmppath / "base.yaml").write_text(
+                """
 name: BaseType
 fields:
   base_field: str
-""")
-            (tmppath / "child.yaml").write_text("""
+"""
+            )
+            (tmppath / "child.yaml").write_text(
+                """
 name: ChildType
 extends: BaseType
 fields:
   child_field: int
-""")
+"""
+            )
 
             loader = YAMLTypeLoader()
             loader.load_directory(tmppath)
@@ -222,17 +242,21 @@ fields:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            (tmppath / "inner.yaml").write_text("""
+            (tmppath / "inner.yaml").write_text(
+                """
 name: Inner
 fields:
   value: str
-""")
-            (tmppath / "outer.yaml").write_text("""
+"""
+            )
+            (tmppath / "outer.yaml").write_text(
+                """
 name: Outer
 fields:
   inner:
     type: Inner
-""")
+"""
+            )
 
             loader = YAMLTypeLoader()
             loader.load_directory(tmppath)
@@ -248,18 +272,22 @@ fields:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            (tmppath / "a.yaml").write_text("""
+            (tmppath / "a.yaml").write_text(
+                """
 name: TypeA
 extends: TypeB
 fields:
   field_a: str
-""")
-            (tmppath / "b.yaml").write_text("""
+"""
+            )
+            (tmppath / "b.yaml").write_text(
+                """
 name: TypeB
 extends: TypeA
 fields:
   field_b: str
-""")
+"""
+            )
 
             loader = YAMLTypeLoader()
             loader.load_directory(tmppath)
@@ -290,10 +318,12 @@ fields:
     def test_missing_name_field(self):
         """Test handling of YAML without name field."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 fields:
   response: str
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -307,7 +337,8 @@ fields:
     def test_clean_str_repr(self):
         """Test that __str__ and __repr__ exclude llm_config."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: CleanReprType
 description: A type for testing clean repr
 llm_config:
@@ -317,7 +348,8 @@ fields:
   age: int
   powers:
     type: list[str]
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -350,11 +382,11 @@ fields:
         finally:
             path.unlink()
 
-
     def test_constraints_preserved_in_optional(self):
         """Test that field constraints are preserved when model is made optional."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: ConstrainedOptional
 fields:
   age:
@@ -365,7 +397,8 @@ fields:
     type: str
     min_length: 2
     max_length: 50
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
@@ -390,13 +423,17 @@ fields:
             age_schema = schema["properties"]["age"]
             assert "anyOf" in age_schema
             # find the non-null type in anyOf
-            int_schema = next(s for s in age_schema["anyOf"] if s.get("type") == "integer")
+            int_schema = next(
+                s for s in age_schema["anyOf"] if s.get("type") == "integer"
+            )
             assert int_schema.get("minimum") == 18
             assert int_schema.get("maximum") == 100
 
             # check string constraints too
             name_schema = schema["properties"]["name"]
-            str_schema = next(s for s in name_schema["anyOf"] if s.get("type") == "string")
+            str_schema = next(
+                s for s in name_schema["anyOf"] if s.get("type") == "string"
+            )
             assert str_schema.get("minLength") == 2
             assert str_schema.get("maxLength") == 50
         finally:
@@ -409,17 +446,20 @@ class TestLoadYamlTypes:
     def test_load_single_file(self):
         """Load types from a single file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: SingleType
 fields:
   response: str
-""")
+"""
+            )
             f.flush()
             path = Path(f.name)
 
         try:
             # reset the global loader
             import struckdown.type_loader as tl
+
             tl._loader = None
 
             registered = load_yaml_types([path])

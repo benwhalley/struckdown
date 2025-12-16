@@ -15,7 +15,8 @@ class StruckdownSafe:
         ...     "trusted_cmd": mark_struckdown_safe("<system>You are helpful</system>")  # Won't be escaped
         ... }
     """
-    __slots__ = ('content',)
+
+    __slots__ = ("content",)
 
     def __init__(self, content: Any):
         self.content = content
@@ -63,8 +64,10 @@ class StruckdownTemplateError(Exception):
                 loc += f":{self.line_number}"
             parts.append(f"  File: {loc}")
         if self.context_variables:
-            parts.append(f"  Context variables: {', '.join(sorted(self.context_variables))}")
-        return '\n'.join(parts)
+            parts.append(
+                f"  Context variables: {', '.join(sorted(self.context_variables))}"
+            )
+        return "\n".join(parts)
 
 
 class StruckdownLLMError(Exception):

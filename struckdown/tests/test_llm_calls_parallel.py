@@ -20,10 +20,44 @@ class ParallelLLMCallsTestCase(unittest.TestCase):
 
         # Create segments with known dependencies
         # Note: Must explicitly set block=False to avoid Mock's default truthy behavior
-        segment1 = OrderedDict([("var1", Mock(text="First variable", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("var2", Mock(text="Second using {{var1}}", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "var1",
+                    Mock(
+                        text="First variable",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "var2",
+                    Mock(
+                        text="Second using {{var1}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
         segment3 = OrderedDict(
-            [("var3", Mock(text="Third using {{var1}} and {{var2}}", block=False, options=None, system_message=None))]
+            [
+                (
+                    "var3",
+                    Mock(
+                        text="Third using {{var1}} and {{var2}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
         )
 
         segments = [segment1, segment2, segment3]
@@ -49,8 +83,32 @@ class ParallelLLMCallsTestCase(unittest.TestCase):
         """Test that independent segments can execute in parallel (plan has them in same batch)"""
 
         # Create independent segments
-        segment1 = OrderedDict([("season", Mock(text="Favorite season", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("city", Mock(text="Favorite city", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "season",
+                    Mock(
+                        text="Favorite season",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "city",
+                    Mock(
+                        text="Favorite city",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment1, segment2]
 
@@ -66,9 +124,45 @@ class ParallelLLMCallsTestCase(unittest.TestCase):
         """Test that dependent segments must execute sequentially"""
 
         # Create dependent segments
-        segment1 = OrderedDict([("season", Mock(text="Favorite season", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("city", Mock(text="Favorite city", block=False, options=None, system_message=None))])
-        segment3 = OrderedDict([("poem", Mock(text="Describe {{city}} in {{season}}", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "season",
+                    Mock(
+                        text="Favorite season",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "city",
+                    Mock(
+                        text="Favorite city",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment3 = OrderedDict(
+            [
+                (
+                    "poem",
+                    Mock(
+                        text="Describe {{city}} in {{season}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment1, segment2, segment3]
 
@@ -88,10 +182,38 @@ class ParallelLLMCallsTestCase(unittest.TestCase):
         # a and b can run in parallel
         # c depends on a
         # d depends on both b and c
-        segment_a = OrderedDict([("a", Mock(text="Task A", block=False, options=None, system_message=None))])
-        segment_b = OrderedDict([("b", Mock(text="Task B", block=False, options=None, system_message=None))])
-        segment_c = OrderedDict([("c", Mock(text="Task C using {{a}}", block=False, options=None, system_message=None))])
-        segment_d = OrderedDict([("d", Mock(text="Task D using {{b}} and {{c}}", block=False, options=None, system_message=None))])
+        segment_a = OrderedDict(
+            [("a", Mock(text="Task A", block=False, options=None, system_message=None))]
+        )
+        segment_b = OrderedDict(
+            [("b", Mock(text="Task B", block=False, options=None, system_message=None))]
+        )
+        segment_c = OrderedDict(
+            [
+                (
+                    "c",
+                    Mock(
+                        text="Task C using {{a}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment_d = OrderedDict(
+            [
+                (
+                    "d",
+                    Mock(
+                        text="Task D using {{b}} and {{c}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment_a, segment_b, segment_c, segment_d]
 

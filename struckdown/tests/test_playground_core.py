@@ -1,16 +1,13 @@
 """Tests for struckdown.playground.core module."""
 
-import pytest
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
-from struckdown.playground.core import (
-    extract_required_inputs,
-    validate_syntax,
-    encode_state,
-    decode_state,
-    load_xlsx_data,
-)
+import pytest
+
+from struckdown.playground.core import (decode_state, encode_state,
+                                        extract_required_inputs,
+                                        load_xlsx_data, validate_syntax)
 
 
 class TestExtractRequiredInputs:
@@ -177,11 +174,12 @@ class TestEncodeDecodeState:
 
     def test_encoded_is_url_safe(self):
         """Encoded state is URL-safe."""
-        syntax = "Test [[slot]] with special chars: <>&\""
+        syntax = 'Test [[slot]] with special chars: <>&"'
         encoded = encode_state(syntax=syntax, model="test", inputs={"a": "b"})
         # URL-safe base64 uses only alphanumeric, -, _, =
         import re
-        assert re.match(r'^[A-Za-z0-9_=-]+$', encoded)
+
+        assert re.match(r"^[A-Za-z0-9_=-]+$", encoded)
 
     def test_compression_works(self):
         """Long repeated content compresses well."""
@@ -193,12 +191,12 @@ class TestEncodeDecodeState:
 
     def test_decompression_bomb_rejected(self):
         """Decompression bombs are rejected to prevent DoS."""
-        import zlib
         import base64
+        import zlib
 
         # Create a payload that decompresses to more than 1MB (the default limit)
         # Highly compressible data: 2MB of repeated 'A' characters
-        large_data = b'A' * (2 * 1024 * 1024)
+        large_data = b"A" * (2 * 1024 * 1024)
         # Wrap in JSON structure to match expected format
         json_payload = b'{"s":"' + large_data + b'","m":"","i":{}}'
         compressed = zlib.compress(json_payload, level=9)
@@ -216,7 +214,7 @@ class TestLoadXlsxData:
 
     def test_load_csv(self):
         """CSV file loads correctly."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
             f.write("name,age\n")
             f.write("Alice,30\n")
             f.write("Bob,25\n")
@@ -237,14 +235,16 @@ class TestLoadXlsxData:
         """XLSX file loads correctly."""
         import pandas as pd
 
-        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             path = Path(f.name)
 
         try:
-            df = pd.DataFrame({
-                "topic": ["cats", "dogs"],
-                "style": ["funny", "serious"],
-            })
+            df = pd.DataFrame(
+                {
+                    "topic": ["cats", "dogs"],
+                    "style": ["funny", "serious"],
+                }
+            )
             df.to_excel(path, index=False)
 
             result = load_xlsx_data(path)
@@ -257,17 +257,19 @@ class TestLoadXlsxData:
 
     def test_handles_nan_values(self):
         """NaN values converted to empty strings."""
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
-        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             path = Path(f.name)
 
         try:
-            df = pd.DataFrame({
-                "name": ["Alice", np.nan, "Charlie"],
-                "value": [1.0, 2.0, np.nan],
-            })
+            df = pd.DataFrame(
+                {
+                    "name": ["Alice", np.nan, "Charlie"],
+                    "value": [1.0, 2.0, np.nan],
+                }
+            )
             df.to_excel(path, index=False)
 
             result = load_xlsx_data(path)

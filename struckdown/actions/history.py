@@ -67,7 +67,9 @@ def history_action(
 
     # Validate first parameter
     if first not in ("assistant_first", "user_first"):
-        raise ValueError(f"first must be 'assistant_first' or 'user_first', got '{first}'")
+        raise ValueError(
+            f"first must be 'assistant_first' or 'user_first', got '{first}'"
+        )
 
     # Validate role filter if provided
     if role is not None and role not in ("user", "assistant", "system"):
@@ -98,7 +100,11 @@ def history_action(
 
         # Build messages with alternating roles
         messages = []
-        roles = ["assistant", "user"] if first == "assistant_first" else ["user", "assistant"]
+        roles = (
+            ["assistant", "user"]
+            if first == "assistant_first"
+            else ["user", "assistant"]
+        )
 
         for i, line in enumerate(lines):
             msg_role = roles[i % 2]

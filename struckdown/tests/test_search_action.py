@@ -2,16 +2,13 @@
 Tests for the @search action using ddgs package.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from struckdown.actions.search import (
-    search_and_fetch,
-    search_action,
-    SearchResult,
-    fetch_page_content,
-    DEFAULT_MAX_TOKENS,
-)
+import pytest
+
+from struckdown.actions.search import (DEFAULT_MAX_TOKENS, SearchResult,
+                                       fetch_page_content, search_action,
+                                       search_and_fetch)
 
 
 class TestSearchResult:
@@ -181,6 +178,7 @@ class TestFetchPageContent:
 # =============================================================================
 # Integration test - requires network (marked for optional running)
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.skip(reason="Requires network access - run manually with -m integration")

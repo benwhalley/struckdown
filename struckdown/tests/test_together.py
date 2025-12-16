@@ -2,11 +2,12 @@
 
 import asyncio
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from struckdown.parsing import parse_syntax
+
 from struckdown.execution import SegmentDependencyGraph
+from struckdown.parsing import parse_syntax
 
 
 class TestTogetherParsing:
@@ -115,7 +116,10 @@ class TestTogetherParsing:
 
         assert sections[0]["is_valid"].together_group is not None
         assert sections[0]["rating"].together_group is not None
-        assert sections[0]["is_valid"].together_group == sections[0]["rating"].together_group
+        assert (
+            sections[0]["is_valid"].together_group
+            == sections[0]["rating"].together_group
+        )
 
     def test_together_preserves_slot_order(self):
         """Slots in <together> maintain their original order."""
@@ -354,7 +358,7 @@ class TestParallelExecutionTiming:
 
     def test_together_slots_start_within_20ms(self):
         """All slots in a together block should start within 20ms of each other."""
-        from struckdown import chatter_async, LLM
+        from struckdown import LLM, chatter_async
 
         # Track when each LLM call starts
         call_times = []
@@ -390,9 +394,10 @@ class TestParallelExecutionTiming:
         """
 
         async def run_test():
-            with patch("struckdown.llm.structured_chat", side_effect=mock_structured_chat):
-                with patch("struckdown.segment_processor.structured_chat", side_effect=mock_structured_chat):
-                    return await chatter_async(template, model=LLM())
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -408,7 +413,7 @@ class TestParallelExecutionTiming:
 
     def test_independent_segments_start_within_20ms(self):
         """Independent checkpoint segments should start within 20ms of each other."""
-        from struckdown import chatter_async, LLM
+        from struckdown import LLM, chatter_async
 
         call_times = []
 
@@ -434,9 +439,10 @@ class TestParallelExecutionTiming:
         """
 
         async def run_test():
-            with patch("struckdown.llm.structured_chat", side_effect=mock_structured_chat):
-                with patch("struckdown.segment_processor.structured_chat", side_effect=mock_structured_chat):
-                    return await chatter_async(template, model=LLM())
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -452,7 +458,7 @@ class TestParallelExecutionTiming:
 
     def test_dependent_segments_run_sequentially(self):
         """Segments with dependencies should NOT start simultaneously."""
-        from struckdown import chatter_async, LLM
+        from struckdown import LLM, chatter_async
 
         call_times = []
 
@@ -476,9 +482,10 @@ class TestParallelExecutionTiming:
         """
 
         async def run_test():
-            with patch("struckdown.llm.structured_chat", side_effect=mock_structured_chat):
-                with patch("struckdown.segment_processor.structured_chat", side_effect=mock_structured_chat):
-                    return await chatter_async(template, model=LLM())
+            with patch(
+                "struckdown.llm.structured_chat", side_effect=mock_structured_chat
+            ):
+                return await chatter_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -486,4 +493,6 @@ class TestParallelExecutionTiming:
 
         # Second call should start AFTER first completes (at least 50ms apart)
         time_diff_ms = (call_times[1] - call_times[0]) * 1000
-        assert time_diff_ms >= 40, f"Dependent segment started too soon: {time_diff_ms:.1f}ms apart"
+        assert (
+            time_diff_ms >= 40
+        ), f"Dependent segment started too soon: {time_diff_ms:.1f}ms apart"

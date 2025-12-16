@@ -1,8 +1,8 @@
+import re
+import warnings
 from collections import OrderedDict, namedtuple
 from importlib.resources import files
 from pathlib import Path
-import re
-import warnings
 
 from lark import Lark, Transformer
 from pydantic import ValidationError
@@ -25,7 +25,7 @@ MAX_LIST_LENGTH = 100
 DEFAULT_RETURN_TYPE = "respond"
 
 # Regex pattern for finding [[...]] slot placeholders
-SLOT_PATTERN = re.compile(r'\[\[([^\]]+)\]\]')
+SLOT_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
 # Mini-grammar for parsing just the inner content of [[...]] slots
 # This is a subset of the main grammar, used for extracting slot keys
@@ -82,17 +82,35 @@ class SlotKeyTransformer(Transformer):
         action_name = str(items[0])
         var_name = str(items[1])
         options = items[2] if len(items) > 2 else []
-        return {"key": var_name, "type": action_name, "is_action": True, "options": options, "auto": False}
+        return {
+            "key": var_name,
+            "type": action_name,
+            "is_action": True,
+            "options": options,
+            "auto": False,
+        }
 
     def action_call_auto_var(self, items):
         action_name = str(items[0])
         options = items[1] if len(items) > 1 else []
-        return {"key": None, "type": action_name, "is_action": True, "options": options, "auto": True}
+        return {
+            "key": None,
+            "type": action_name,
+            "is_action": True,
+            "options": options,
+            "auto": True,
+        }
 
     def action_call_no_var(self, items):
         action_name = str(items[0])
         options = items[1] if len(items) > 1 else []
-        return {"key": action_name, "type": action_name, "is_action": True, "options": options, "auto": False}
+        return {
+            "key": action_name,
+            "type": action_name,
+            "is_action": True,
+            "options": options,
+            "auto": False,
+        }
 
     def typed_completion_with_var(self, items):
         idx = 0
@@ -106,7 +124,13 @@ class SlotKeyTransformer(Transformer):
         var_name = str(items[idx])
         idx += 1
         options = items[idx] if idx < len(items) else []
-        return {"key": var_name, "type": type_name, "is_action": False, "options": options, "auto": False}
+        return {
+            "key": var_name,
+            "type": type_name,
+            "is_action": False,
+            "options": options,
+            "auto": False,
+        }
 
     def typed_completion_auto_var(self, items):
         idx = 0
@@ -118,7 +142,13 @@ class SlotKeyTransformer(Transformer):
         if idx < len(items) and isinstance(items[idx], tuple):
             idx += 1
         options = items[idx] if idx < len(items) else []
-        return {"key": None, "type": type_name, "is_action": False, "options": options, "auto": True}
+        return {
+            "key": None,
+            "type": type_name,
+            "is_action": False,
+            "options": options,
+            "auto": True,
+        }
 
     def typed_completion_no_var(self, items):
         idx = 0
@@ -130,7 +160,13 @@ class SlotKeyTransformer(Transformer):
         if idx < len(items) and isinstance(items[idx], tuple):
             idx += 1
         options = items[idx] if idx < len(items) else []
-        return {"key": type_name, "type": type_name, "is_action": False, "options": options, "auto": False}
+        return {
+            "key": type_name,
+            "type": type_name,
+            "is_action": False,
+            "options": options,
+            "auto": False,
+        }
 
     # quantifier handlers return tuples
     def zero_or_more(self, items):
@@ -209,6 +245,7 @@ class NamedSegment(OrderedDict):
     Maintains backward compatibility by behaving exactly like OrderedDict
     while allowing segments to optionally store a name for debugging/visualization.
     """
+
     def __init__(self, name=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._segment_name = name
@@ -258,7 +295,7 @@ def get_completion_type(prompt_part: PromptPart) -> str:
     # custom actions (registered via @Actions.register)
     # Note: break is now an action [[@break|msg]], not a special tag
     if prompt_part.is_function:
-        return 'action'
+        return "action"
 
     # check if action_type is a registered ResponseType
     # (handles [[think:var]], [[pick:var]], [[custom_type:var]], etc.)
@@ -266,7 +303,7 @@ def get_completion_type(prompt_part: PromptPart) -> str:
         return prompt_part.action_type
 
     # default type (usually 'respond')
-    return 'respond'
+    return "respond"
 
 
 class MindframeTransformer(Transformer):
@@ -286,20 +323,24 @@ class MindframeTransformer(Transformer):
 
     def __init__(self):
         self.sections = []
-        self.current_buf = []  # text/variables/templatetags accumulated before next completion
+        self.current_buf = (
+            []
+        )  # text/variables/templatetags accumulated before next completion
         self.current_parts = []  # list of (key, PromptPart) for current segment
 
         # two-list system prompt model
         self.globals = []  # global system prompts (persist across checkpoints)
-        self.locals = []   # local system prompts (cleared after each checkpoint)
+        self.locals = []  # local system prompts (cleared after each checkpoint)
 
         # two-list header model (same semantics, but sent as user role after system)
         self.header_globals = []  # global headers (persist across checkpoints)
-        self.header_locals = []   # local headers (cleared after each checkpoint)
+        self.header_locals = []  # local headers (cleared after each checkpoint)
 
         self.checkpoint_counter = 0  # counter for auto-naming checkpoints
 
-        self.completion_counters = {}  # track auto-variable generation per completion type
+        self.completion_counters = (
+            {}
+        )  # track auto-variable generation per completion type
         self.action_counters = {}  # track auto-variable generation per action name
         self.pending_segment_name = None  # name to apply to next segment
 
@@ -314,12 +355,14 @@ class MindframeTransformer(Transformer):
         """Flush current section and clear locals"""
         if self.current_parts:
             # Use pending segment name, then clear it
-            self.sections.append(NamedSegment(self.pending_segment_name, self.current_parts))
+            self.sections.append(
+                NamedSegment(self.pending_segment_name, self.current_parts)
+            )
             self.pending_segment_name = None
         self.current_buf = []
         self.current_parts = []
-        self.locals = [] 
-        self.header_locals = [] 
+        self.locals = []
+        self.header_locals = []
         self.completions_in_current_checkpoint = []
 
     def _extract_line_number(self, items):
@@ -332,7 +375,7 @@ class MindframeTransformer(Transformer):
             Line number (int) or 0 if no Token found
         """
         for item in items:
-            if hasattr(item, 'line'):
+            if hasattr(item, "line"):
                 return item.line
         return 0
 
@@ -396,13 +439,13 @@ class MindframeTransformer(Transformer):
         # items[0] is the full tag like "<checkpoint>Name</checkpoint>"
         tag = str(items[0]) if items else ""
         # Extract content between <checkpoint...> and </checkpoint>
-        match = re.search(r'<checkpoint\s*>(.*?)</checkpoint>', tag, re.DOTALL)
+        match = re.search(r"<checkpoint\s*>(.*?)</checkpoint>", tag, re.DOTALL)
         if match:
             content = match.group(1).strip()
             # Strip HTML comments from content
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
             # Normalize whitespace (multiline names become single line)
-            name = ' '.join(content.split()) if content else None
+            name = " ".join(content.split()) if content else None
         else:
             name = None
         self._flush_checkpoint(name)
@@ -426,11 +469,11 @@ class MindframeTransformer(Transformer):
         Items: [Token] containing full tag
         """
         tag = str(items[0]) if items else ""
-        match = re.search(r'<obliviate\s*>(.*?)</obliviate>', tag, re.DOTALL)
+        match = re.search(r"<obliviate\s*>(.*?)</obliviate>", tag, re.DOTALL)
         if match:
             content = match.group(1).strip()
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
-            name = ' '.join(content.split()) if content else None
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
+            name = " ".join(content.split()) if content else None
         else:
             name = None
         self._flush_checkpoint(name)
@@ -486,22 +529,22 @@ class MindframeTransformer(Transformer):
         - scope: 'local' (cleared after checkpoint) or 'global' (default, persists)
         - action: 'replace' (clear list) or 'append' (default, add to list)
         """
-        scope = 'global'
-        action = 'append'
+        scope = "global"
+        action = "append"
 
         # First item is SYSTEM_OPEN (e.g., "<system local replace>")
         opening_tag = str(items[0]) if items else "<system>"
 
         # Parse modifiers from opening tag
-        if 'local' in opening_tag:
-            scope = 'local'
-        elif 'global' in opening_tag:
-            scope = 'global'
+        if "local" in opening_tag:
+            scope = "local"
+        elif "global" in opening_tag:
+            scope = "global"
 
-        if 'replace' in opening_tag:
-            action = 'replace'
-        elif 'append' in opening_tag:
-            action = 'append'
+        if "replace" in opening_tag:
+            action = "replace"
+        elif "append" in opening_tag:
+            action = "append"
 
         # Second item (if present and not SYSTEM_CLOSE) is content
         # Items are: [SYSTEM_OPEN, (optional SYSTEM_CONTENT), SYSTEM_CLOSE]
@@ -509,16 +552,16 @@ class MindframeTransformer(Transformer):
         if len(items) > 2:  # Has content between open and close
             content = str(items[1]).strip()
             # Strip HTML comments from content
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
 
         # Apply the system tag
-        if action == 'replace':
-            if scope == 'global':
+        if action == "replace":
+            if scope == "global":
                 self.globals = [content] if content else []
             else:  # local
                 self.locals = [content] if content else []
         else:  # append
-            if scope == 'global':
+            if scope == "global":
                 if content:  # Only append non-empty content
                     self.globals.append(content)
             else:  # local
@@ -540,38 +583,38 @@ class MindframeTransformer(Transformer):
         - scope: 'local' (cleared after checkpoint) or 'global' (default, persists)
         - action: 'replace' (clear list) or 'append' (default, add to list)
         """
-        scope = 'global'
-        action = 'append'
+        scope = "global"
+        action = "append"
 
         # First item is HEADER_OPEN (e.g., "<header local replace>")
         opening_tag = str(items[0]) if items else "<header>"
 
         # Parse modifiers from opening tag
-        if 'local' in opening_tag:
-            scope = 'local'
-        elif 'global' in opening_tag:
-            scope = 'global'
+        if "local" in opening_tag:
+            scope = "local"
+        elif "global" in opening_tag:
+            scope = "global"
 
-        if 'replace' in opening_tag:
-            action = 'replace'
-        elif 'append' in opening_tag:
-            action = 'append'
+        if "replace" in opening_tag:
+            action = "replace"
+        elif "append" in opening_tag:
+            action = "append"
 
         # Second item (if present and not HEADER_CLOSE) is content
         content = ""
         if len(items) > 2:  # Has content between open and close
             content = str(items[1]).strip()
             # Strip HTML comments from content
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
 
         # Apply the header tag
-        if action == 'replace':
-            if scope == 'global':
+        if action == "replace":
+            if scope == "global":
                 self.header_globals = [content] if content else []
             else:  # local
                 self.header_locals = [content] if content else []
         else:  # append
-            if scope == 'global':
+            if scope == "global":
                 if content:  # Only append non-empty content
                     self.header_globals.append(content)
             else:  # local
@@ -593,14 +636,16 @@ class MindframeTransformer(Transformer):
         if len(items) > 2:  # Has content between open and close
             content = str(items[1]).strip()
             # Strip HTML comments from content
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
 
         if content:
-            self.current_buf.append({
-                "type": "role_content",
-                "role": "user",
-                "text": content,
-            })
+            self.current_buf.append(
+                {
+                    "type": "role_content",
+                    "role": "user",
+                    "text": content,
+                }
+            )
         return None
 
     def assistant_tag(self, items):
@@ -616,14 +661,16 @@ class MindframeTransformer(Transformer):
         if len(items) > 2:  # Has content between open and close
             content = str(items[1]).strip()
             # Strip HTML comments from content
-            content = re.sub(r'<!--(.|\n)*?-->', '', content).strip()
+            content = re.sub(r"<!--(.|\n)*?-->", "", content).strip()
 
         if content:
-            self.current_buf.append({
-                "type": "role_content",
-                "role": "assistant",
-                "text": content,
-            })
+            self.current_buf.append(
+                {
+                    "type": "role_content",
+                    "role": "assistant",
+                    "text": content,
+                }
+            )
         return None
 
     def include_tag(self, items):
@@ -643,10 +690,9 @@ class MindframeTransformer(Transformer):
         # Record as text - the actual resolution happens in resolve_includes()
         # which runs BEFORE parsing. If we get here, it means the include
         # wasn't resolved (which shouldn't happen in normal flow).
-        self.current_buf.append({
-            "type": "text",
-            "text": f"<!-- UNRESOLVED INCLUDE: {path} -->"
-        })
+        self.current_buf.append(
+            {"type": "text", "text": f"<!-- UNRESOLVED INCLUDE: {path} -->"}
+        )
         return None
 
     # -------------------------------------------------------------------------
@@ -678,8 +724,7 @@ class MindframeTransformer(Transformer):
         # Validate: check for invalid variable references within the group
         # Get all slots in this group (from current_parts)
         group_slot_keys = {
-            key for key, part in self.current_parts
-            if part.together_group == group_id
+            key for key, part in self.current_parts if part.together_group == group_id
         }
 
         # Check if any slot's prompt text references another slot in the same group
@@ -1247,6 +1292,7 @@ def parser_with_state(initial_globals=None):
     class CachedParserWrapper:
         def parse(self, text):
             from lark.exceptions import VisitError
+
             tree = lark.parse(text)
             try:
                 return transformer.transform(tree)
@@ -1265,7 +1311,9 @@ def parser():
     return lark
 
 
-def resolve_includes(template_text: str, base_path: Path = None, search_paths: list = None) -> str:
+def resolve_includes(
+    template_text: str, base_path: Path = None, search_paths: list = None
+) -> str:
     """Resolve <include src="path"/> tags at compile time.
 
     Recursively inlines included file contents. This happens BEFORE Jinja2 rendering,
@@ -1295,13 +1343,20 @@ def resolve_includes(template_text: str, base_path: Path = None, search_paths: l
         for search_path in search_paths:
             full_path = search_path / rel_path
             if full_path.exists():
-                content = full_path.read_text(encoding='utf-8')
+                content = full_path.read_text(encoding="utf-8")
                 # Recursively resolve includes in the included file
                 return resolve_includes(content, full_path.parent, search_paths)
 
         # Raise error if include file not found
-        searched = list(dict.fromkeys(str(p.resolve()) for p in search_paths)) if search_paths else ["."]
-        raise FileNotFoundError(f"Include file not found: {rel_path}\nSearched in:\n  " + "\n  ".join(searched))
+        searched = (
+            list(dict.fromkeys(str(p.resolve()) for p in search_paths))
+            if search_paths
+            else ["."]
+        )
+        raise FileNotFoundError(
+            f"Include file not found: {rel_path}\nSearched in:\n  "
+            + "\n  ".join(searched)
+        )
 
     return include_pattern.sub(resolve_single_include, template_text)
 
@@ -1321,9 +1376,9 @@ def split_by_checkpoint(template_text: str) -> list:
     # Pattern for checkpoint tags - self-closing, opening-only, and with content
     # <checkpoint/> or <checkpoint> or <checkpoint>Name</checkpoint>
     checkpoint_pattern = re.compile(
-        r'<checkpoint\s*>([^<]*?)</checkpoint>|<checkpoint\s*/>|<checkpoint\s*>|'
-        r'<obliviate\s*>([^<]*?)</obliviate>|<obliviate\s*/>|<obliviate\s*>',
-        re.DOTALL
+        r"<checkpoint\s*>([^<]*?)</checkpoint>|<checkpoint\s*/>|<checkpoint\s*>|"
+        r"<obliviate\s*>([^<]*?)</obliviate>|<obliviate\s*/>|<obliviate\s*>",
+        re.DOTALL,
     )
 
     segments = []
@@ -1332,7 +1387,7 @@ def split_by_checkpoint(template_text: str) -> list:
 
     for match in checkpoint_pattern.finditer(template_text):
         # Get text before this checkpoint
-        segment_text = template_text[last_end:match.start()]
+        segment_text = template_text[last_end : match.start()]
 
         # Determine checkpoint name
         if match.group(1):  # <checkpoint>Name</checkpoint>
@@ -1375,6 +1430,7 @@ def _add_default_completion_if_needed(template: str) -> str:
     Raises:
         ValueError: If a non-final segment is missing a completion placeholder
     """
+
     # Helper to check if text ends with a completion placeholder
     def ends_with_completion(text: str) -> bool:
         stripped = text.rstrip()
@@ -1384,18 +1440,23 @@ def _add_default_completion_if_needed(template: str) -> str:
 
     # Check if we have multiple segments (using new checkpoint syntax)
     # Match any checkpoint tag: <checkpoint...>, <obliviate...>
-    checkpoint_pattern = r'<(?:checkpoint|obliviate)(?:\s[^>]*)?>.*?(?:</(?:checkpoint|obliviate)>|\n|$)'
+    checkpoint_pattern = (
+        r"<(?:checkpoint|obliviate)(?:\s[^>]*)?>.*?(?:</(?:checkpoint|obliviate)>|\n|$)"
+    )
 
-    if re.search(r'<(?:checkpoint|obliviate)', template):
+    if re.search(r"<(?:checkpoint|obliviate)", template):
         # Split on checkpoint tags while preserving them
-        segments = re.split(r'(<(?:checkpoint|obliviate)(?:\s[^>]*)?>.*?(?:</(?:checkpoint|obliviate)>|(?=\n)|(?=$)))', template)
+        segments = re.split(
+            r"(<(?:checkpoint|obliviate)(?:\s[^>]*)?>.*?(?:</(?:checkpoint|obliviate)>|(?=\n)|(?=$)))",
+            template,
+        )
 
         # Filter out empty segments and reconstruct
         non_empty_segments = []
         current_segment = ""
 
         for part in segments:
-            if re.match(r'<(?:checkpoint|obliviate)', part):
+            if re.match(r"<(?:checkpoint|obliviate)", part):
                 # This is a checkpoint tag
                 if current_segment.strip():
                     non_empty_segments.append(current_segment)
@@ -1408,7 +1469,11 @@ def _add_default_completion_if_needed(template: str) -> str:
             non_empty_segments.append(current_segment)
 
         # Find content segments (not checkpoint tags)
-        content_segments = [s for s in non_empty_segments if not re.match(r'<(?:checkpoint|obliviate)', s)]
+        content_segments = [
+            s
+            for s in non_empty_segments
+            if not re.match(r"<(?:checkpoint|obliviate)", s)
+        ]
 
         # Note: Non-final segments without completions are now allowed.
         # They can contain just <system> tags or other context setup.
@@ -1418,11 +1483,13 @@ def _add_default_completion_if_needed(template: str) -> str:
         if content_segments and not ends_with_completion(content_segments[-1]):
             # Find the last content segment in the original list and append
             for i in range(len(non_empty_segments) - 1, -1, -1):
-                if not re.match(r'<(?:checkpoint|obliviate)', non_empty_segments[i]):
-                    non_empty_segments[i] = non_empty_segments[i].rstrip() + "\n\n[[response]]"
+                if not re.match(r"<(?:checkpoint|obliviate)", non_empty_segments[i]):
+                    non_empty_segments[i] = (
+                        non_empty_segments[i].rstrip() + "\n\n[[response]]"
+                    )
                     break
 
-            return ''.join(non_empty_segments)
+            return "".join(non_empty_segments)
 
         return template
     else:
@@ -1466,7 +1533,7 @@ def _format_parse_error(error_str, template_text):
         completion_matches = list(re.finditer(r"\[\[.*?\]\]", template_text))
         if completion_matches:
             last_completion = completion_matches[-1]
-            text_after_completion = template_text[last_completion.end():].strip()
+            text_after_completion = template_text[last_completion.end() :].strip()
             if text_after_completion:
                 return f"Content found after final completion.{context}\n\nHint: Completions must be at the very end of the template."
 
@@ -1562,7 +1629,9 @@ def serialise_sections(sections):
             section_list.append(
                 {
                     "key": part.key,
-                    "return_type": part.return_type.__name__ if part.return_type else None,
+                    "return_type": (
+                        part.return_type.__name__ if part.return_type else None
+                    ),
                     "options": part.options,
                     "text": part.text,
                 }

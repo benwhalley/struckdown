@@ -35,11 +35,14 @@ class TestValidateTaskId:
 class TestCreateTask:
     def test_create_and_get(self, temp_cache_dir):
         task_id = str(uuid.uuid4())
-        task_cache.create_task(task_id, {
-            "status": "pending",
-            "total": 10,
-            "results": [],
-        })
+        task_cache.create_task(
+            task_id,
+            {
+                "status": "pending",
+                "total": 10,
+                "results": [],
+            },
+        )
 
         task = task_cache.get_task(task_id)
         assert task is not None

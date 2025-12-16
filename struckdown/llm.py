@@ -23,30 +23,24 @@ def disable_api_debug():
     """Disable API request logging."""
     global _debug_api_requests
     _debug_api_requests = False
-from box import Box
-from decouple import config as env_config
-from litellm.exceptions import (
-    APIConnectionError,
-    APIError,
-    APIResponseValidationError,
-    AuthenticationError,
-    BadRequestError,
-    BudgetExceededError,
-    ContentPolicyViolationError,
-    ContextWindowExceededError,
-    InternalServerError,
-    NotFoundError,
-    PermissionDeniedError,
-    RateLimitError,
-    ServiceUnavailableError,
-    Timeout,
-    UnprocessableEntityError,
-    UnsupportedParamsError,
-)
-from more_itertools import chunked
-from pydantic import BaseModel, Field
+
 
 import anyio
+from box import Box
+from decouple import config as env_config
+from litellm.exceptions import (APIConnectionError, APIError,
+                                APIResponseValidationError,
+                                AuthenticationError, BadRequestError,
+                                BudgetExceededError,
+                                ContentPolicyViolationError,
+                                ContextWindowExceededError,
+                                InternalServerError, NotFoundError,
+                                PermissionDeniedError, RateLimitError,
+                                ServiceUnavailableError, Timeout,
+                                UnprocessableEntityError,
+                                UnsupportedParamsError)
+from more_itertools import chunked
+from pydantic import BaseModel, Field
 
 from .cache import hash_return_type, memory
 from .errors import StruckdownLLMError
@@ -110,14 +104,16 @@ class LLM(BaseModel):
 
         # Attach debug hook if enabled
         if _debug_api_requests:
+
             def log_api_request(**kwargs):
                 """Log the full API request as JSON."""
                 import sys
-                print("\n" + "="*80, file=sys.stderr)
+
+                print("\n" + "=" * 80, file=sys.stderr)
                 print("API REQUEST", file=sys.stderr)
-                print("="*80, file=sys.stderr)
+                print("=" * 80, file=sys.stderr)
                 print(json.dumps(kwargs, indent=2, default=str), file=sys.stderr)
-                print("="*80 + "\n", file=sys.stderr)
+                print("=" * 80 + "\n", file=sys.stderr)
 
             client.on(HookName.COMPLETION_KWARGS, log_api_request)
 
@@ -253,7 +249,11 @@ def structured_chat(
     for msg in reversed(messages):
         if msg.get("role") == "user":
             content = msg.get("content", "")[:50].replace("\n", " ")
-            call_hint = f" ({content}...)" if len(msg.get("content", "")) > 50 else f" ({content})"
+            call_hint = (
+                f" ({content}...)"
+                if len(msg.get("content", "")) > 50
+                else f" ({content})"
+            )
             break
 
     logger.debug(
@@ -284,7 +284,9 @@ def structured_chat(
         elapsed_ms = (time.monotonic() - start_time) * 1000
         was_cached = com.get("_run_id") != get_run_id()
         cache_status = " (cached)" if was_cached else ""
-        logger.info(f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}")
+        logger.info(
+            f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}"
+        )
 
         logger.debug(
             f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
@@ -293,7 +295,9 @@ def structured_chat(
 
     except (EOFError, Exception) as e:
         elapsed_ms = (time.monotonic() - start_time) * 1000
-        logger.warning(f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}")
+        logger.warning(
+            f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}"
+        )
         raise e
 
 
@@ -308,7 +312,9 @@ def get_embedding(
     Get embeddings for a list of texts using litellm directly.
     """
     if llm is None:
-        llm = LLM(model_name=env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large"))
+        llm = LLM(
+            model_name=env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large")
+        )
     if credentials is None:
         credentials = LLMCredentials()
 

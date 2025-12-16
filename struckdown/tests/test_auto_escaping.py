@@ -5,16 +5,13 @@ Tests the Django-style auto-escaping pattern where all {{variables}} are automat
 escaped unless explicitly marked safe with mark_struckdown_safe().
 """
 
-import pytest
 import asyncio
+
+import pytest
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from struckdown import (
-    StruckdownSafe,
-    mark_struckdown_safe,
-    struckdown_finalize,
-    chatter_async,
-)
+from struckdown import (StruckdownSafe, chatter_async, mark_struckdown_safe,
+                        struckdown_finalize)
 
 
 class TestStruckdownSafeClass:
@@ -228,9 +225,12 @@ Say 'ok' [[response]]
             # we can't easily test this without mocking the LLM
             # but we can verify the Environment is created correctly
             from jinja2.sandbox import ImmutableSandboxedEnvironment
-            from struckdown import struckdown_finalize, SilentUndefined
 
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+            from struckdown import SilentUndefined, struckdown_finalize
+
+            env = ImmutableSandboxedEnvironment(
+                undefined=SilentUndefined, finalize=struckdown_finalize
+            )
             template = env.from_string(prompt)
             rendered = template.render(**context)
 
@@ -259,9 +259,12 @@ Say 'ok' [[response]]
 
         # verify Environment handling
         from jinja2.sandbox import ImmutableSandboxedEnvironment
-        from struckdown import struckdown_finalize, SilentUndefined
 
-        env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+        from struckdown import SilentUndefined, struckdown_finalize
+
+        env = ImmutableSandboxedEnvironment(
+            undefined=SilentUndefined, finalize=struckdown_finalize
+        )
         template = env.from_string(prompt)
         rendered = template.render(**context)
 

@@ -8,7 +8,6 @@ import pytest
 
 from struckdown.playground import create_app
 
-
 # CSRF token for testing - any string >= 10 chars works
 CSRF_TOKEN = "test-csrf-token-for-testing"
 CSRF_HEADERS = {"X-CSRF-Token": CSRF_TOKEN}
@@ -337,11 +336,9 @@ class TestEncodeStateEndpoint:
         """Encode state returns encoded string."""
         response = client.post(
             "/api/encode-state",
-            data=json.dumps({
-                "syntax": "[[test]]",
-                "model": "gpt-4",
-                "inputs": {"x": "y"}
-            }),
+            data=json.dumps(
+                {"syntax": "[[test]]", "model": "gpt-4", "inputs": {"x": "y"}}
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -359,9 +356,7 @@ class TestLoadFromState:
         from struckdown.playground.core import encode_state
 
         encoded = encode_state(
-            syntax="Hello [[greeting]]",
-            model="test-model",
-            inputs={"name": "Alice"}
+            syntax="Hello [[greeting]]", model="test-model", inputs={"name": "Alice"}
         )
 
         response = remote_client.get(f"/e/{encoded}")
@@ -376,10 +371,12 @@ class TestInputsPartial:
         """Inputs partial renders form fields."""
         response = client.post(
             "/partials/inputs",
-            data=json.dumps({
-                "inputs_required": ["topic", "style"],
-                "current_values": {"topic": "cats"}
-            }),
+            data=json.dumps(
+                {
+                    "inputs_required": ["topic", "style"],
+                    "current_values": {"topic": "cats"},
+                }
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -391,10 +388,9 @@ class TestInputsPartial:
         """Inputs partial preserves existing values."""
         response = client.post(
             "/partials/inputs",
-            data=json.dumps({
-                "inputs_required": ["topic"],
-                "current_values": {"topic": "my-value"}
-            }),
+            data=json.dumps(
+                {"inputs_required": ["topic"], "current_values": {"topic": "my-value"}}
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -405,10 +401,7 @@ class TestInputsPartial:
         """Inputs partial handles no inputs."""
         response = client.post(
             "/partials/inputs",
-            data=json.dumps({
-                "inputs_required": [],
-                "current_values": {}
-            }),
+            data=json.dumps({"inputs_required": [], "current_values": {}}),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -423,12 +416,14 @@ class TestOutputsPartial:
         """Outputs partial renders output cards."""
         response = client.post(
             "/partials/outputs",
-            data=json.dumps({
-                "outputs": {"greeting": "Hello world!"},
-                "error": None,
-                "cost": None,
-                "slots_defined": ["greeting"]
-            }),
+            data=json.dumps(
+                {
+                    "outputs": {"greeting": "Hello world!"},
+                    "error": None,
+                    "cost": None,
+                    "slots_defined": ["greeting"],
+                }
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -440,12 +435,14 @@ class TestOutputsPartial:
         """Outputs partial shows error message."""
         response = client.post(
             "/partials/outputs",
-            data=json.dumps({
-                "outputs": {},
-                "error": "Something went wrong",
-                "cost": None,
-                "slots_defined": []
-            }),
+            data=json.dumps(
+                {
+                    "outputs": {},
+                    "error": "Something went wrong",
+                    "cost": None,
+                    "slots_defined": [],
+                }
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )
@@ -456,12 +453,14 @@ class TestOutputsPartial:
         """Outputs partial renders multiple slots in order."""
         response = client.post(
             "/partials/outputs",
-            data=json.dumps({
-                "outputs": {"first": "value1", "second": "value2"},
-                "error": None,
-                "cost": None,
-                "slots_defined": ["first", "second"]
-            }),
+            data=json.dumps(
+                {
+                    "outputs": {"first": "value1", "second": "value2"},
+                    "error": None,
+                    "cost": None,
+                    "slots_defined": ["first", "second"],
+                }
+            ),
             content_type="application/json",
             headers=CSRF_HEADERS,
         )

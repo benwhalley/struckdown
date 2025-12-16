@@ -88,7 +88,9 @@ def playground_server(temp_sd_file):
     app.config["TESTING"] = True
 
     server_thread = threading.Thread(
-        target=lambda: app.run(host="localhost", port=port, debug=False, use_reloader=False),
+        target=lambda: app.run(
+            host="localhost", port=port, debug=False, use_reloader=False
+        ),
         daemon=True,
     )
     server_thread.start()
@@ -116,7 +118,9 @@ def playground_server_empty(tmp_path):
     app.config["TESTING"] = True
 
     server_thread = threading.Thread(
-        target=lambda: app.run(host="localhost", port=port, debug=False, use_reloader=False),
+        target=lambda: app.run(
+            host="localhost", port=port, debug=False, use_reloader=False
+        ),
         daemon=True,
     )
     server_thread.start()
@@ -211,7 +215,9 @@ class TestEditorInteractions:
             editor.fill("Hello [[world]]")
             expect(editor).to_have_value("Hello [[world]]")
 
-    def test_editor_preserves_content_on_focus_change(self, page: Page, playground_server):
+    def test_editor_preserves_content_on_focus_change(
+        self, page: Page, playground_server
+    ):
         """Editor content persists when focus moves elsewhere."""
         page.goto(playground_server.url)
         page.wait_for_timeout(500)
@@ -262,7 +268,9 @@ class TestSyntaxAnalysis:
         error_banner = page.locator("#error-banner")
         expect(error_banner).to_be_visible()
 
-    def test_error_banner_hides_on_valid_syntax(self, page: Page, playground_server_empty):
+    def test_error_banner_hides_on_valid_syntax(
+        self, page: Page, playground_server_empty
+    ):
         """Error banner disappears when syntax becomes valid."""
         page.goto(playground_server_empty.url)
 
@@ -301,7 +309,9 @@ class TestInputsPanel:
         # Should have a field for 'topic'
         expect(page.locator(".input-field[name='topic']")).to_be_visible()
 
-    def test_input_field_removed_when_variable_removed(self, page: Page, playground_server):
+    def test_input_field_removed_when_variable_removed(
+        self, page: Page, playground_server
+    ):
         """Input field disappears when variable is removed from syntax."""
         page.goto(playground_server.url)
         page.wait_for_timeout(800)
@@ -364,7 +374,9 @@ class TestModeToggle:
         expect(page.locator("#single-inputs-section")).to_be_visible()
         expect(page.locator("#batch-upload-section")).not_to_be_visible()
 
-    def test_batch_upload_shown_when_batch_selected(self, page: Page, playground_server):
+    def test_batch_upload_shown_when_batch_selected(
+        self, page: Page, playground_server
+    ):
         """Batch file upload appears when batch mode selected."""
         page.goto(playground_server.url)
         page.locator("button:has-text('Inputs')").click()
@@ -561,7 +573,9 @@ class TestOutputDisplay:
 class TestBatchMode:
     """Tests for batch mode functionality."""
 
-    def test_batch_file_upload_shows_info(self, page: Page, playground_server, sample_csv):
+    def test_batch_file_upload_shows_info(
+        self, page: Page, playground_server, sample_csv
+    ):
         """Uploading a CSV shows file info."""
         page.goto(playground_server.url)
         page.wait_for_timeout(500)

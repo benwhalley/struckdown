@@ -129,7 +129,9 @@ def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
                     seen_indices[idx] = score
 
     # Sort by score descending, take top n
-    top_indices = sorted(seen_indices.keys(), key=lambda i: seen_indices[i], reverse=True)[:n]
+    top_indices = sorted(
+        seen_indices.keys(), key=lambda i: seen_indices[i], reverse=True
+    )[:n]
 
     results = []
     for idx in top_indices:

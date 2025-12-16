@@ -55,7 +55,7 @@ def new_run() -> str:
 
 # Progress callback for per-API-call updates
 _progress_callback: ContextVar[Optional[Callable[[], None]]] = ContextVar(
-    '_progress_callback', default=None
+    "_progress_callback", default=None
 )
 
 
@@ -270,7 +270,9 @@ class ChatterResult(BaseModel):
         first_prompt = ""
         if self.results:
             first_seg = next(iter(self.results.values()))
-            first_prompt = first_seg.prompt[:80] + ("..." if len(first_seg.prompt) > 80 else "")
+            first_prompt = first_seg.prompt[:80] + (
+                "..." if len(first_seg.prompt) > 80 else ""
+            )
 
         # show outputs dict
         outputs_repr = {k: str(v.output) for k, v in self.results.items()}
@@ -528,6 +530,9 @@ class CostSummary(BaseModel):
 
 class StruckdownEarlyTermination(Exception):
     """Raised when [[end]] or [[@break]] is encountered to stop template execution."""
+
     def __init__(self, message, partial_results=None):
         super().__init__(message)
-        self.partial_results = partial_results if partial_results is not None else ChatterResult()
+        self.partial_results = (
+            partial_results if partial_results is not None else ChatterResult()
+        )

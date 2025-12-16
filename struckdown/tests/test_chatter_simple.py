@@ -14,7 +14,9 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test ChatterResult helper properties work correctly"""
         result = ChatterResult()
         result["first"] = SegmentResult(name="first", output="first_value", prompt="")
-        result["second"] = SegmentResult(name="second", output="second_value", prompt="")
+        result["second"] = SegmentResult(
+            name="second", output="second_value", prompt=""
+        )
         result["last"] = SegmentResult(name="last", output="last_value", prompt="")
 
         # Test .response property returns the last item
@@ -54,7 +56,9 @@ class ChatterSimpleTestCase(unittest.TestCase):
         with self.assertRaises(TypeError) as context:
             result["key"] = "raw_string"
 
-        self.assertIn("ChatterResult only accepts SegmentResult values", str(context.exception))
+        self.assertIn(
+            "ChatterResult only accepts SegmentResult values", str(context.exception)
+        )
         self.assertIn("str", str(context.exception))
 
     def test_segment_dependency_graph_no_dependencies(self):
@@ -62,9 +66,45 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
         # Create mock segments with no dependencies
         # Note: Must explicitly set block=False to avoid Mock's default truthy behavior
-        segment1 = OrderedDict([("var1", Mock(text="First segment", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("var2", Mock(text="Second segment", block=False, options=None, system_message=None))])
-        segment3 = OrderedDict([("var3", Mock(text="Third segment", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "var1",
+                    Mock(
+                        text="First segment",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "var2",
+                    Mock(
+                        text="Second segment",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment3 = OrderedDict(
+            [
+                (
+                    "var3",
+                    Mock(
+                        text="Third segment",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment1, segment2, segment3]
 
@@ -82,10 +122,44 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for dependent segments"""
 
         # Create mock segments with dependencies
-        segment1 = OrderedDict([("fruit", Mock(text="What fruit?", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("color", Mock(text="What color?", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "fruit",
+                    Mock(
+                        text="What fruit?",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "color",
+                    Mock(
+                        text="What color?",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
         segment3 = OrderedDict(
-            [("story", Mock(text="Tell story about {{fruit}} and {{color}}", block=False, options=None, system_message=None))]
+            [
+                (
+                    "story",
+                    Mock(
+                        text="Tell story about {{fruit}} and {{color}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
         )
 
         segments = [segment1, segment2, segment3]
@@ -109,9 +183,45 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for sequential dependencies"""
 
         # Create mock segments with sequential dependencies
-        segment1 = OrderedDict([("first", Mock(text="First task", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("second", Mock(text="Second task using {{first}}", block=False, options=None, system_message=None))])
-        segment3 = OrderedDict([("third", Mock(text="Third task using {{second}}", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [
+                (
+                    "first",
+                    Mock(
+                        text="First task",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment2 = OrderedDict(
+            [
+                (
+                    "second",
+                    Mock(
+                        text="Second task using {{first}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment3 = OrderedDict(
+            [
+                (
+                    "third",
+                    Mock(
+                        text="Third task using {{second}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment1, segment2, segment3]
 
@@ -130,11 +240,51 @@ class ChatterSimpleTestCase(unittest.TestCase):
         """Test dependency analysis for mixed parallel and sequential dependencies"""
 
         # Create mock segments with mixed dependencies
-        segment1 = OrderedDict([("a", Mock(text="Task A", block=False, options=None, system_message=None))])
-        segment2 = OrderedDict([("b", Mock(text="Task B", block=False, options=None, system_message=None))])
-        segment3 = OrderedDict([("c", Mock(text="Task C using {{a}}", block=False, options=None, system_message=None))])
-        segment4 = OrderedDict([("d", Mock(text="Task D using {{a}} and {{b}}", block=False, options=None, system_message=None))])
-        segment5 = OrderedDict([("e", Mock(text="Task E using {{c}} and {{d}}", block=False, options=None, system_message=None))])
+        segment1 = OrderedDict(
+            [("a", Mock(text="Task A", block=False, options=None, system_message=None))]
+        )
+        segment2 = OrderedDict(
+            [("b", Mock(text="Task B", block=False, options=None, system_message=None))]
+        )
+        segment3 = OrderedDict(
+            [
+                (
+                    "c",
+                    Mock(
+                        text="Task C using {{a}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment4 = OrderedDict(
+            [
+                (
+                    "d",
+                    Mock(
+                        text="Task D using {{a}} and {{b}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
+        segment5 = OrderedDict(
+            [
+                (
+                    "e",
+                    Mock(
+                        text="Task E using {{c}} and {{d}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
+        )
 
         segments = [segment1, segment2, segment3, segment4, segment5]
 
@@ -161,13 +311,43 @@ class ChatterSimpleTestCase(unittest.TestCase):
 
         # Create segments with different template variable styles
         segment1 = OrderedDict(
-            [("var1", Mock(text="First {{ var1 }}", block=False, options=None, system_message=None))]
+            [
+                (
+                    "var1",
+                    Mock(
+                        text="First {{ var1 }}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
         )  # Self-reference (should be ignored)
         segment2 = OrderedDict(
-            [("var2", Mock(text="Second {{var1}} and {{  var1  }}", block=False, options=None, system_message=None))]
+            [
+                (
+                    "var2",
+                    Mock(
+                        text="Second {{var1}} and {{  var1  }}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
         )  # Multiple refs with spaces
         segment3 = OrderedDict(
-            [("var3", Mock(text="Third {{var2}} and {{var1}}", block=False, options=None, system_message=None))]
+            [
+                (
+                    "var3",
+                    Mock(
+                        text="Third {{var2}} and {{var1}}",
+                        block=False,
+                        options=None,
+                        system_message=None,
+                    ),
+                )
+            ]
         )  # Multiple dependencies
 
         segments = [segment1, segment2, segment3]
@@ -203,9 +383,7 @@ Tell a joke [[joke]]"""
 
         # The prompt part should have the system_message stored
         part = sections[0]["joke"]
-        self.assertEqual(
-            part.system_message, "You are a helpful assistant."
-        )
+        self.assertEqual(part.system_message, "You are a helpful assistant.")
         self.assertEqual(part.text, "Tell a joke")
 
     def test_shared_header_with_multiple_segments(self):

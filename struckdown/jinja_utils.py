@@ -130,26 +130,26 @@ def escape_struckdown_syntax(value: Any, var_name: str = "") -> tuple[Any, bool]
     # This makes them display correctly but breaks parsing
     dangerous_patterns = [
         # Old syntax (keep for backwards compatibility during transition)
-        ('¡SYSTEM+', '¡\u200bSYSTEM+'),
-        ('¡SYSTEM', '¡\u200bSYSTEM'),
-        ('¡IMPORTANT+', '¡\u200bIMPORTANT+'),
-        ('¡IMPORTANT', '¡\u200bIMPORTANT'),
-        ('¡HEADER+', '¡\u200bHEADER+'),
-        ('¡HEADER', '¡\u200bHEADER'),
-        ('¡OBLIVIATE', '¡\u200bOBLIVIATE'),
-        ('¡SEGMENT', '¡\u200bSEGMENT'),
-        ('¡BEGIN', '¡\u200bBEGIN'),
-        ('/END', '/\u200bEND'),
+        ("¡SYSTEM+", "¡\u200bSYSTEM+"),
+        ("¡SYSTEM", "¡\u200bSYSTEM"),
+        ("¡IMPORTANT+", "¡\u200bIMPORTANT+"),
+        ("¡IMPORTANT", "¡\u200bIMPORTANT"),
+        ("¡HEADER+", "¡\u200bHEADER+"),
+        ("¡HEADER", "¡\u200bHEADER"),
+        ("¡OBLIVIATE", "¡\u200bOBLIVIATE"),
+        ("¡SEGMENT", "¡\u200bSEGMENT"),
+        ("¡BEGIN", "¡\u200bBEGIN"),
+        ("/END", "/\u200bEND"),
         # New XML-style syntax (using partial match to catch variants like <system local>)
-        ('<system', '<\u200bsystem'),
-        ('</system>', '</\u200bsystem>'),
-        ('<checkpoint', '<\u200bcheckpoint'),
-        ('</checkpoint>', '</\u200bcheckpoint>'),
-        ('<obliviate', '<\u200bobliviate'),
-        ('</obliviate>', '</\u200bobliviate>'),
-        ('<break', '<\u200bbreak'),
-        ('</break>', '</\u200bbreak>'),
-        ('[[', '[\u200b['),
+        ("<system", "<\u200bsystem"),
+        ("</system>", "</\u200bsystem>"),
+        ("<checkpoint", "<\u200bcheckpoint"),
+        ("</checkpoint>", "</\u200bcheckpoint>"),
+        ("<obliviate", "<\u200bobliviate"),
+        ("</obliviate>", "</\u200bobliviate>"),
+        ("<break", "<\u200bbreak"),
+        ("</break>", "</\u200bbreak>"),
+        ("[[", "[\u200b["),
     ]
 
     escaped_dangerous = False
@@ -158,7 +158,7 @@ def escape_struckdown_syntax(value: Any, var_name: str = "") -> tuple[Any, bool]
             escaped_dangerous = True
             value = value.replace(pattern, replacement)
 
-    was_escaped = (value != original)
+    was_escaped = value != original
 
     if escaped_dangerous:
         var_display = f" in variable '{var_name}'" if var_name else ""
@@ -192,7 +192,7 @@ def struckdown_finalize(value: Any) -> str:
     if isinstance(value, StruckdownSafe):
         return str(value.content)
     if value is None:
-        return ''
+        return ""
     escaped_value, was_escaped = escape_struckdown_syntax(str(value))
     return escaped_value
 

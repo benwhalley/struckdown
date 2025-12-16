@@ -220,7 +220,9 @@ class TestCacheIntegration:
             cache_version="test-v1",
         )
 
-        assert call_count["count"] == 2  # Different system message = different cache key
+        assert (
+            call_count["count"] == 2
+        )  # Different system message = different cache key
 
     def test_cache_with_message_order(self, mock_llm):
         """Test that message order matters for caching"""

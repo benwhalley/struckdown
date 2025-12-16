@@ -1,6 +1,6 @@
 """Built-in @markdownify action for converting HTML to markdown."""
 
-from . import Actions, html_to_markdown, extract_readable
+from . import Actions, extract_readable, html_to_markdown
 
 
 @Actions.register("markdownify")

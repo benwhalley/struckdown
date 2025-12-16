@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 _default_cache_dir = Path("~/.struckdown/tasks").expanduser()
-TASK_CACHE_DIR = Path(os.environ.get("STRUCKDOWN_TASK_CACHE_DIR", str(_default_cache_dir)))
+TASK_CACHE_DIR = Path(
+    os.environ.get("STRUCKDOWN_TASK_CACHE_DIR", str(_default_cache_dir))
+)
 TASK_MAX_AGE_SECONDS = int(os.environ.get("STRUCKDOWN_TASK_MAX_AGE", "86400"))  # 1 day
 
 

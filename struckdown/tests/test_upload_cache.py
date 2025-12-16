@@ -48,7 +48,11 @@ class TestStoreUpload:
     def test_store_and_retrieve(self, temp_cache_dir):
         """Store and retrieve upload data."""
         file_id = str(uuid.uuid4())
-        data = {"type": "batch", "filename": "test.csv", "data": {"rows": [{"a": 1}], "columns": ["a"]}}
+        data = {
+            "type": "batch",
+            "filename": "test.csv",
+            "data": {"rows": [{"a": 1}], "columns": ["a"]},
+        }
 
         upload_cache.store_upload(file_id, data)
 

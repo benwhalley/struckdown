@@ -7,14 +7,8 @@ from typing import List
 
 from ddgs import DDGS
 
-from . import (
-    Actions,
-    fetch_url,
-    extract_readable,
-    html_to_markdown,
-    truncate_content,
-    DEFAULT_TIMEOUT,
-)
+from . import (DEFAULT_TIMEOUT, Actions, extract_readable, fetch_url,
+               html_to_markdown, truncate_content)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +18,7 @@ DEFAULT_MAX_TOKENS = 10000
 @dataclass
 class SearchResult:
     """A single search result with fetched content."""
+
     title: str
     url: str
     snippet: str

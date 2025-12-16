@@ -15,18 +15,19 @@ import anyio
 import pandas as pd
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken
 
-from struckdown import (
-    LLM,
-    LLMCredentials,
-    chatter_async,
-    extract_jinja_variables,
-)
-from struckdown.parsing import extract_slot_key, find_slots_with_positions, parser
+from struckdown import (LLM, LLMCredentials, chatter_async,
+                        extract_jinja_variables)
+from struckdown.parsing import (extract_slot_key, find_slots_with_positions,
+                                parser)
 
 # Security configuration from environment
-STRUCKDOWN_ZIP_MAX_SIZE = int(os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800"))  # 50MB
+STRUCKDOWN_ZIP_MAX_SIZE = int(
+    os.environ.get("STRUCKDOWN_ZIP_MAX_SIZE", "52428800")
+)  # 50MB
 STRUCKDOWN_ZIP_MAX_FILES = int(os.environ.get("STRUCKDOWN_ZIP_MAX_FILES", "500"))
-STRUCKDOWN_STATE_MAX_SIZE = int(os.environ.get("STRUCKDOWN_STATE_MAX_SIZE", "1048576"))  # 1MB max decompressed state
+STRUCKDOWN_STATE_MAX_SIZE = int(
+    os.environ.get("STRUCKDOWN_STATE_MAX_SIZE", "1048576")
+)  # 1MB max decompressed state
 
 
 def extract_required_inputs(syntax: str) -> Dict[str, List[str]]:
@@ -70,13 +71,15 @@ def check_disallowed_actions(syntax: str) -> List[str]:
     from struckdown.actions import Actions
 
     # Find all action calls: [[@action_name:...]] or [[@action_name|...]]
-    action_pattern = re.compile(r'\[\[@(\w+)[:\|]')
+    action_pattern = re.compile(r"\[\[@(\w+)[:\|]")
     found_actions = set(action_pattern.findall(syntax))
 
     # Check which ones are disallowed in remote mode
     disallowed = []
     for action_name in found_actions:
-        if Actions.is_registered(action_name) and not Actions.is_allowed_remote(action_name):
+        if Actions.is_registered(action_name) and not Actions.is_allowed_remote(
+            action_name
+        ):
             disallowed.append(action_name)
 
     return sorted(disallowed)
@@ -84,7 +87,7 @@ def check_disallowed_actions(syntax: str) -> List[str]:
 
 def uses_history_action(syntax: str) -> bool:
     """Check if the syntax uses the [[@history]] action."""
-    pattern = re.compile(r'\[\[@history(?:[:\|]|]])')
+    pattern = re.compile(r"\[\[@history(?:[:\|]|]])")
     return bool(pattern.search(syntax))
 
 
@@ -142,7 +145,9 @@ def decode_state(encoded: str) -> dict:
 
         # Use max_length to limit decompressed size and prevent decompression bombs
         decompressor = zlib.decompressobj()
-        json_bytes = decompressor.decompress(compressed, max_length=STRUCKDOWN_STATE_MAX_SIZE)
+        json_bytes = decompressor.decompress(
+            compressed, max_length=STRUCKDOWN_STATE_MAX_SIZE
+        )
 
         # Check if there's unconsumed data (meaning we hit the limit)
         if decompressor.unconsumed_tail:
@@ -206,10 +211,13 @@ def load_zip_data(file_path: Path) -> Dict:
 
     with zipfile.ZipFile(path, "r") as zf:
         # Security: check total uncompressed size and file count
-        file_infos = [info for info in zf.infolist()
-                      if not info.is_dir()
-                      and not info.filename.startswith("__")
-                      and not info.filename.startswith(".")]
+        file_infos = [
+            info
+            for info in zf.infolist()
+            if not info.is_dir()
+            and not info.filename.startswith("__")
+            and not info.filename.startswith(".")
+        ]
 
         if len(file_infos) > STRUCKDOWN_ZIP_MAX_FILES:
             raise ValueError(
@@ -227,10 +235,12 @@ def load_zip_data(file_path: Path) -> Dict:
                 content = zf.read(info.filename).decode("utf-8", errors="replace")
                 # Sanitise filename (strip path components for security)
                 safe_filename = Path(info.filename).name
-                rows.append({
-                    "source": content,
-                    "filename": safe_filename,
-                })
+                rows.append(
+                    {
+                        "source": content,
+                        "filename": safe_filename,
+                    }
+                )
             except Exception:
                 # Skip files that can't be read as text
                 continue
@@ -365,7 +375,9 @@ async def run_batch_streaming(
 
     # Use a larger buffer for slot-level events
     buffer_size = len(rows) * 20 if slot_level else len(rows)
-    send_channel, receive_channel = anyio.create_memory_object_stream(max_buffer_size=buffer_size)
+    send_channel, receive_channel = anyio.create_memory_object_stream(
+        max_buffer_size=buffer_size
+    )
 
     async def process_row(index: int, row: Dict):
         async with semaphore:
@@ -383,14 +395,16 @@ async def run_batch_streaming(
                     ):
                         if event.type == "slot_completed":
                             outputs[event.slot_key] = event.result.output
-                            await send_channel.send({
-                                "type": "slot",
-                                "row_index": index,
-                                "slot_key": event.slot_key,
-                                "value": event.result.output,
-                                "elapsed_ms": event.elapsed_ms,
-                                "was_cached": event.was_cached,
-                            })
+                            await send_channel.send(
+                                {
+                                    "type": "slot",
+                                    "row_index": index,
+                                    "slot_key": event.slot_key,
+                                    "value": event.result.output,
+                                    "elapsed_ms": event.elapsed_ms,
+                                    "was_cached": event.was_cached,
+                                }
+                            )
                         elif event.type == "complete":
                             row_result = {
                                 "type": "row_complete",

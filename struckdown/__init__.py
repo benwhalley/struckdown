@@ -21,81 +21,39 @@ warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
 logger = logging.getLogger(__name__)
 
-# Re-export from errors module
-from .errors import (
-    StruckdownSafe,
-    StruckdownTemplateError,
-    StruckdownLLMError,
-)
-
-# Re-export from results module
-from .results import (
-    SegmentResult,
-    ChatterResult,
-    CostSummary,
-    StruckdownEarlyTermination,
-    get_run_id,
-    new_run,
-    progress_tracking,
-)
-
-# Re-export from jinja_utils module
-from .jinja_utils import (
-    SilentUndefined,
-    make_strict_undefined,
-    mark_struckdown_safe,
-    struckdown_finalize,
-    escape_struckdown_syntax,
-    escape_context_dict,
-    extract_jinja_variables,
-)
-
-# Re-export from llm module
-from .llm import (
-    LC,
-    LLM,
-    LLMCredentials,
-    structured_chat,
-    get_embedding,
-    _call_llm_cached,
-    enable_api_debug,
-    disable_api_debug,
-    get_llm_semaphore,
-    MAX_LLM_CONCURRENCY,
-)
-
-# Re-export from execution module
-from .execution import (
-    SegmentDependencyGraph,
-    merge_contexts,
-)
-
 # Re-export from other modules
 from .actions import Actions
 from .cache import clear_cache
-from .response_types import ResponseTypes
-from .return_type_models import ACTION_LOOKUP, LLMConfig
-from .validation import ParsedOptions, parse_options, validate_number_constraints
-
-# Import internal modules for chatter implementation
-from .jinja_analysis import analyze_template, TemplateAnalysis
-from .parsing import (
-    _add_default_completion_if_needed,
-    parser,
-    parser_with_state,
-    resolve_includes,
-    split_by_checkpoint,
-)
-from .segment_processor import process_segment_with_delta, process_segment_with_delta_incremental
-
+# Re-export from errors module
+from .errors import StruckdownLLMError, StruckdownSafe, StruckdownTemplateError
+# Re-export from execution module
+from .execution import SegmentDependencyGraph, merge_contexts
 # Re-export from incremental module
-from .incremental import (
-    IncrementalEvent,
-    SlotCompleted,
-    CheckpointReached,
-    ProcessingComplete,
-    ProcessingError,
-)
+from .incremental import (CheckpointReached, IncrementalEvent,
+                          ProcessingComplete, ProcessingError, SlotCompleted)
+# Import internal modules for chatter implementation
+from .jinja_analysis import TemplateAnalysis, analyze_template
+# Re-export from jinja_utils module
+from .jinja_utils import (SilentUndefined, escape_context_dict,
+                          escape_struckdown_syntax, extract_jinja_variables,
+                          make_strict_undefined, mark_struckdown_safe,
+                          struckdown_finalize)
+# Re-export from llm module
+from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
+                  _call_llm_cached, disable_api_debug, enable_api_debug,
+                  get_embedding, get_llm_semaphore, structured_chat)
+from .parsing import (_add_default_completion_if_needed, parser,
+                      parser_with_state, resolve_includes, split_by_checkpoint)
+from .response_types import ResponseTypes
+# Re-export from results module
+from .results import (ChatterResult, CostSummary, SegmentResult,
+                      StruckdownEarlyTermination, get_run_id, new_run,
+                      progress_tracking)
+from .return_type_models import ACTION_LOOKUP, LLMConfig
+from .segment_processor import (process_segment_with_delta,
+                                process_segment_with_delta_incremental)
+from .validation import (ParsedOptions, parse_options,
+                         validate_number_constraints)
 
 
 async def chatter_async(
@@ -133,8 +91,10 @@ async def chatter_async(
         strict_undefined: If True, raise error when template variables not found
     """
     import asyncio
-    from .segment_processor import extract_system_message, extract_header_message
+
     from .parsing import parse_syntax
+    from .segment_processor import (extract_header_message,
+                                    extract_system_message)
 
     if model is None:
         model = LLM()
@@ -171,15 +131,17 @@ async def chatter_async(
         system_template, body_after_system = extract_system_message(raw_segment_text)
         header_template, body_template = extract_header_message(body_after_system)
         analysis = analyze_template(body_template)
-        segment_data.append({
-            "idx": seg_idx,
-            "name": segment_name,
-            "system_template": system_template,
-            "header_template": header_template,
-            "body_template": body_template,
-            "analysis": analysis,
-            "has_slots": len(analysis.slots) > 0,
-        })
+        segment_data.append(
+            {
+                "idx": seg_idx,
+                "name": segment_name,
+                "system_template": system_template,
+                "header_template": header_template,
+                "body_template": body_template,
+                "analysis": analysis,
+                "has_slots": len(analysis.slots) > 0,
+            }
+        )
 
     # Build dependency graph from raw segments (only those with slots)
     # Map: parsed_idx -> raw_idx for segments that have slots
@@ -208,7 +170,8 @@ async def chatter_async(
         plan = []
         while remaining:
             ready = {
-                idx for idx in remaining
+                idx
+                for idx in remaining
                 if all(dep not in remaining for dep in raw_dependencies[idx])
             }
             if not ready and remaining:
@@ -222,7 +185,12 @@ async def chatter_async(
     execution_plan = get_raw_execution_plan()
     logger.debug(f"Execution plan (raw indices): {execution_plan}")
 
-    async def process_single_segment(seg_idx: int, ctx_snapshot: dict, globals_snapshot: list, header_globals_snapshot: list):
+    async def process_single_segment(
+        seg_idx: int,
+        ctx_snapshot: dict,
+        globals_snapshot: list,
+        header_globals_snapshot: list,
+    ):
         """Process a single segment with the given context snapshot."""
         data = segment_data[seg_idx]
         body_template = data["body_template"]
@@ -232,13 +200,21 @@ async def chatter_async(
         local_header_globals = header_globals_snapshot.copy()
 
         if data["system_template"]:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_system = env.from_string(data["system_template"]).render(**ctx_snapshot)
+            env = ImmutableSandboxedEnvironment(
+                undefined=SilentUndefined, finalize=struckdown_finalize
+            )
+            rendered_system = env.from_string(data["system_template"]).render(
+                **ctx_snapshot
+            )
             local_globals.append(rendered_system)
 
         if data["header_template"]:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_header = env.from_string(data["header_template"]).render(**ctx_snapshot)
+            env = ImmutableSandboxedEnvironment(
+                undefined=SilentUndefined, finalize=struckdown_finalize
+            )
+            rendered_header = env.from_string(data["header_template"]).render(
+                **ctx_snapshot
+            )
             local_header_globals.append(rendered_header)
 
         logger.debug(
@@ -263,12 +239,20 @@ async def chatter_async(
     for seg_idx, data in enumerate(segment_data):
         if not data["has_slots"]:
             if data["system_template"]:
-                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_system = env.from_string(data["system_template"]).render(**accumulated_context)
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered_system = env.from_string(data["system_template"]).render(
+                    **accumulated_context
+                )
                 accumulated_globals.append(rendered_system)
             if data["header_template"]:
-                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_header = env.from_string(data["header_template"]).render(**accumulated_context)
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered_header = env.from_string(data["header_template"]).render(
+                    **accumulated_context
+                )
                 accumulated_header_globals.append(rendered_header)
 
     # Process batches according to execution plan
@@ -278,7 +262,10 @@ async def chatter_async(
 
         tasks = [
             process_single_segment(
-                seg_idx, accumulated_context, accumulated_globals, accumulated_header_globals
+                seg_idx,
+                accumulated_context,
+                accumulated_globals,
+                accumulated_header_globals,
             )
             for seg_idx in batch
         ]
@@ -287,22 +274,34 @@ async def chatter_async(
             results = await asyncio.gather(*tasks)
 
             # Process results in segment order for deterministic output
-            for seg_idx, result, sys_tpl, hdr_tpl in sorted(results, key=lambda x: x[0]):
+            for seg_idx, result, sys_tpl, hdr_tpl in sorted(
+                results, key=lambda x: x[0]
+            ):
                 final.update(result.results)
 
                 # Accumulate system/header messages
                 if sys_tpl:
-                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                    rendered_system = env.from_string(sys_tpl).render(**accumulated_context)
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered_system = env.from_string(sys_tpl).render(
+                        **accumulated_context
+                    )
                     accumulated_globals.append(rendered_system)
                 if hdr_tpl:
-                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                    rendered_header = env.from_string(hdr_tpl).render(**accumulated_context)
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered_header = env.from_string(hdr_tpl).render(
+                        **accumulated_context
+                    )
                     accumulated_header_globals.append(rendered_header)
 
                 # Update context
                 for key, seg_result in result.results.items():
-                    escaped_value, _ = escape_struckdown_syntax(seg_result.output, var_name=key)
+                    escaped_value, _ = escape_struckdown_syntax(
+                        seg_result.output, var_name=key
+                    )
                     accumulated_context[key] = escaped_value
 
         except Exception as e:
@@ -379,12 +378,16 @@ async def chatter_incremental_async(
         - ProcessingError: if an error occurs (includes partial results)
     """
     import asyncio
-    from .segment_processor import extract_system_message, extract_header_message
+
+    from .segment_processor import (extract_header_message,
+                                    extract_system_message)
 
     if model is None:
         model = LLM()
 
-    logger.debug(f"\n\n{LC.ORANGE}Chatter Incremental Prompt: {multipart_prompt}{LC.RESET}\n\n")
+    logger.debug(
+        f"\n\n{LC.ORANGE}Chatter Incremental Prompt: {multipart_prompt}{LC.RESET}\n\n"
+    )
 
     # Configure search paths for includes
     search_paths = [template_path.parent] if template_path else []
@@ -416,15 +419,17 @@ async def chatter_incremental_async(
         system_template, body_after_system = extract_system_message(raw_segment_text)
         header_template, body_template = extract_header_message(body_after_system)
         analysis = analyze_template(body_template)
-        segment_data.append({
-            "idx": seg_idx,
-            "name": segment_name,
-            "system_template": system_template,
-            "header_template": header_template,
-            "body_template": body_template,
-            "analysis": analysis,
-            "has_slots": len(analysis.slots) > 0,
-        })
+        segment_data.append(
+            {
+                "idx": seg_idx,
+                "name": segment_name,
+                "system_template": system_template,
+                "header_template": header_template,
+                "body_template": body_template,
+                "analysis": analysis,
+                "has_slots": len(analysis.slots) > 0,
+            }
+        )
 
     # Build dependency graph from raw segments (only those with slots)
     slots_by_raw_idx = {}
@@ -449,7 +454,8 @@ async def chatter_incremental_async(
         plan = []
         while remaining:
             ready = {
-                idx for idx in remaining
+                idx
+                for idx in remaining
                 if all(dep not in remaining for dep in raw_dependencies[idx])
             }
             if not ready and remaining:
@@ -467,15 +473,28 @@ async def chatter_incremental_async(
     for seg_idx, data in enumerate(segment_data):
         if not data["has_slots"]:
             if data["system_template"]:
-                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_system = env.from_string(data["system_template"]).render(**accumulated_context)
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered_system = env.from_string(data["system_template"]).render(
+                    **accumulated_context
+                )
                 accumulated_globals.append(rendered_system)
             if data["header_template"]:
-                env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                rendered_header = env.from_string(data["header_template"]).render(**accumulated_context)
+                env = ImmutableSandboxedEnvironment(
+                    undefined=SilentUndefined, finalize=struckdown_finalize
+                )
+                rendered_header = env.from_string(data["header_template"]).render(
+                    **accumulated_context
+                )
                 accumulated_header_globals.append(rendered_header)
 
-    async def process_segment_collect_events(seg_idx: int, ctx_snapshot: dict, globals_snapshot: list, header_globals_snapshot: list):
+    async def process_segment_collect_events(
+        seg_idx: int,
+        ctx_snapshot: dict,
+        globals_snapshot: list,
+        header_globals_snapshot: list,
+    ):
         """Process a segment and collect all events."""
         data = segment_data[seg_idx]
         body_template = data["body_template"]
@@ -484,13 +503,21 @@ async def chatter_incremental_async(
         local_header_globals = header_globals_snapshot.copy()
 
         if data["system_template"]:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_system = env.from_string(data["system_template"]).render(**ctx_snapshot)
+            env = ImmutableSandboxedEnvironment(
+                undefined=SilentUndefined, finalize=struckdown_finalize
+            )
+            rendered_system = env.from_string(data["system_template"]).render(
+                **ctx_snapshot
+            )
             local_globals.append(rendered_system)
 
         if data["header_template"]:
-            env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-            rendered_header = env.from_string(data["header_template"]).render(**ctx_snapshot)
+            env = ImmutableSandboxedEnvironment(
+                undefined=SilentUndefined, finalize=struckdown_finalize
+            )
+            rendered_header = env.from_string(data["header_template"]).render(
+                **ctx_snapshot
+            )
             local_header_globals.append(rendered_header)
 
         events = []
@@ -508,7 +535,13 @@ async def chatter_incremental_async(
         ):
             events.append(event)
 
-        return seg_idx, events, data["system_template"], data["header_template"], data["name"]
+        return (
+            seg_idx,
+            events,
+            data["system_template"],
+            data["header_template"],
+            data["name"],
+        )
 
     try:
         # Process batches according to execution plan
@@ -519,7 +552,10 @@ async def chatter_incremental_async(
             # Launch all segment tasks in parallel
             tasks = [
                 process_segment_collect_events(
-                    seg_idx, accumulated_context, accumulated_globals, accumulated_header_globals
+                    seg_idx,
+                    accumulated_context,
+                    accumulated_globals,
+                    accumulated_header_globals,
                 )
                 for seg_idx in batch
             ]
@@ -528,7 +564,9 @@ async def chatter_incremental_async(
             results = await asyncio.gather(*tasks)
 
             # Yield events in segment order for determinism
-            for seg_idx, events, sys_tpl, hdr_tpl, seg_name in sorted(results, key=lambda x: x[0]):
+            for seg_idx, events, sys_tpl, hdr_tpl, seg_name in sorted(
+                results, key=lambda x: x[0]
+            ):
                 for event in events:
                     all_results[event.slot_key] = event.result
                     yield event
@@ -542,17 +580,27 @@ async def chatter_incremental_async(
 
                 # Accumulate system/header messages
                 if sys_tpl:
-                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                    rendered_system = env.from_string(sys_tpl).render(**accumulated_context)
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered_system = env.from_string(sys_tpl).render(
+                        **accumulated_context
+                    )
                     accumulated_globals.append(rendered_system)
                 if hdr_tpl:
-                    env = ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
-                    rendered_header = env.from_string(hdr_tpl).render(**accumulated_context)
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined, finalize=struckdown_finalize
+                    )
+                    rendered_header = env.from_string(hdr_tpl).render(
+                        **accumulated_context
+                    )
                     accumulated_header_globals.append(rendered_header)
 
                 # Update context from this segment's results
                 for event in events:
-                    escaped_value, _ = escape_struckdown_syntax(event.result.output, var_name=event.slot_key)
+                    escaped_value, _ = escape_struckdown_syntax(
+                        event.result.output, var_name=event.slot_key
+                    )
                     accumulated_context[event.slot_key] = escaped_value
 
     except Exception as e:
@@ -565,7 +613,9 @@ async def chatter_incremental_async(
         )
         return
 
-    logger.debug(f"\n\n{LC.GREEN}Chatter Incremental Complete: {all_results.response}{LC.RESET}\n\n")
+    logger.debug(
+        f"\n\n{LC.GREEN}Chatter Incremental Complete: {all_results.response}{LC.RESET}\n\n"
+    )
     yield ProcessingComplete(result=all_results, early_termination=False)
 
 

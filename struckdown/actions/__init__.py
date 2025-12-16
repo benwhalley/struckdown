@@ -116,7 +116,9 @@ class Actions:
     """
 
     # Registry stores: (func, on_error, default_save, return_type, default, allow_remote_use, role)
-    _registry: dict[str, tuple[Callable, ErrorStrategy, bool, type | None, Any, bool, MessageRole]] = {}
+    _registry: dict[
+        str, tuple[Callable, ErrorStrategy, bool, type | None, Any, bool, MessageRole]
+    ] = {}
 
     @classmethod
     def register(
@@ -216,9 +218,15 @@ class Actions:
         if action_name not in cls._registry:
             return None
 
-        func, on_error, default_save, return_type, default_value, allow_remote_use, role = cls._registry[
-            action_name
-        ]
+        (
+            func,
+            on_error,
+            default_save,
+            return_type,
+            default_value,
+            allow_remote_use,
+            role,
+        ) = cls._registry[action_name]
 
         # create response model
         class ActionResult(ResponseModel):
@@ -323,7 +331,10 @@ class Actions:
                         continue  # context is always dict, passed separately
 
                     # skip *args and **kwargs - they're catch-alls, not validated params
-                    if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    if param.kind in (
+                        inspect.Parameter.VAR_POSITIONAL,
+                        inspect.Parameter.VAR_KEYWORD,
+                    ):
                         continue
 
                     # get type hint for this parameter
@@ -507,7 +518,8 @@ class Actions:
             List of action names with allow_remote_use=True
         """
         return [
-            name for name, reg in cls._registry.items()
+            name
+            for name, reg in cls._registry.items()
             if reg[5]  # sixth element is allow_remote_use
         ]
 
@@ -687,7 +699,7 @@ discover_tools = discover_actions
 # Utils -- URL fetching, HTML conversion
 # =============================================================================
 
-DEFAULT_MAX_CHARS = 32000*2
+DEFAULT_MAX_CHARS = 32000 * 2
 DEFAULT_TIMEOUT = int(os.environ.get("STRUCKDOWN_WEB_FETCH_TIMEOUT", "8"))
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0"
 
@@ -822,9 +834,7 @@ def fetch_url(
         status = e.response.status_code
         # fallback to playwright on 403/401 (bot detection)
         if status in (401, 403) and PLAYWRIGHT_AVAILABLE:
-            logger.info(
-                f"HTTP {status} from {url}, retrying with Playwright..."
-            )
+            logger.info(f"HTTP {status} from {url}, retrying with Playwright...")
             return fetch_url_playwright(url, timeout, user_agent)
         raise StruckdownFetchError(url, f"HTTP {status}")
     except requests.exceptions.RequestException as e:
@@ -932,19 +942,13 @@ __all__ = [
 # (the @Actions.register decorators run on import)
 # =============================================================================
 
-from . import set_
-from . import break_
-from . import fetch
-from . import markdownify
-from . import search
-from . import timestamp
-from . import history
-from . import evidence
-
+from . import (break_, evidence, fetch, history, markdownify, search, set_,
+               timestamp)
 
 # =============================================================================
 # Built-in noop action for unknown/unregistered actions
 # =============================================================================
+
 
 @Actions.register("noop", on_error="return_empty", default_save=False)
 def noop_action(**kwargs) -> str:

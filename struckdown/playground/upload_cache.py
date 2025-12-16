@@ -22,9 +22,15 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 _default_cache_dir = Path("~/.struckdown/uploads").expanduser()
-UPLOAD_CACHE_DIR = Path(os.environ.get("STRUCKDOWN_UPLOAD_CACHE_DIR", str(_default_cache_dir)))
-UPLOAD_CACHE_SIZE_MB = int(os.environ.get("STRUCKDOWN_UPLOAD_CACHE_SIZE", "1024"))  # 1GB
-UPLOAD_MAX_AGE_SECONDS = int(os.environ.get("STRUCKDOWN_UPLOAD_MAX_AGE", "86400"))  # 1 day
+UPLOAD_CACHE_DIR = Path(
+    os.environ.get("STRUCKDOWN_UPLOAD_CACHE_DIR", str(_default_cache_dir))
+)
+UPLOAD_CACHE_SIZE_MB = int(
+    os.environ.get("STRUCKDOWN_UPLOAD_CACHE_SIZE", "1024")
+)  # 1GB
+UPLOAD_MAX_AGE_SECONDS = int(
+    os.environ.get("STRUCKDOWN_UPLOAD_MAX_AGE", "86400")
+)  # 1 day
 
 
 def _ensure_cache_dir() -> None:

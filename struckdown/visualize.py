@@ -6,7 +6,7 @@ Shows structure, dependencies, and flow of completions in Mermaid DAG format.
 
 import re
 import textwrap
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Optional, Set
 
 from struckdown import extract_jinja_variables
 from struckdown.parsing import get_completion_type
@@ -48,21 +48,21 @@ def analyze_sections(sections: List[Dict]) -> Dict:
 
     # Analyze each section
     structure = {
-        'sections': [],
-        'all_completions': set(),
-        'all_dependencies': [],
-        'blocking_dependencies': []
+        "sections": [],
+        "all_completions": set(),
+        "all_dependencies": [],
+        "blocking_dependencies": [],
     }
 
     # First pass: collect completions and variable dependencies
     for section_idx, section in enumerate(sections):
         # Extract segment name if available (NamedSegment has segment_name property)
-        segment_name = getattr(section, 'segment_name', None)
+        segment_name = getattr(section, "segment_name", None)
         section_data = {
-            'index': section_idx,
-            'name': segment_name,
-            'completions': [],
-            'has_blocking': False
+            "index": section_idx,
+            "name": segment_name,
+            "completions": [],
+            "has_blocking": False,
         }
 
         for key, prompt_part in section.items():
@@ -76,46 +76,45 @@ def analyze_sections(sections: List[Dict]) -> Dict:
             line_num = prompt_part.line_number
 
             # Check if this completion is blocking
-            is_blocking = hasattr(prompt_part, 'block') and prompt_part.block
+            is_blocking = hasattr(prompt_part, "block") and prompt_part.block
             if is_blocking:
-                section_data['has_blocking'] = True
+                section_data["has_blocking"] = True
 
             # Check if this is an end action (terminates execution)
             is_end_action = (
-                hasattr(prompt_part, 'action_type') and
-                prompt_part.action_type == 'end'
+                hasattr(prompt_part, "action_type") and prompt_part.action_type == "end"
             )
             if is_end_action:
-                section_data['has_end_action'] = True
+                section_data["has_end_action"] = True
 
             completion_data = {
-                'key': key,
-                'type': comp_type,
-                'depends_on': sorted(depends_on),
-                'line_number': line_num,
-                'is_blocking': is_blocking
+                "key": key,
+                "type": comp_type,
+                "depends_on": sorted(depends_on),
+                "line_number": line_num,
+                "is_blocking": is_blocking,
             }
 
-            section_data['completions'].append(completion_data)
+            section_data["completions"].append(completion_data)
             all_completions.add(key)
 
             # Record dependencies
             for dep in depends_on:
                 all_dependencies.append((dep, key))
 
-        structure['sections'].append(section_data)
+        structure["sections"].append(section_data)
 
     # Second pass: handle blocking dependencies
     # If a section has a blocking completion, all subsequent sections depend on it
     # BUT: Skip sections with [[!end]] actions - they terminate execution, not block it
-    for i, section in enumerate(structure['sections']):
-        if section.get('has_blocking') and not section.get('has_end_action'):
-            for j in range(i + 1, len(structure['sections'])):
+    for i, section in enumerate(structure["sections"]):
+        if section.get("has_blocking") and not section.get("has_end_action"):
+            for j in range(i + 1, len(structure["sections"])):
                 blocking_dependencies.append((i, j))
 
-    structure['all_completions'] = all_completions
-    structure['all_dependencies'] = all_dependencies
-    structure['blocking_dependencies'] = blocking_dependencies
+    structure["all_completions"] = all_completions
+    structure["all_dependencies"] = all_dependencies
+    structure["blocking_dependencies"] = blocking_dependencies
 
     return structure
 
@@ -131,12 +130,9 @@ def _wrap_text(text: str, max_length: int = 25) -> str:
         Text with <br/> line breaks inserted
     """
     lines = textwrap.wrap(
-        text,
-        width=max_length,
-        break_long_words=False,
-        break_on_hyphens=False
+        text, width=max_length, break_long_words=False, break_on_hyphens=False
     )
-    return '<br/>'.join(lines)
+    return "<br/>".join(lines)
 
 
 def _escape_for_summary(text: str) -> str:
@@ -158,8 +154,8 @@ def _escape_for_summary(text: str) -> str:
     escaped, _ = escape_struckdown_syntax(text)
 
     # Then escape template syntax for Jinja2
-    escaped = escaped.replace('{{', r'\{\{').replace('}}', r'\}\}')
-    escaped = escaped.replace('[[', r'\[\[').replace(']]', r'\]\]')
+    escaped = escaped.replace("{{", r"\{\{").replace("}}", r"\}\}")
+    escaped = escaped.replace("[[", r"\[\[").replace("]]", r"\]\]")
 
     return escaped
 
@@ -174,57 +170,59 @@ def generate_mermaid_dag(structure: Dict, title: str = "Struckdown") -> str:
     Returns:
         Mermaid diagram as string
     """
-    lines = ['graph TD']
+    lines = ["graph TD"]
 
     # Track which variables are defined vs referenced
-    defined_vars = structure['all_completions']
-    referenced_vars = {dep for dep, _ in structure['all_dependencies']}
+    defined_vars = structure["all_completions"]
+    referenced_vars = {dep for dep, _ in structure["all_dependencies"]}
 
     # External inputs (referenced but not defined)
     external_inputs = referenced_vars - defined_vars
 
     # Add external inputs
     for var in sorted(external_inputs):
-        lines.append(f'    {var}([{var}])')
+        lines.append(f"    {var}([{var}])")
 
     if external_inputs:
-        lines.append('')
+        lines.append("")
 
     # Build mapping of completion variable -> section index (for unique node IDs)
     completion_to_section_map = {}
-    for section in structure['sections']:
-        for comp in section['completions']:
-            completion_to_section_map[comp['key']] = section['index']
+    for section in structure["sections"]:
+        for comp in section["completions"]:
+            completion_to_section_map[comp["key"]] = section["index"]
 
     # Add sections with completions
-    for section in structure['sections']:
-        section_idx = section['index']
-        section_name = section.get('name')
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        section_name = section.get("name")
         # Use segment name if available, otherwise fall back to "Checkpoint N"
-        section_label = section_name if section_name else f"Checkpoint {section_idx + 1}"
+        section_label = (
+            section_name if section_name else f"Checkpoint {section_idx + 1}"
+        )
         lines.append(f'    subgraph S{section_idx}["S{section_idx}: {section_label}"]')
 
-        for comp in section['completions']:
-            key = comp['key']
-            depends_on = comp['depends_on']
-            line_num = comp.get('line_number', 0)
-            is_blocking = comp.get('is_blocking', False)
+        for comp in section["completions"]:
+            key = comp["key"]
+            depends_on = comp["depends_on"]
+            line_num = comp.get("line_number", 0)
+            is_blocking = comp.get("is_blocking", False)
 
             # Use unique node ID: section_index + key
-            node_id = f'S{section_idx}_{key}'
+            node_id = f"S{section_idx}_{key}"
 
             # Format label with line number and dependencies
             if line_num:
-                name_part = f'<strong>{key}</strong>: <small>{line_num}</small>'
+                name_part = f"<strong>{key}</strong>: <small>{line_num}</small>"
             else:
                 name_part = key
 
             # Add blocking marker
             if is_blocking:
-                name_part += ' <strong>🔒</strong>'
+                name_part += " <strong>🔒</strong>"
 
             if depends_on:
-                deps_str = ', '.join(depends_on)
+                deps_str = ", ".join(depends_on)
                 wrapped_deps = _wrap_text(deps_str, max_length=25)
                 label = f'{name_part}<br/>← <span class="dependencies">{wrapped_deps}</span>'
             else:
@@ -232,23 +230,23 @@ def generate_mermaid_dag(structure: Dict, title: str = "Struckdown") -> str:
 
             lines.append(f'        {node_id}["{label}"]')
 
-        lines.append('    end')
-        lines.append('')
+        lines.append("    end")
+        lines.append("")
 
     # Build mapping of completion variable -> section index where it's defined
     # Handle duplicates: for each target, find which definition of dep it sees
 
     # Add dependencies
-    lines.append('    %% Dependencies')
+    lines.append("    %% Dependencies")
 
     # Add explicit dependencies from {{variable}} references
-    for dep, target in structure['all_dependencies']:
+    for dep, target in structure["all_dependencies"]:
         # Find which section defines target
         target_section = None
-        for section in structure['sections']:
-            for comp in section['completions']:
-                if comp['key'] == target:
-                    target_section = section['index']
+        for section in structure["sections"]:
+            for comp in section["completions"]:
+                if comp["key"] == target:
+                    target_section = section["index"]
                     break
             if target_section is not None:
                 break
@@ -259,68 +257,70 @@ def generate_mermaid_dag(structure: Dict, title: str = "Struckdown") -> str:
         dep_section = None
         if target_section is not None:
             # First check earlier sections (in reverse order for most recent)
-            for section in reversed(structure['sections'][:target_section]):
-                for comp in section['completions']:
-                    if comp['key'] == dep:
-                        dep_section = section['index']
+            for section in reversed(structure["sections"][:target_section]):
+                for comp in section["completions"]:
+                    if comp["key"] == dep:
+                        dep_section = section["index"]
                         break
                 if dep_section is not None:
                     break
 
             # If not found in earlier sections, check same section (for internal refs)
             if dep_section is None:
-                current_section = structure['sections'][target_section]
-                for comp in current_section['completions']:
-                    if comp['key'] == dep:
+                current_section = structure["sections"][target_section]
+                for comp in current_section["completions"]:
+                    if comp["key"] == dep:
                         dep_section = target_section
                         break
 
         # Skip arrows from sections with [[!end]] to later sections
         # (those later sections never execute if [[!end]] triggers)
         if dep_section is not None and target_section is not None:
-            dep_sec_data = structure['sections'][dep_section]
-            if dep_sec_data.get('has_end_action') and dep_section < target_section:
+            dep_sec_data = structure["sections"][dep_section]
+            if dep_sec_data.get("has_end_action") and dep_section < target_section:
                 continue  # Skip this arrow
 
         # Create node IDs with section prefixes
-        dep_id = f'S{dep_section}_{dep}' if dep_section is not None else dep
-        target_id = f'S{target_section}_{target}' if target_section is not None else target
+        dep_id = f"S{dep_section}_{dep}" if dep_section is not None else dep
+        target_id = (
+            f"S{target_section}_{target}" if target_section is not None else target
+        )
 
-        lines.append(f'    {dep_id} --> {target_id}')
+        lines.append(f"    {dep_id} --> {target_id}")
 
-    lines.append('')
+    lines.append("")
 
     # Add implicit sequential dependencies within sections
-    lines.append('    %% Sequential dependencies within sections')
-    for section in structure['sections']:
-        section_idx = section['index']
-        completions = section['completions']
+    lines.append("    %% Sequential dependencies within sections")
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        completions = section["completions"]
         for i in range(len(completions) - 1):
-            current = completions[i]['key']
-            next_comp = completions[i + 1]['key']
-            current_id = f'S{section_idx}_{current}'
-            next_id = f'S{section_idx}_{next_comp}'
-            lines.append(f'    {current_id} -.-> {next_id}')
+            current = completions[i]["key"]
+            next_comp = completions[i + 1]["key"]
+            current_id = f"S{section_idx}_{current}"
+            next_id = f"S{section_idx}_{next_comp}"
+            lines.append(f"    {current_id} -.-> {next_id}")
 
-    lines.append('')
+    lines.append("")
 
     # Add styling
-    lines.append('    %% Styling')
-    lines.append('    classDef think fill:#90EE90')
-    lines.append('    classDef respond fill:#87CEEB')
-    lines.append('    classDef pick fill:#FFD700')
-    lines.append('    classDef extract fill:#FFA07A')
-    lines.append('    classDef action fill:#DDA0DD')
-    lines.append('    classDef input fill:#FFB6C1')
-    lines.append('    classDef default fill:#D3D3D3')
-    lines.append('')
+    lines.append("    %% Styling")
+    lines.append("    classDef think fill:#90EE90")
+    lines.append("    classDef respond fill:#87CEEB")
+    lines.append("    classDef pick fill:#FFD700")
+    lines.append("    classDef extract fill:#FFA07A")
+    lines.append("    classDef action fill:#DDA0DD")
+    lines.append("    classDef input fill:#FFB6C1")
+    lines.append("    classDef default fill:#D3D3D3")
+    lines.append("")
 
     # Classify nodes by type (using unique node IDs)
     by_type = {}
-    for section in structure['sections']:
-        section_idx = section['index']
-        for comp in section['completions']:
-            comp_type = comp['type']
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        for comp in section["completions"]:
+            comp_type = comp["type"]
             node_id = f'S{section_idx}_{comp["key"]}'
             by_type.setdefault(comp_type, []).append(node_id)
 
@@ -332,7 +332,7 @@ def generate_mermaid_dag(structure: Dict, title: str = "Struckdown") -> str:
         if node_ids:
             lines.append(f'    class {",".join(node_ids)} {comp_type}')
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def generate_simple_slot_dag(structure: Dict) -> str:
@@ -344,42 +344,44 @@ def generate_simple_slot_dag(structure: Dict) -> str:
     Returns:
         Mermaid diagram as string
     """
-    lines = ['graph TD']
+    lines = ["graph TD"]
 
     # Track which variables are defined vs referenced
-    defined_vars = structure['all_completions']
-    referenced_vars = {dep for dep, _ in structure['all_dependencies']}
+    defined_vars = structure["all_completions"]
+    referenced_vars = {dep for dep, _ in structure["all_dependencies"]}
 
     # External inputs (referenced but not defined)
     external_inputs = referenced_vars - defined_vars
 
     # Add external inputs
     for var in sorted(external_inputs):
-        lines.append(f'    {var}([{var}])')
+        lines.append(f"    {var}([{var}])")
 
     if external_inputs:
-        lines.append('')
+        lines.append("")
 
     # Add sections with simple slot nodes
-    for section in structure['sections']:
-        section_idx = section['index']
-        section_name = section.get('name')
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        section_name = section.get("name")
         # Use segment name if available, otherwise fall back to "Checkpoint N"
-        section_label = section_name if section_name else f"Checkpoint {section_idx + 1}"
+        section_label = (
+            section_name if section_name else f"Checkpoint {section_idx + 1}"
+        )
         lines.append(f'    subgraph S{section_idx}["{section_label}"]')
 
-        for comp in section['completions']:
-            key = comp['key']
+        for comp in section["completions"]:
+            key = comp["key"]
             lines.append(f'        {key}["{key}"]')
 
-        lines.append('    end')
-        lines.append('')
+        lines.append("    end")
+        lines.append("")
 
     # Add explicit dependencies from {{variable}} references
-    for dep, target in structure['all_dependencies']:
-        lines.append(f'    {dep} --> {target}')
+    for dep, target in structure["all_dependencies"]:
+        lines.append(f"    {dep} --> {target}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def generate_section_dag(structure: Dict) -> str:
@@ -391,71 +393,75 @@ def generate_section_dag(structure: Dict) -> str:
     Returns:
         Mermaid diagram as string
     """
-    lines = ['graph TD']
+    lines = ["graph TD"]
 
     # Build mapping of completion variable -> section index
     completion_to_section = {}
-    for section in structure['sections']:
-        section_idx = section['index']
-        for comp in section['completions']:
-            completion_to_section[comp['key']] = section_idx
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        for comp in section["completions"]:
+            completion_to_section[comp["key"]] = section_idx
 
     # Track which variables are defined vs referenced
-    defined_vars = structure['all_completions']
-    referenced_vars = {dep for dep, _ in structure['all_dependencies']}
+    defined_vars = structure["all_completions"]
+    referenced_vars = {dep for dep, _ in structure["all_dependencies"]}
 
     # External inputs (referenced but not defined)
     external_inputs = referenced_vars - defined_vars
 
     # Add external inputs as a single node if any exist
     if external_inputs:
-        inputs_list = ', '.join(sorted(external_inputs))
+        inputs_list = ", ".join(sorted(external_inputs))
         lines.append(f'    EXT["External: {inputs_list}"]')
-        lines.append('')
+        lines.append("")
 
     # Add section nodes
-    for section in structure['sections']:
-        section_idx = section['index']
-        section_name = section.get('name')
-        slot_names = [comp['key'] for comp in section['completions']]
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        section_name = section.get("name")
+        slot_names = [comp["key"] for comp in section["completions"]]
 
         # Limit slot names to keep labels readable
         max_slots_to_show = 3
         if len(slot_names) <= max_slots_to_show:
-            slots_str = ', '.join(slot_names)
+            slots_str = ", ".join(slot_names)
         else:
-            shown_slots = ', '.join(slot_names[:max_slots_to_show])
-            slots_str = f'{shown_slots} +{len(slot_names) - max_slots_to_show} more'
+            shown_slots = ", ".join(slot_names[:max_slots_to_show])
+            slots_str = f"{shown_slots} +{len(slot_names) - max_slots_to_show} more"
 
         # Use segment name if available, otherwise fall back to "Checkpoint N"
-        section_label = section_name if section_name else f"Checkpoint {section_idx + 1}"
-        label = f'{section_label}<br/>{slots_str}'
+        section_label = (
+            section_name if section_name else f"Checkpoint {section_idx + 1}"
+        )
+        label = f"{section_label}<br/>{slots_str}"
         lines.append(f'    S{section_idx}["{label}"]')
 
-    lines.append('')
+    lines.append("")
 
     # Add styling for cleaner appearance
-    lines.append('    %% Styling')
-    lines.append('    classDef sectionNode fill:#e3f2fd,stroke:#2196f3,stroke-width:2px')
-    lines.append('    classDef extNode fill:#fff3cd,stroke:#ffc107,stroke-width:2px')
+    lines.append("    %% Styling")
+    lines.append(
+        "    classDef sectionNode fill:#e3f2fd,stroke:#2196f3,stroke-width:2px"
+    )
+    lines.append("    classDef extNode fill:#fff3cd,stroke:#ffc107,stroke-width:2px")
     if external_inputs:
-        lines.append('    class EXT extNode')
-    for section in structure['sections']:
+        lines.append("    class EXT extNode")
+    for section in structure["sections"]:
         lines.append(f'    class S{section["index"]} sectionNode')
-    lines.append('')
+    lines.append("")
 
     # Determine section-level dependencies
     section_dependencies = {}  # section_idx -> set of section indices it depends on
-    for section in structure['sections']:
-        section_idx = section['index']
+    for section in structure["sections"]:
+        section_idx = section["index"]
         depends_on_sections = set()
 
         # Collect section-level dependencies (external to this section)
         section_deps = set()
-        for comp in section['completions']:
-            for dep in comp['depends_on']:
+        for comp in section["completions"]:
+            for dep in comp["depends_on"]:
                 # A dependency is "external" if it's not defined in this section
-                if dep not in {c['key'] for c in section['completions']}:
+                if dep not in {c["key"] for c in section["completions"]}:
                     section_deps.add(dep)
 
         # Map dependencies to their sections
@@ -464,13 +470,16 @@ def generate_section_dag(structure: Dict) -> str:
                 dep_section_idx = completion_to_section[dep]
                 # Skip dependencies from sections with [[!end]] to later sections
                 # (those later sections never execute if [[!end]] triggers)
-                dep_section_data = structure['sections'][dep_section_idx]
-                if dep_section_data.get('has_end_action') and dep_section_idx < section_idx:
+                dep_section_data = structure["sections"][dep_section_idx]
+                if (
+                    dep_section_data.get("has_end_action")
+                    and dep_section_idx < section_idx
+                ):
                     continue  # Skip this dependency
                 depends_on_sections.add(dep_section_idx)
             elif dep in external_inputs:
                 # Track external input dependency
-                depends_on_sections.add('EXT')
+                depends_on_sections.add("EXT")
 
         section_dependencies[section_idx] = depends_on_sections
 
@@ -480,7 +489,7 @@ def generate_section_dag(structure: Dict) -> str:
         visited = set()
         to_visit = set(deps_graph.get(section_idx, set()))
         # Exclude 'EXT' from transitive computation
-        to_visit = {s for s in to_visit if s != 'EXT'}
+        to_visit = {s for s in to_visit if s != "EXT"}
 
         while to_visit:
             current = to_visit.pop()
@@ -488,15 +497,19 @@ def generate_section_dag(structure: Dict) -> str:
                 visited.add(current)
                 # Add dependencies of current section
                 current_deps = deps_graph.get(current, set())
-                to_visit.update(s for s in current_deps if s != 'EXT' and s not in visited)
+                to_visit.update(
+                    s for s in current_deps if s != "EXT" and s not in visited
+                )
 
         return visited
 
     # Add blocking dependencies (sections with blocking completions)
     # Only add if not already covered by variable dependencies (directly or transitively)
-    for from_section, to_section in structure.get('blocking_dependencies', []):
+    for from_section, to_section in structure.get("blocking_dependencies", []):
         # Get all sections that to_section already depends on (transitively)
-        all_transitive_deps = get_transitive_dependencies(to_section, section_dependencies)
+        all_transitive_deps = get_transitive_dependencies(
+            to_section, section_dependencies
+        )
 
         # Only add blocking dependency if to_section doesn't already depend on from_section
         if from_section not in all_transitive_deps:
@@ -507,18 +520,18 @@ def generate_section_dag(structure: Dict) -> str:
     # Add dependency arrows
     for section_idx, deps in section_dependencies.items():
         # Separate external and section dependencies for proper sorting
-        ext_deps = [d for d in deps if d == 'EXT']
-        section_deps = [d for d in deps if d != 'EXT']
+        ext_deps = [d for d in deps if d == "EXT"]
+        section_deps = [d for d in deps if d != "EXT"]
 
         # Add external dependencies first
         for dep in ext_deps:
-            lines.append(f'    EXT --> S{section_idx}')
+            lines.append(f"    EXT --> S{section_idx}")
 
         # Add section dependencies in sorted order
         for dep in sorted(section_deps):
-            lines.append(f'    S{dep} --> S{section_idx}')
+            lines.append(f"    S{dep} --> S{section_idx}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def generate_html(mermaid_code: str, title: str = "Struckdown Visualization") -> str:
@@ -531,7 +544,7 @@ def generate_html(mermaid_code: str, title: str = "Struckdown Visualization") ->
     Returns:
         Complete HTML document as string
     """
-    return f'''<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -601,10 +614,12 @@ mermaid.initialize({{
         </pre>
     </div>
 </body>
-</html>'''
+</html>"""
 
 
-def summarize_completion(current_prompt_text: str, previous_prompt_text: str, completion_key: str) -> Optional[str]:
+def summarize_completion(
+    current_prompt_text: str, previous_prompt_text: str, completion_key: str
+) -> Optional[str]:
     """Generate a one-sentence summary of what a completion does.
 
     Args:
@@ -642,13 +657,18 @@ Summarise the instruction in ~12 words max. Use imperative form (i.e. as though 
 
         result = chatter(summary_prompt)
         if result:
-            return result['response'].strip()
+            return result["response"].strip()
         return None
     except Exception as e:
         return None
 
 
-def build_execution_plan_data(structure: Dict, prompt_name: str = "Prompt", sections_data=None, summarize: bool = False) -> Dict:
+def build_execution_plan_data(
+    structure: Dict,
+    prompt_name: str = "Prompt",
+    sections_data=None,
+    summarize: bool = False,
+) -> Dict:
     """Build execution plan data structure for template rendering.
 
     Args:
@@ -661,12 +681,12 @@ def build_execution_plan_data(structure: Dict, prompt_name: str = "Prompt", sect
         Dictionary with execution plan data for template rendering
     """
     data = {
-        'title': f'Execution Plan: {prompt_name}',
-        'prompt_name': prompt_name,
-        'total_completions': len(structure['all_completions']),
-        'system_prompt': None,
-        'external_inputs': [],
-        'sections': []
+        "title": f"Execution Plan: {prompt_name}",
+        "prompt_name": prompt_name,
+        "total_completions": len(structure["all_completions"]),
+        "system_prompt": None,
+        "external_inputs": [],
+        "sections": [],
     }
 
     # System prompt info (if sections_data provided)
@@ -677,60 +697,62 @@ def build_execution_plan_data(structure: Dict, prompt_name: str = "Prompt", sect
             sys_msg = first_comp.system_message
             if sys_msg and sys_msg.strip():
                 sys_len = len(sys_msg)
-                sys_lines = sys_msg.count('\n') + 1
-                preview = sys_msg.strip().split('\n')[0][:60]
-                if len(preview) < len(sys_msg.strip().split('\n')[0]):
+                sys_lines = sys_msg.count("\n") + 1
+                preview = sys_msg.strip().split("\n")[0][:60]
+                if len(preview) < len(sys_msg.strip().split("\n")[0]):
                     preview += "..."
-                data['system_prompt'] = {
-                    'length': sys_len,
-                    'lines': sys_lines,
-                    'preview': preview
+                data["system_prompt"] = {
+                    "length": sys_len,
+                    "lines": sys_lines,
+                    "preview": preview,
                 }
 
     # External inputs
-    defined_vars = structure['all_completions']
-    referenced_vars = {dep for dep, _ in structure['all_dependencies']}
+    defined_vars = structure["all_completions"]
+    referenced_vars = {dep for dep, _ in structure["all_dependencies"]}
     external_inputs = referenced_vars - defined_vars
-    data['external_inputs'] = sorted(external_inputs)
+    data["external_inputs"] = sorted(external_inputs)
 
     # Build mapping of completion variable -> section index
     completion_to_section = {}
-    for section in structure['sections']:
-        section_idx = section['index']
-        for comp in section['completions']:
-            completion_to_section[comp['key']] = section_idx
+    for section in structure["sections"]:
+        section_idx = section["index"]
+        for comp in section["completions"]:
+            completion_to_section[comp["key"]] = section_idx
 
     # Build sections data
-    for section in structure['sections']:
-        section_idx = section['index']
+    for section in structure["sections"]:
+        section_idx = section["index"]
 
         # Collect section-level dependencies (external to this section)
         section_deps = set()
-        for comp in section['completions']:
-            for dep in comp['depends_on']:
-                if dep not in {c['key'] for c in section['completions']}:
+        for comp in section["completions"]:
+            for dep in comp["depends_on"]:
+                if dep not in {c["key"] for c in section["completions"]}:
                     section_deps.add(dep)
 
         # Determine which sections this section depends on
         depends_on_sections = set()
         for dep in section_deps:
             if dep in completion_to_section:
-                depends_on_sections.add(completion_to_section[dep] + 1)  # +1 for human-readable
+                depends_on_sections.add(
+                    completion_to_section[dep] + 1
+                )  # +1 for human-readable
 
         # Build completions list
         completions_list = []
         accumulated_prompt = ""
-        for comp in section['completions']:
-            key = comp['key']
-            comp_type = comp['type']
-            line_num = comp.get('line_number', 0)
+        for comp in section["completions"]:
+            key = comp["key"]
+            comp_type = comp["type"]
+            line_num = comp.get("line_number", 0)
 
             completion_data = {
-                'key': key,
-                'type': comp_type,
-                'line_number': line_num,
-                'summary': None,
-                'prompt_text': None
+                "key": key,
+                "type": comp_type,
+                "line_number": line_num,
+                "summary": None,
+                "prompt_text": None,
             }
 
             # Get prompt text from sections_data
@@ -742,38 +764,38 @@ def build_execution_plan_data(structure: Dict, prompt_name: str = "Prompt", sect
                         break
 
             if current_prompt_text:
-                completion_data['prompt_text'] = current_prompt_text
+                completion_data["prompt_text"] = current_prompt_text
 
                 # Generate summary if requested
                 if summarize:
                     summary = summarize_completion(
                         current_prompt_text=current_prompt_text,
                         previous_prompt_text=accumulated_prompt,
-                        completion_key=key
+                        completion_key=key,
                     )
-                    completion_data['summary'] = summary
+                    completion_data["summary"] = summary
 
                 accumulated_prompt += current_prompt_text + "\n\n"
 
             completions_list.append(completion_data)
 
         section_data = {
-            'index': section_idx,
-            'name': section.get('name'),  # Include segment name if available
-            'dependencies': sorted(section_deps),
-            'depends_on_sections': sorted(depends_on_sections),
-            'completions': completions_list
+            "index": section_idx,
+            "name": section.get("name"),  # Include segment name if available
+            "dependencies": sorted(section_deps),
+            "depends_on_sections": sorted(depends_on_sections),
+            "completions": completions_list,
         }
 
-        data['sections'].append(section_data)
+        data["sections"].append(section_data)
 
     # Generate section-level DAG for visualization
-    data['section_dag_mermaid'] = generate_section_dag(structure)
+    data["section_dag_mermaid"] = generate_section_dag(structure)
 
     return data
 
 
-def render_execution_plan(data: Dict, format: str = 'text') -> str:
+def render_execution_plan(data: Dict, format: str = "text") -> str:
     """Render execution plan data using Jinja2 template.
 
     Args:
@@ -783,17 +805,18 @@ def render_execution_plan(data: Dict, format: str = 'text') -> str:
     Returns:
         Rendered template as string
     """
+    from pathlib import Path
+
     from jinja2 import FileSystemLoader, select_autoescape
     from jinja2.sandbox import ImmutableSandboxedEnvironment
-    from pathlib import Path
 
     # Set up Jinja2 environment
     templates_dir = Path(__file__).parent / "templates"
     env = ImmutableSandboxedEnvironment(
         loader=FileSystemLoader(templates_dir),
-        autoescape=select_autoescape(['html']) if format == 'html' else False,
+        autoescape=select_autoescape(["html"]) if format == "html" else False,
         trim_blocks=True,
-        lstrip_blocks=True
+        lstrip_blocks=True,
     )
 
     # Add custom filters
@@ -804,17 +827,17 @@ def render_execution_plan(data: Dict, format: str = 'text') -> str:
     def pluralize(count, singular, plural=None):
         """Return singular or plural form based on count."""
         if plural is None:
-            plural = singular + 's'
+            plural = singular + "s"
         return singular if count == 1 else plural
 
-    env.filters['number_format'] = number_format
-    env.filters['pluralize'] = pluralize
+    env.filters["number_format"] = number_format
+    env.filters["pluralize"] = pluralize
 
     # Select template based on format
-    if format == 'html':
-        template = env.get_template('execution_plan.html')
+    if format == "html":
+        template = env.get_template("execution_plan.html")
     else:
-        template = env.get_template('execution_plan.txt')
+        template = env.get_template("execution_plan.txt")
 
     return template.render(**data)
 
@@ -831,7 +854,7 @@ def markdown_to_html(markdown_text: str, title: str = "Execution Plan") -> str:
     """
     import html
 
-    lines = markdown_text.split('\n')
+    lines = markdown_text.split("\n")
     html_lines = []
     in_list = False
 
@@ -840,60 +863,62 @@ def markdown_to_html(markdown_text: str, title: str = "Execution Plan") -> str:
         line_escaped = html.escape(line)
 
         # Check for headers
-        if line.startswith('# '):
+        if line.startswith("# "):
             if in_list:
-                html_lines.append('</ul>')
+                html_lines.append("</ul>")
                 in_list = False
             header_text = line_escaped[2:]
-            html_lines.append(f'<h2>{header_text}</h2>')
-        elif line.startswith('## '):
+            html_lines.append(f"<h2>{header_text}</h2>")
+        elif line.startswith("## "):
             if in_list:
-                html_lines.append('</ul>')
+                html_lines.append("</ul>")
                 in_list = False
             header_text = line_escaped[3:]
-            html_lines.append(f'<h3>{header_text}</h3>')
+            html_lines.append(f"<h3>{header_text}</h3>")
         # Check for horizontal rule
-        elif line.startswith('===='):
+        elif line.startswith("===="):
             if in_list:
-                html_lines.append('</ul>')
+                html_lines.append("</ul>")
                 in_list = False
-            html_lines.append('<hr>')
+            html_lines.append("<hr>")
         # Check for bullet points
-        elif line.startswith('- '):
+        elif line.startswith("- "):
             if not in_list:
-                html_lines.append('<ul>')
+                html_lines.append("<ul>")
                 in_list = True
             content = line_escaped[2:]
             # Highlight <TYPE> tags
-            content = re.sub(r'&lt;([A-Z]+)&gt;', r'<code class="type">\1</code>', content)
-            html_lines.append(f'<li>{content}</li>')
+            content = re.sub(
+                r"&lt;([A-Z]+)&gt;", r'<code class="type">\1</code>', content
+            )
+            html_lines.append(f"<li>{content}</li>")
         # Check for bullet points with bullet character
-        elif line.startswith('  • '):
+        elif line.startswith("  • "):
             if not in_list:
-                html_lines.append('<ul>')
+                html_lines.append("<ul>")
                 in_list = True
             content = line_escaped[4:]
-            html_lines.append(f'<li>{content}</li>')
+            html_lines.append(f"<li>{content}</li>")
         # Empty line
         elif not line.strip():
             if in_list:
-                html_lines.append('</ul>')
+                html_lines.append("</ul>")
                 in_list = False
-            html_lines.append('<br>')
+            html_lines.append("<br>")
         # Regular text
         else:
             if in_list:
-                html_lines.append('</ul>')
+                html_lines.append("</ul>")
                 in_list = False
-            html_lines.append(f'<p>{line_escaped}</p>')
+            html_lines.append(f"<p>{line_escaped}</p>")
 
     # Close list if still open
     if in_list:
-        html_lines.append('</ul>')
+        html_lines.append("</ul>")
 
-    body_content = '\n'.join(html_lines)
+    body_content = "\n".join(html_lines)
 
-    return f'''<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -964,4 +989,4 @@ def markdown_to_html(markdown_text: str, title: str = "Execution Plan") -> str:
 {body_content}
     </div>
 </body>
-</html>'''
+</html>"""

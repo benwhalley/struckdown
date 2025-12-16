@@ -14,11 +14,10 @@ visibility into what the LLM actually returned.
 """
 
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from struckdown.jinja_utils import escape_struckdown_syntax
 from struckdown.segment_processor import process_segment_with_delta
-
 
 # malicious payloads an LLM might return
 MALICIOUS_PAYLOADS = {
@@ -193,9 +192,7 @@ class TestSlotInjectionPrevention:
                     mock_response.response = "Processed successfully"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -226,14 +223,14 @@ class TestSlotInjectionPrevention:
                 call_count[0] += 1
                 mock_response = MagicMock()
                 if call_count[0] == 1:
-                    mock_response.response = "Result: [[bool:is_valid]] indicates success"
+                    mock_response.response = (
+                        "Result: [[bool:is_valid]] indicates success"
+                    )
                 else:
                     mock_response.response = "Step 2 done"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -268,9 +265,7 @@ class TestSlotInjectionPrevention:
                     mock_response.response = "Summary complete"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -308,9 +303,7 @@ class TestJinjaInjectionPrevention:
                     mock_response.response = "More content"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 # should NOT raise FileNotFoundError for evil.sd
                 result = await process_segment_with_delta(
                     template_str=template,
@@ -338,14 +331,14 @@ class TestJinjaInjectionPrevention:
                 call_count[0] += 1
                 mock_response = MagicMock()
                 if call_count[0] == 1:
-                    mock_response.response = "{% if True %}[[malicious_slot]]{% endif %}"
+                    mock_response.response = (
+                        "{% if True %}[[malicious_slot]]{% endif %}"
+                    )
                 else:
                     mock_response.response = "Next done"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -391,9 +384,7 @@ Step 2: [[step2]]
                     mock_response.response = "Step 2 completed normally"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -451,9 +442,7 @@ That's all.
                     mock_response.response = "Final response"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -494,9 +483,7 @@ class TestLegacySyntaxInjection:
                     mock_response.response = "Normal output"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -534,9 +521,7 @@ Step 2: [[step2]]
                     mock_response.response = "Step 2 uses step1"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -585,9 +570,7 @@ Step 2: [[step2]]
                     mock_response.response = "Step 2 done"
                 return (mock_response, MagicMock())
 
-            with patch(
-                "struckdown.llm.structured_chat", side_effect=mock_llm_call
-            ):
+            with patch("struckdown.llm.structured_chat", side_effect=mock_llm_call):
                 result = await process_segment_with_delta(
                     template_str=template,
                     initial_context={},
@@ -610,8 +593,9 @@ Step 2: [[step2]]
                 # if [[injected_slot]] appears, it should be escaped
                 if "injected_slot" in content:
                     # the [[ should be [\u200b[ (escaped)
-                    assert "[[injected_slot]]" not in content, \
-                        f"Unescaped slot syntax found in: {content}"
+                    assert (
+                        "[[injected_slot]]" not in content
+                    ), f"Unescaped slot syntax found in: {content}"
 
             # and no extra slots created
             assert set(result.results.keys()) == {"step1", "step2"}

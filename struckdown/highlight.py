@@ -29,7 +29,6 @@ from pathlib import Path
 
 from lark import Lark, Token, Tree
 
-
 # load grammar
 try:
     _grammar_text = (files(__package__) / "grammar.lark").read_text(encoding="utf-8")
@@ -49,45 +48,46 @@ _highlight_parser = Lark(
 # map grammar rules/tokens to CSS class names
 TOKEN_CLASS_MAP = {
     # comments
-    'block_comment': 'comment',
-    'BLOCK_COMMENT_START': 'comment',
-    'BLOCK_COMMENT_CONTENT': 'comment',
-    'BLOCK_COMMENT_END': 'comment',
+    "block_comment": "comment",
+    "BLOCK_COMMENT_START": "comment",
+    "BLOCK_COMMENT_CONTENT": "comment",
+    "BLOCK_COMMENT_END": "comment",
     # checkpoints
-    'checkpoint_closed': 'checkpoint',
-    'checkpoint_auto': 'checkpoint',
-    'CHECKPOINT_CLOSED': 'checkpoint',
-    'CHECKPOINT_OPEN': 'checkpoint',
+    "checkpoint_closed": "checkpoint",
+    "checkpoint_auto": "checkpoint",
+    "CHECKPOINT_CLOSED": "checkpoint",
+    "CHECKPOINT_OPEN": "checkpoint",
     # obliviate (checkpoint alias)
-    'obliviate_closed': 'obliviate',
-    'obliviate_auto': 'obliviate',
-    'OBLIVIATE_CLOSED': 'obliviate',
-    'OBLIVIATE_OPEN': 'obliviate',
+    "obliviate_closed": "obliviate",
+    "obliviate_auto": "obliviate",
+    "OBLIVIATE_CLOSED": "obliviate",
+    "OBLIVIATE_OPEN": "obliviate",
     # system tags - handled specially for nested structure
-    'system_tag': 'system',
-    'SYSTEM_OPEN': 'system-tag',
-    'SYSTEM_CLOSE': 'system-tag',
-    'SYSTEM_CONTENT': 'system-content',
+    "system_tag": "system",
+    "SYSTEM_OPEN": "system-tag",
+    "SYSTEM_CLOSE": "system-tag",
+    "SYSTEM_CONTENT": "system-content",
     # header tags - similar to system but with different styling
-    'header_tag': 'header',
-    'HEADER_OPEN': 'header-tag',
-    'HEADER_CLOSE': 'header-tag',
-    'HEADER_CONTENT': 'header-content',
+    "header_tag": "header",
+    "HEADER_OPEN": "header-tag",
+    "HEADER_CLOSE": "header-tag",
+    "HEADER_CONTENT": "header-content",
     # include
-    'include_tag': 'include',
-    'INCLUDE_SRC': 'include',
+    "include_tag": "include",
+    "INCLUDE_SRC": "include",
     # completions [[...]]
-    'single_completion': 'placeholder',
+    "single_completion": "placeholder",
     # template variables {{...}}
-    'placeholder': 'template-var',
+    "placeholder": "template-var",
     # jinja tags {% ... %}
-    'templatetag': 'jinja-tag',
+    "templatetag": "jinja-tag",
 }
 
 
 class HighlightSpan:
     """A span of text to highlight."""
-    __slots__ = ('start', 'end', 'css_class', 'text')
+
+    __slots__ = ("start", "end", "css_class", "text")
 
     def __init__(self, start: int, end: int, css_class: str, text: str):
         self.start = start
@@ -101,7 +101,7 @@ class HighlightSpan:
 
 def _pos_to_offset(text: str, line: int, column: int) -> int:
     """Convert line/column (1-indexed) to character offset."""
-    lines = text.split('\n')
+    lines = text.split("\n")
     offset = sum(len(lines[i]) + 1 for i in range(line - 1))  # +1 for newlines
     return offset + column - 1
 
@@ -120,7 +120,7 @@ def _collect_spans(tree: Tree, source: str) -> list[HighlightSpan]:
         elif isinstance(node, Tree):
             # check if this tree node type should be highlighted as a unit
             css_class = TOKEN_CLASS_MAP.get(node.data)
-            if css_class and hasattr(node, 'meta') and node.meta.start_pos is not None:
+            if css_class and hasattr(node, "meta") and node.meta.start_pos is not None:
                 # for tree nodes, use meta positions if available
                 start = node.meta.start_pos
                 end = node.meta.end_pos
@@ -188,7 +188,7 @@ def highlight_struckdown(text: str) -> str:
     for span in spans:
         # add text before this span (escaped)
         if span.start > last_end:
-            result.append(escape(text[last_end:span.start]))
+            result.append(escape(text[last_end : span.start]))
 
         # add highlighted span
         escaped_text = escape(span.text)
@@ -199,7 +199,7 @@ def highlight_struckdown(text: str) -> str:
     if last_end < len(text):
         result.append(escape(text[last_end:]))
 
-    return ''.join(result)
+    return "".join(result)
 
 
 def highlight_struckdown_with_system_blocks(text: str) -> str:
@@ -222,9 +222,9 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
     other_spans = []
 
     for span in spans:
-        if span.css_class in ('system', 'system-tag', 'system-content'):
+        if span.css_class in ("system", "system-tag", "system-content"):
             system_spans.append(span)
-        elif span.css_class in ('header', 'header-tag', 'header-content'):
+        elif span.css_class in ("header", "header-tag", "header-content"):
             header_spans.append(span)
         else:
             other_spans.append(span)
@@ -234,8 +234,8 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
         return highlight_struckdown(text)
 
     # find block boundaries from spans (full blocks)
-    system_blocks = [(s, 'system') for s in system_spans if s.css_class == 'system']
-    header_blocks = [(s, 'header') for s in header_spans if s.css_class == 'header']
+    system_blocks = [(s, "system") for s in system_spans if s.css_class == "system"]
+    header_blocks = [(s, "header") for s in header_spans if s.css_class == "header"]
     all_blocks = system_blocks + header_blocks
 
     if not all_blocks:
@@ -248,18 +248,18 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
     for block, block_type in sorted(all_blocks, key=lambda x: x[0].start):
         # add text before this block
         if block.start > last_end:
-            before_text = text[last_end:block.start]
+            before_text = text[last_end : block.start]
             result.append(_highlight_segment(before_text, other_spans, last_end))
 
         # parse the block structure
         block_text = block.text
 
         # find opening tag
-        open_end = block_text.find('>') + 1
+        open_end = block_text.find(">") + 1
         open_tag = block_text[:open_end]
 
         # find closing tag
-        close_start = block_text.rfind('<')
+        close_start = block_text.rfind("<")
         close_tag = block_text[close_start:]
         content = block_text[open_end:close_start]
 
@@ -267,21 +267,25 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
         result.append(
             f'<span class="sd-{block_type}-tag-line">'
             f'<span class="sd-{block_type}-tag">{escape(open_tag)}</span>'
-            f'</span>'
+            f"</span>"
         )
 
         if content.strip():
             # highlight inner content using regex fallback since content
             # is captured as a single token without parsing {{vars}} etc
             inner_highlighted = _highlight_unparsed_content(content)
-            result.append(f'<span class="sd-{block_type}-content">{inner_highlighted}</span>')
+            result.append(
+                f'<span class="sd-{block_type}-content">{inner_highlighted}</span>'
+            )
         elif content:
-            result.append(f'<span class="sd-{block_type}-content">{escape(content)}</span>')
+            result.append(
+                f'<span class="sd-{block_type}-content">{escape(content)}</span>'
+            )
 
         result.append(
             f'<span class="sd-{block_type}-tag-line">'
             f'<span class="sd-{block_type}-tag">{escape(close_tag)}</span>'
-            f'</span>'
+            f"</span>"
         )
 
         last_end = block.end
@@ -290,7 +294,7 @@ def highlight_struckdown_with_system_blocks(text: str) -> str:
     if last_end < len(text):
         result.append(_highlight_segment(text[last_end:], other_spans, last_end))
 
-    return ''.join(result)
+    return "".join(result)
 
 
 def _highlight_unparsed_content(text: str) -> str:
@@ -301,17 +305,19 @@ def _highlight_unparsed_content(text: str) -> str:
     """
     # patterns for elements that should be highlighted (order matters - more specific first)
     patterns = [
-        ('break', r'\[\[@break[^\]]*\]\]'),       # break action - red
-        ('action', r'\[\[@[^\]]*\]\]'),           # other actions - purple
-        ('placeholder', r'\[\[[^\]]*\]\]'),       # slots - green
-        ('template-var', r'\{\{[^}]+\}\}'),       # template vars - pink
-        ('jinja-tag', r'\{%[^%]+%\}'),
-        ('comment', r'<!--[\s\S]*?-->'),
-        ('heading', r'^(#{1,6})\s+(.+)$'),        # markdown headings
+        ("break", r"\[\[@break[^\]]*\]\]"),  # break action - red
+        ("action", r"\[\[@[^\]]*\]\]"),  # other actions - purple
+        ("placeholder", r"\[\[[^\]]*\]\]"),  # slots - green
+        ("template-var", r"\{\{[^}]+\}\}"),  # template vars - pink
+        ("jinja-tag", r"\{%[^%]+%\}"),
+        ("comment", r"<!--[\s\S]*?-->"),
+        ("heading", r"^(#{1,6})\s+(.+)$"),  # markdown headings
     ]
 
     # combine into single pattern with named groups
-    combined = '|'.join(f'(?P<{name.replace("-", "_")}>{pattern})' for name, pattern in patterns)
+    combined = "|".join(
+        f'(?P<{name.replace("-", "_")}>{pattern})' for name, pattern in patterns
+    )
 
     result = []
     last_end = 0
@@ -319,16 +325,16 @@ def _highlight_unparsed_content(text: str) -> str:
     for match in re.finditer(combined, text, re.MULTILINE):
         # add text before match
         if match.start() > last_end:
-            result.append(escape(text[last_end:match.start()]))
+            result.append(escape(text[last_end : match.start()]))
 
         # find which group matched and apply class
         for name, pattern in patterns:
-            group_name = name.replace('-', '_')
+            group_name = name.replace("-", "_")
             matched_text = match.group(group_name)
             if matched_text is not None:
-                if name == 'heading':
+                if name == "heading":
                     # special handling for headings - split marker and text
-                    heading_match = re.match(r'^(#{1,6})\s+(.+)$', matched_text)
+                    heading_match = re.match(r"^(#{1,6})\s+(.+)$", matched_text)
                     if heading_match:
                         marker = heading_match.group(1)
                         heading_text = heading_match.group(2)
@@ -336,12 +342,16 @@ def _highlight_unparsed_content(text: str) -> str:
                             f'<span class="sd-heading">'
                             f'<span class="sd-heading-marker">{escape(marker)}</span> '
                             f'<span class="sd-heading-text">{escape(heading_text)}</span>'
-                            f'</span>'
+                            f"</span>"
                         )
                     else:
-                        result.append(f'<span class="sd-heading">{escape(matched_text)}</span>')
+                        result.append(
+                            f'<span class="sd-heading">{escape(matched_text)}</span>'
+                        )
                 else:
-                    result.append(f'<span class="sd-{name}">{escape(matched_text)}</span>')
+                    result.append(
+                        f'<span class="sd-{name}">{escape(matched_text)}</span>'
+                    )
                 break
 
         last_end = match.end()
@@ -350,7 +360,7 @@ def _highlight_unparsed_content(text: str) -> str:
     if last_end < len(text):
         result.append(escape(text[last_end:]))
 
-    return ''.join(result)
+    return "".join(result)
 
 
 def _highlight_segment(text: str, all_spans: list[HighlightSpan], offset: int) -> str:
@@ -371,7 +381,7 @@ def _highlight_segment(text: str, all_spans: list[HighlightSpan], offset: int) -
 
     for span in relevant_spans:
         if span.start > last_end:
-            result.append(escape(text[last_end:span.start]))
+            result.append(escape(text[last_end : span.start]))
 
         escaped_text = escape(span.text)
         result.append(f'<span class="sd-{span.css_class}">{escaped_text}</span>')
@@ -380,14 +390,14 @@ def _highlight_segment(text: str, all_spans: list[HighlightSpan], offset: int) -
     if last_end < len(text):
         result.append(escape(text[last_end:]))
 
-    return ''.join(result)
+    return "".join(result)
 
 
 def render_preview_html(text: str, filename: str = "preview") -> str:
     """Render a complete HTML preview page with syntax highlighting."""
     highlighted = highlight_struckdown_with_system_blocks(text)
 
-    return f'''<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -567,4 +577,4 @@ def render_preview_html(text: str, filename: str = "preview") -> str:
     <h1>{escape(filename)}</h1>
     <pre>{highlighted}</pre>
 </body>
-</html>'''
+</html>"""
