@@ -507,6 +507,9 @@ class RealWorldExampleTestCase(unittest.TestCase):
     def tearDown(self):
         Actions._registry = self._saved_registry
 
+    def tearDown(self):
+        Actions._registry = self._saved_registry
+
 
 if __name__ == "__main__":
     unittest.main()
