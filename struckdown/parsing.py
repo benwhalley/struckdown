@@ -82,7 +82,11 @@ option_value: STRING -> literal_string
 ?positional_value: STRING -> literal_string
                  | SIGNED_FLOAT -> literal_float
                  | NUMBER -> literal_number
+                 | EMOJI -> literal_emoji
                  | CNAME -> literal_cname
+
+// Emoji terminal - covers common emoji ranges (emoticons, symbols, dingbats)
+EMOJI: /[\\U0001F300-\\U0001FAFF\\U00002600-\\U000027BF]+/
 
 %import common.CNAME
 %import common.INT -> NUMBER
@@ -255,6 +259,10 @@ class SlotKeyTransformer(Transformer):
 
     def literal_cname(self, items):
         # unquoted positional value - treat as literal string, not variable ref
+        return (str(items[0]), False)
+
+    def literal_emoji(self, items):
+        # emoji positional value - treat as literal string
         return (str(items[0]), False)
 
     def start(self, items):
@@ -1330,6 +1338,10 @@ class MindframeTransformer(Transformer):
 
     def literal_cname(self, items):
         """Handle literal_cname: CNAME in positional context -> (value, False)."""
+        return (str(items[0]), False)
+
+    def literal_emoji(self, items):
+        """Handle literal_emoji: EMOJI in positional context -> (value, False)."""
         return (str(items[0]), False)
 
     def var_path(self, items):
