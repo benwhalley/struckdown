@@ -87,7 +87,8 @@ Complete documentation for Struckdown.
 
 ```
 [[@action:var|param=value]]      # Call Python function
-[[@search:results|query={{q}}]]  # Use template variables
+[[@action:var|param="literal"]]  # Literal string (quoted)
+[[@search:results|query=q]]      # Variable reference (unquoted)
 ```
 
 ### CLI

@@ -114,7 +114,7 @@ sd chat "{{source}} Analyze the HTML structure [[analysis]]" \
 Use the `@fetch` action to fetch URLs dynamically within templates:
 
 ```
-[[@fetch:page_content|{{product_url}}]]
+[[@fetch:page_content|product_url]]
 
 Based on this product page:
 {{page_content}}
@@ -136,14 +136,14 @@ Each row's URL will be fetched, processed with readability to extract the main c
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `url` | required | URL to fetch (can use `{{variable}}`) |
+| `url` | required | URL to fetch (unquoted = variable, quoted = literal) |
 | `raw` | `false` | Return raw HTML instead of markdown |
 | `timeout` | `30` | Request timeout in seconds |
 | `max_chars` | `32000` | Max characters (0 = no limit) |
 
 Example with parameters:
 ```
-[[@fetch:content|{{url}},raw=true,timeout=60,max_chars=0]]
+[[@fetch:content|url,raw=true,timeout=60,max_chars=0]]
 ```
 
 ## Documentation
