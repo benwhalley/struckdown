@@ -8,6 +8,10 @@ Usage:
 
 Template:
     [[@evidence:guidance|query="CBT techniques",n=3]]
+
+Remote mode:
+    When `_evidence_store` is present in context (injected by playground),
+    searches pre-chunked evidence instead of loading from disk.
 """
 
 from pathlib import Path
@@ -15,6 +19,57 @@ from pathlib import Path
 from rank_bm25 import BM25Okapi
 
 from . import Actions
+
+
+def search_remote_evidence(
+    chunks: list[dict], query: str | list[str], n: int = 3
+) -> str:
+    """Search pre-chunked evidence from remote store.
+
+    Args:
+        chunks: List of chunk dicts with 'text' and 'filename' keys
+        query: Search query text or list of queries
+        n: Number of results to return
+
+    Returns:
+        Concatenated matching chunks separated by newlines
+    """
+    if not chunks:
+        return ""
+
+    corpus = [c["text"] for c in chunks]
+    tokenized_corpus = [doc.lower().split() for doc in corpus]
+
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    # Normalise query to list
+    queries = [query] if isinstance(query, str) else list(query)
+
+    # Collect results from all queries, dedupe by chunk index
+    seen_indices = {}  # idx -> best score
+
+    for q in queries:
+        tokenized_query = q.lower().split()
+        scores = bm25.get_scores(tokenized_query)
+
+        for idx, score in enumerate(scores):
+            if score > 0:
+                if idx not in seen_indices or score > seen_indices[idx]:
+                    seen_indices[idx] = score
+
+    # Sort by score descending, take top n
+    top_indices = sorted(
+        seen_indices.keys(), key=lambda i: seen_indices[i], reverse=True
+    )[:n]
+
+    results = []
+    for idx in top_indices:
+        chunk = chunks[idx]
+        filename = chunk.get("filename", "unknown")
+        text = chunk["text"]
+        results.append(f"[{filename}]\n{text}")
+
+    return "\n\n---\n\n".join(results)
 
 
 def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
@@ -72,6 +127,7 @@ def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
 
     Args:
         context: Struckdown context. Looks for:
+            - _evidence_store: pre-chunked evidence from playground (remote mode)
             - evidence_folder: explicit path(s) to evidence directory
             - _template_path: auto-injected path to discover evidence/ relative to template
         query: Search query text or list of queries
@@ -80,6 +136,10 @@ def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
     Returns:
         Concatenated matching chunks separated by newlines
     """
+    # Check for remote evidence store (injected by playground)
+    if evidence_store := context.get("_evidence_store"):
+        return search_remote_evidence(evidence_store, query, n)
+
     folders = []
 
     # Check context for explicit folder(s)

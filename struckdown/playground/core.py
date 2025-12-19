@@ -279,9 +279,19 @@ async def run_single(
     credentials: LLMCredentials = None,
     include_paths: List[Path] = None,
     strict_undefined: bool = False,
+    evidence_session_id: str = None,
 ) -> Dict:
     """
     Execute template with given inputs.
+
+    Args:
+        syntax: The struckdown template
+        inputs: Input variables dict
+        model_name: LLM model name
+        credentials: API credentials
+        include_paths: Paths for includes
+        strict_undefined: Raise on undefined variables
+        evidence_session_id: Session ID for loading evidence (remote mode)
 
     Returns dict with:
         outputs: dict of slot_name -> value
@@ -289,6 +299,16 @@ async def run_single(
         error: error message string or None
     """
     try:
+        # Inject evidence store if session has evidence
+        if evidence_session_id:
+            from . import evidence_cache
+
+            evidence_chunks = evidence_cache.get_evidence_for_session(
+                evidence_session_id
+            )
+            if evidence_chunks:
+                inputs = {**inputs, "_evidence_store": evidence_chunks}
+
         model = LLM(model_name=model_name) if model_name else LLM()
         result = await chatter_async(
             syntax,

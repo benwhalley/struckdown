@@ -255,10 +255,13 @@ def _cleanup_old_files():
     _last_cleanup = now
 
     # Import here to avoid circular imports
-    from . import task_cache, upload_cache
+    from . import evidence_cache, task_cache, upload_cache
 
     # Clean up upload cache (handles expiry and size limits)
     upload_cache.cleanup_cache()
+
+    # Clean up evidence cache
+    evidence_cache.cleanup_cache()
 
     # Clean up task cache
     task_cache.cleanup_tasks()
@@ -621,6 +624,7 @@ def create_app(
         inputs = data.get("inputs", {})
         model_name = data.get("model")
         strict_undefined = data.get("strict_undefined", False)
+        session_id = data.get("session_id")  # For evidence loading
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -696,6 +700,7 @@ def create_app(
                 credentials=credentials,
                 include_paths=app.config["INCLUDE_PATHS"],
                 strict_undefined=strict_undefined,
+                evidence_session_id=session_id,
             )
 
         try:
@@ -735,6 +740,15 @@ def create_app(
         inputs = data.get("inputs", {})
         model_name = data.get("model")
         strict_undefined = data.get("strict_undefined", False)
+        session_id = data.get("session_id")  # For evidence loading
+
+        # Inject evidence if session has uploaded evidence files
+        if session_id:
+            from . import evidence_cache
+
+            evidence_chunks = evidence_cache.get_evidence_for_session(session_id)
+            if evidence_chunks:
+                inputs = {**inputs, "_evidence_store": evidence_chunks}
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -872,6 +886,15 @@ def create_app(
         model_name = data.get("model")
         history_messages = data.get("history_messages", [])
         strict_undefined = data.get("strict_undefined", False)
+        session_id = data.get("session_id")  # For evidence loading
+
+        # Inject evidence if session has uploaded evidence files
+        if session_id:
+            from . import evidence_cache
+
+            evidence_chunks = evidence_cache.get_evidence_for_session(session_id)
+            if evidence_chunks:
+                inputs = {**inputs, "_evidence_store": evidence_chunks}
 
         # Validate syntax length
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
@@ -1228,6 +1251,102 @@ def create_app(
     # Apply rate limiting to upload-source endpoint in remote mode
     if limiter:
         upload_source = limiter.limit(STRUCKDOWN_UPLOAD_RATE_LIMIT)(upload_source)
+
+    @app.route("/api/upload-evidence", methods=["POST"])
+    def upload_evidence():
+        """Upload evidence files for BM25 search via [[@evidence]] action.
+
+        Accepts .txt and .md files. Files are chunked and stored per session.
+        """
+        from . import chunking, evidence_cache
+
+        # Trigger cleanup
+        _cleanup_old_files()
+
+        if "file" not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        files = request.files.getlist("file")
+        if not files or not files[0].filename:
+            return jsonify({"error": "No file selected"}), 400
+
+        session_id = request.form.get("session_id")
+        if not session_id or not evidence_cache.validate_session_id(session_id):
+            return jsonify({"error": "Invalid or missing session_id"}), 400
+
+        results = []
+        errors = []
+
+        for file in files:
+            filename = secure_filename(file.filename) if file.filename else "unnamed"
+            suffix = Path(filename).suffix.lower()
+
+            # Only accept .txt and .md files
+            if suffix not in (".txt", ".md"):
+                errors.append(f"{filename}: only .txt and .md files allowed")
+                continue
+
+            try:
+                # Read and decode content
+                content = file.read()
+                text = content.decode("utf-8", errors="replace")
+
+                # Chunk using sentence-based splitter
+                chunks = chunking.chunk_text_sentences(text)
+
+                # Generate file ID and store
+                file_id = str(uuid.uuid4())
+                evidence_cache.store_evidence(session_id, file_id, filename, chunks)
+
+                results.append(
+                    {
+                        "file_id": file_id,
+                        "filename": filename,
+                        "chunk_count": len(chunks),
+                    }
+                )
+            except Exception as e:
+                errors.append(f"{filename}: {safe_error_message(e, remote_mode)}")
+
+        if not results and errors:
+            return jsonify({"error": "; ".join(errors)}), 400
+
+        response = {"files": results, "session_id": session_id}
+        if errors:
+            response["warnings"] = errors
+
+        return jsonify(response)
+
+    # Apply rate limiting to upload-evidence endpoint in remote mode
+    if limiter:
+        upload_evidence = limiter.limit(STRUCKDOWN_UPLOAD_RATE_LIMIT)(upload_evidence)
+
+    @app.route("/api/evidence")
+    def list_evidence_files():
+        """List all evidence files for a session."""
+        from . import evidence_cache
+
+        session_id = request.args.get("session_id")
+        if not session_id or not evidence_cache.validate_session_id(session_id):
+            return jsonify({"files": []})
+
+        files = evidence_cache.list_evidence(session_id)
+        return jsonify({"files": files, "session_id": session_id})
+
+    @app.route("/api/evidence/<file_id>", methods=["DELETE"])
+    def delete_evidence_file(file_id: str):
+        """Delete an evidence file from a session."""
+        from . import evidence_cache
+
+        session_id = request.args.get("session_id")
+        if not session_id or not evidence_cache.validate_session_id(session_id):
+            return jsonify({"error": "Invalid session_id"}), 400
+
+        if not evidence_cache.validate_file_id(file_id):
+            return jsonify({"error": "Invalid file_id"}), 400
+
+        deleted = evidence_cache.delete_evidence(session_id, file_id)
+        return jsonify({"deleted": deleted, "file_id": file_id})
 
     @app.route("/api/run-file", methods=["POST"])
     def run_file():

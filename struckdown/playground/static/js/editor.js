@@ -766,7 +766,8 @@ function runSingleIncremental(syntax) {
         syntax: syntax,
         inputs: inputs,
         model: model || null,
-        strict_undefined: getStrictMode()
+        strict_undefined: getStrictMode(),
+        session_id: sessionId  // For evidence loading
     };
 
     if (remoteMode) {
@@ -1266,6 +1267,116 @@ function clearSourceFile() {
     document.getElementById('current-source-file-id').value = '';
     document.getElementById('source-file').value = '';
     document.getElementById('source-file-info').style.display = 'none';
+}
+
+// ============================================
+// Evidence Files (for @evidence action)
+// ============================================
+
+// Handle evidence file upload
+function handleEvidenceUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (const file of files) {
+        formData.append('file', file);
+    }
+    formData.append('session_id', sessionId);
+
+    setStatus('running', 'Uploading evidence files...');
+
+    fetchWithCsrf('/api/upload-evidence', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Clear the file input
+        event.target.value = '';
+
+        if (data.error) {
+            setStatus('error', 'Evidence upload error: ' + data.error);
+            return;
+        }
+
+        // Show success with chunk count
+        const fileNames = data.files.map(f => f.filename).join(', ');
+        const totalChunks = data.files.reduce((sum, f) => sum + f.chunk_count, 0);
+        setStatus('success', `Uploaded: ${fileNames} (${totalChunks} chunks)`);
+
+        if (data.warnings) {
+            console.warn('Evidence upload warnings:', data.warnings);
+        }
+
+        // Refresh the evidence list
+        loadEvidenceList();
+    })
+    .catch(err => {
+        setStatus('error', 'Evidence upload failed: ' + err.message);
+    });
+}
+
+// Load and render evidence file list
+function loadEvidenceList() {
+    fetch('/api/evidence?session_id=' + encodeURIComponent(sessionId))
+        .then(response => response.json())
+        .then(data => {
+            renderEvidenceList(data.files || []);
+        })
+        .catch(err => {
+            console.error('Failed to load evidence list:', err);
+        });
+}
+
+// Render evidence file list
+function renderEvidenceList(files) {
+    const container = document.getElementById('evidence-list');
+    const countBadge = document.getElementById('evidence-count');
+
+    countBadge.textContent = files.length;
+
+    if (files.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = files.map(f => `
+        <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="small">
+                <i class="bi bi-file-text"></i> ${escapeHtml(f.filename)}
+                <span class="text-muted">(${f.chunk_count} chunks)</span>
+            </span>
+            <button class="btn btn-link btn-sm text-danger p-0"
+                    onclick="deleteEvidence('${f.file_id}')"
+                    title="Remove">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+// Delete an evidence file
+function deleteEvidence(fileId) {
+    fetchWithCsrf('/api/evidence/' + encodeURIComponent(fileId) + '?session_id=' + encodeURIComponent(sessionId), {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.deleted) {
+            loadEvidenceList();
+        }
+    })
+    .catch(err => {
+        console.error('Failed to delete evidence:', err);
+    });
+}
+
+// Escape HTML for safe rendering
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Format file size for display
@@ -1889,7 +2000,8 @@ function runChatTurn() {
         inputs: inputs,
         model: model || null,
         history_messages: historyMessages,
-        strict_undefined: getStrictMode()
+        strict_undefined: getStrictMode(),
+        session_id: sessionId  // For evidence loading
     };
 
     if (remoteMode) {

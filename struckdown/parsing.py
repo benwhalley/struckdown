@@ -113,11 +113,22 @@ class SlotKeyTransformer(Transformer):
     """
 
     def _options_for_action(self, options):
-        """Convert positional options to variable references for action calls."""
+        """Convert positional options to variable references for action calls.
+
+        Only converts unquoted identifiers (valid variable names) to variable refs.
+        Quoted strings containing spaces or special chars remain as literals.
+        """
         result = []
         for opt in options:
             if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
-                result.append(OptionValue(key=None, value=opt.value, is_variable_ref=True))
+                # Only convert to variable ref if it looks like a valid identifier
+                # (no spaces, starts with letter/underscore, contains only alphanumeric/_)
+                val = opt.value
+                if val and val.replace("_", "").isalnum() and (val[0].isalpha() or val[0] == "_"):
+                    result.append(OptionValue(key=None, value=val, is_variable_ref=True))
+                else:
+                    # Keep as literal (was a quoted string with spaces/special chars)
+                    result.append(opt)
             else:
                 result.append(opt)
         return result
@@ -1186,12 +1197,20 @@ class MindframeTransformer(Transformer):
         In action calls like [[@evidence|topics]], positional options should be
         variable references (looked up from context), not literal strings.
         This differs from pick/extract slots where positional options are choices.
+
+        Only converts unquoted identifiers (valid variable names) to variable refs.
+        Quoted strings containing spaces or special chars remain as literals.
         """
         result = []
         for opt in options:
             if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
-                # positional string option in action -> convert to variable reference
-                result.append(OptionValue(key=None, value=opt.value, is_variable_ref=True))
+                # Only convert to variable ref if it looks like a valid identifier
+                val = opt.value
+                if val and val.replace("_", "").isalnum() and (val[0].isalpha() or val[0] == "_"):
+                    result.append(OptionValue(key=None, value=val, is_variable_ref=True))
+                else:
+                    # Keep as literal (was a quoted string with spaces/special chars)
+                    result.append(opt)
             else:
                 result.append(opt)
         return result

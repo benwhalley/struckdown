@@ -1,0 +1,16 @@
+# Randomness
+
+**Randomness** refers to the apparent or actual lack of a definite pattern or predictability in events or information. Individual random events are unpredictable, even if the **distribution** of many such events follows known statistical laws. The concept occurs in mathematics, physics, cryptography, statistics, gaming and many other areas. Applications include random sampling, Monte-Carlo methods, and cryptographic key generation. Computationally, **pseudorandom number generators** are deterministic algorithms seeded to produce sequences that *appear* random; by contrast, *true* randomness can be derived from physical processes such as atmospheric noise or quantum measurements. :contentReference[oaicite:0]{index=0}
+
+## Key aspects
+
+**Sources of randomness**
+- Environmental randomness (e.g., Brownian motion).
+- Sensitivity to initial conditions (chaos).
+- Algorithmic pseudorandomness via deterministic processes. :contentReference[oaicite:1]{index=1}
+
+**Testing and measures**  
+Randomness can be quantified by statistical tests measuring frequency, complexity and distribution patterns. :contentReference[oaicite:2]{index=2}
+
+**Real-world applications**
+Randomness is fundamental in cryptography, simulations, statistical sampling and modeling, gaming, and data science. :contentReference[oaicite:3]{index=3}
