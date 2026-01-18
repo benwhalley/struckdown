@@ -6,8 +6,13 @@ SHA256 hashing for filenames. Same content always produces same hash/URL.
 
 Files are stored with restricted permissions (0600).
 
+LRU eviction: access time is updated on read, oldest-accessed files
+are deleted first when cache exceeds size limit.
+
 Configuration via environment variables:
 - STRUCKDOWN_PROMPT_CACHE_DIR: Storage directory (default: ~/.struckdown/prompts)
+- STRUCKDOWN_PROMPT_MAX_SIZE: Max single prompt size in bytes (default: 1MB)
+- STRUCKDOWN_PROMPT_CACHE_MAX_SIZE: Max total cache size in bytes (default: 100MB, 0=unlimited)
 """
 
 import hashlib
@@ -15,6 +20,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -27,6 +33,12 @@ PROMPT_CACHE_DIR = Path(
 
 # Use first 24 chars of SHA256 (96 bits) -- collision-resistant for this use case
 HASH_LENGTH = 24
+
+# Max single prompt size (default 1MB)
+MAX_PROMPT_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_MAX_SIZE", 1 * 1024 * 1024))
+
+# Max total cache size (default 100MB, 0 = unlimited)
+MAX_CACHE_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_CACHE_MAX_SIZE", 100 * 1024 * 1024))
 
 
 def _ensure_cache_dir() -> None:
@@ -57,15 +69,24 @@ def store_prompt(text: str) -> str:
 
     Returns:
         The content hash (prompt_id) for this prompt
+
+    Raises:
+        ValueError: If prompt exceeds MAX_PROMPT_SIZE
     """
+    # Check size limit
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) > MAX_PROMPT_SIZE:
+        raise ValueError(f"Prompt too large ({len(text_bytes)} bytes, max {MAX_PROMPT_SIZE})")
+
     prompt_id = hash_content(text)
 
     _ensure_cache_dir()
 
     path = PROMPT_CACHE_DIR / f"{prompt_id}.txt"
 
-    # If file already exists with same hash, no need to rewrite
+    # If file already exists with same hash, touch to update access time (LRU)
     if path.exists():
+        path.touch()
         logger.debug(f"Prompt {prompt_id} already exists at {path}")
         return prompt_id
 
@@ -92,6 +113,8 @@ def store_prompt(text: str) -> str:
 def get_prompt(prompt_id: str) -> str:
     """Retrieve prompt text from disk.
 
+    Updates access time for LRU eviction.
+
     Args:
         prompt_id: Content hash identifying the prompt
 
@@ -108,6 +131,9 @@ def get_prompt(prompt_id: str) -> str:
     path = PROMPT_CACHE_DIR / f"{prompt_id}.txt"
     if not path.exists():
         raise FileNotFoundError("Prompt not found")
+
+    # Touch to update access time (LRU)
+    path.touch()
 
     return path.read_text(encoding="utf-8")
 
@@ -132,10 +158,10 @@ def get_cache_stats() -> dict:
     """Get statistics about the prompt storage.
 
     Returns:
-        Dictionary with file_count, total_size_mb
+        Dictionary with file_count, total_size_mb, max_size_mb
     """
     if not PROMPT_CACHE_DIR.exists():
-        return {"file_count": 0, "total_size_mb": 0}
+        return {"file_count": 0, "total_size_mb": 0, "max_size_mb": MAX_CACHE_SIZE / (1024 * 1024)}
 
     files = list(PROMPT_CACHE_DIR.glob("*.txt"))
     total_size = sum(f.stat().st_size for f in files if f.exists())
@@ -143,4 +169,59 @@ def get_cache_stats() -> dict:
     return {
         "file_count": len(files),
         "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "max_size_mb": round(MAX_CACHE_SIZE / (1024 * 1024), 2) if MAX_CACHE_SIZE > 0 else None,
     }
+
+
+def cleanup_cache() -> dict:
+    """Remove least-recently-used files until cache is under size limit.
+
+    Uses file modification time (updated on access via touch) for LRU ordering.
+
+    Returns:
+        Dictionary with files_deleted, bytes_freed
+    """
+    if MAX_CACHE_SIZE <= 0:
+        return {"files_deleted": 0, "bytes_freed": 0}
+
+    if not PROMPT_CACHE_DIR.exists():
+        return {"files_deleted": 0, "bytes_freed": 0}
+
+    # Get all prompt files with their stats
+    files_with_stats = []
+    for f in PROMPT_CACHE_DIR.glob("*.txt"):
+        try:
+            stat = f.stat()
+            files_with_stats.append((f, stat.st_size, stat.st_mtime))
+        except OSError:
+            continue
+
+    # Calculate total size
+    total_size = sum(size for _, size, _ in files_with_stats)
+
+    if total_size <= MAX_CACHE_SIZE:
+        logger.debug(f"Cache size {total_size} is under limit {MAX_CACHE_SIZE}")
+        return {"files_deleted": 0, "bytes_freed": 0}
+
+    # Sort by mtime ascending (oldest first = least recently used)
+    files_with_stats.sort(key=lambda x: x[2])
+
+    files_deleted = 0
+    bytes_freed = 0
+
+    # Delete oldest files until under limit
+    for path, size, mtime in files_with_stats:
+        if total_size <= MAX_CACHE_SIZE:
+            break
+
+        try:
+            path.unlink()
+            total_size -= size
+            bytes_freed += size
+            files_deleted += 1
+            logger.info(f"Deleted LRU prompt: {path.name} ({size} bytes)")
+        except OSError as e:
+            logger.warning(f"Failed to delete {path}: {e}")
+
+    logger.info(f"Cache cleanup: deleted {files_deleted} files, freed {bytes_freed} bytes")
+    return {"files_deleted": files_deleted, "bytes_freed": bytes_freed}
