@@ -3,6 +3,7 @@ import warnings
 from collections import OrderedDict, namedtuple
 from importlib.resources import files
 from pathlib import Path
+from typing import Any, NamedTuple, Optional
 
 from lark import Lark, Transformer
 from pydantic import ValidationError
@@ -11,14 +12,13 @@ from .actions import Actions
 from .jinja_utils import extract_jinja_variables
 from .response_types import ResponseTypes
 from .return_type_models import LLMConfig
-from typing import NamedTuple, Optional, Any
 
 
 class OptionValue(NamedTuple):
     """
     Structured representation of parsed option values
     """
-    
+
     key: Optional[str]
     value: Any
     is_variable_ref: bool
@@ -27,6 +27,7 @@ class OptionValue(NamedTuple):
         if self.key:
             return f"{self.key}={self.value}"
         return str(self.value)
+
 
 try:
     mindframe_grammar = (files(__package__) / "grammar.lark").read_text(
@@ -120,12 +121,22 @@ class SlotKeyTransformer(Transformer):
         """
         result = []
         for opt in options:
-            if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
+            if (
+                opt.key is None
+                and not opt.is_variable_ref
+                and isinstance(opt.value, str)
+            ):
                 # Only convert to variable ref if it looks like a valid identifier
                 # (no spaces, starts with letter/underscore, contains only alphanumeric/_)
                 val = opt.value
-                if val and val.replace("_", "").isalnum() and (val[0].isalpha() or val[0] == "_"):
-                    result.append(OptionValue(key=None, value=val, is_variable_ref=True))
+                if (
+                    val
+                    and val.replace("_", "").isalnum()
+                    and (val[0].isalpha() or val[0] == "_")
+                ):
+                    result.append(
+                        OptionValue(key=None, value=val, is_variable_ref=True)
+                    )
                 else:
                     # Keep as literal (was a quoted string with spaces/special chars)
                     result.append(opt)
@@ -1203,11 +1214,21 @@ class MindframeTransformer(Transformer):
         """
         result = []
         for opt in options:
-            if opt.key is None and not opt.is_variable_ref and isinstance(opt.value, str):
+            if (
+                opt.key is None
+                and not opt.is_variable_ref
+                and isinstance(opt.value, str)
+            ):
                 # Only convert to variable ref if it looks like a valid identifier
                 val = opt.value
-                if val and val.replace("_", "").isalnum() and (val[0].isalpha() or val[0] == "_"):
-                    result.append(OptionValue(key=None, value=val, is_variable_ref=True))
+                if (
+                    val
+                    and val.replace("_", "").isalnum()
+                    and (val[0].isalpha() or val[0] == "_")
+                ):
+                    result.append(
+                        OptionValue(key=None, value=val, is_variable_ref=True)
+                    )
                 else:
                     # Keep as literal (was a quoted string with spaces/special chars)
                     result.append(opt)

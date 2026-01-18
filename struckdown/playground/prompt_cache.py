@@ -38,7 +38,9 @@ HASH_LENGTH = 24
 MAX_PROMPT_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_MAX_SIZE", 1 * 1024 * 1024))
 
 # Max total cache size (default 100MB, 0 = unlimited)
-MAX_CACHE_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_CACHE_MAX_SIZE", 100 * 1024 * 1024))
+MAX_CACHE_SIZE = int(
+    os.environ.get("STRUCKDOWN_PROMPT_CACHE_MAX_SIZE", 100 * 1024 * 1024)
+)
 
 
 def _ensure_cache_dir() -> None:
@@ -76,7 +78,9 @@ def store_prompt(text: str) -> str:
     # Check size limit
     text_bytes = text.encode("utf-8")
     if len(text_bytes) > MAX_PROMPT_SIZE:
-        raise ValueError(f"Prompt too large ({len(text_bytes)} bytes, max {MAX_PROMPT_SIZE})")
+        raise ValueError(
+            f"Prompt too large ({len(text_bytes)} bytes, max {MAX_PROMPT_SIZE})"
+        )
 
     prompt_id = hash_content(text)
 
@@ -161,7 +165,11 @@ def get_cache_stats() -> dict:
         Dictionary with file_count, total_size_mb, max_size_mb
     """
     if not PROMPT_CACHE_DIR.exists():
-        return {"file_count": 0, "total_size_mb": 0, "max_size_mb": MAX_CACHE_SIZE / (1024 * 1024)}
+        return {
+            "file_count": 0,
+            "total_size_mb": 0,
+            "max_size_mb": MAX_CACHE_SIZE / (1024 * 1024),
+        }
 
     files = list(PROMPT_CACHE_DIR.glob("*.txt"))
     total_size = sum(f.stat().st_size for f in files if f.exists())
@@ -169,7 +177,9 @@ def get_cache_stats() -> dict:
     return {
         "file_count": len(files),
         "total_size_mb": round(total_size / (1024 * 1024), 2),
-        "max_size_mb": round(MAX_CACHE_SIZE / (1024 * 1024), 2) if MAX_CACHE_SIZE > 0 else None,
+        "max_size_mb": (
+            round(MAX_CACHE_SIZE / (1024 * 1024), 2) if MAX_CACHE_SIZE > 0 else None
+        ),
     }
 
 
@@ -223,5 +233,7 @@ def cleanup_cache() -> dict:
         except OSError as e:
             logger.warning(f"Failed to delete {path}: {e}")
 
-    logger.info(f"Cache cleanup: deleted {files_deleted} files, freed {bytes_freed} bytes")
+    logger.info(
+        f"Cache cleanup: deleted {files_deleted} files, freed {bytes_freed} bytes"
+    )
     return {"files_deleted": files_deleted, "bytes_freed": bytes_freed}

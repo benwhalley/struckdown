@@ -42,9 +42,9 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
 from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
                   _call_llm_cached, disable_api_debug, enable_api_debug,
                   get_embedding, get_llm_semaphore, structured_chat)
-from .parsing import (_add_default_completion_if_needed, parser,
-                      parser_with_state, resolve_includes, split_by_checkpoint,
-                      extract_slot_variable_refs)
+from .parsing import (_add_default_completion_if_needed,
+                      extract_slot_variable_refs, parser, parser_with_state,
+                      resolve_includes, split_by_checkpoint)
 from .response_types import ResponseTypes
 # Re-export from results module
 from .results import (ChatterResult, CostSummary, SegmentResult,
@@ -168,8 +168,7 @@ async def chatter_async(
 
     raw_dependencies = {
         raw_idx: find_dependencies(
-            raw_idx,
-            get_referenced_vars(segment_data[raw_idx]["body_template"])
+            raw_idx, get_referenced_vars(segment_data[raw_idx]["body_template"])
         )
         for raw_idx in slots_by_raw_idx
     }
@@ -487,8 +486,7 @@ async def chatter_incremental_async(
 
     raw_dependencies = {
         raw_idx: find_dependencies(
-            raw_idx,
-            get_referenced_vars(segment_data[raw_idx]["body_template"])
+            raw_idx, get_referenced_vars(segment_data[raw_idx]["body_template"])
         )
         for raw_idx in slots_by_raw_idx
     }

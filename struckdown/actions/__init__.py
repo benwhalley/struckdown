@@ -26,11 +26,10 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, get_type_hints
 
-from asgiref.sync import sync_to_async
-
 import markdownify as markdownify_lib
 import requests
 import validators
+from asgiref.sync import sync_to_async
 from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel, Field, ValidationError, create_model
 from readability import Document
@@ -141,7 +140,10 @@ def _coerce_params(func: Callable, action_name: str, rendered_params: dict) -> d
         for param_name, param in sig.parameters.items():
             if param_name == "context":
                 continue
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
                 continue
 
             param_type = type_hints.get(param_name, str)
@@ -163,7 +165,9 @@ def _coerce_params(func: Callable, action_name: str, rendered_params: dict) -> d
         try:
             return CoercionModel(**rendered_params).model_dump()
         except ValidationError as ve:
-            raise ValueError(f"Parameter validation failed for '{action_name}': {ve}") from ve
+            raise ValueError(
+                f"Parameter validation failed for '{action_name}': {ve}"
+            ) from ve
 
     except Exception as e:
         logger.debug(f"Type coercion failed for '{action_name}': {e}")

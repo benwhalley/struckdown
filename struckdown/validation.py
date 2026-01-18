@@ -94,7 +94,7 @@ def parse_options(options: list[str] | None) -> ParsedOptions:
 
     for opt in options:
         # handle both OptionValue namedtuples and legacy string options
-        if hasattr(opt, 'key') and hasattr(opt, 'value'):
+        if hasattr(opt, "key") and hasattr(opt, "value"):
             # OptionValue namedtuple
             key = opt.key.lower() if opt.key else None
             value = opt.value
@@ -121,7 +121,11 @@ def parse_options(options: list[str] | None) -> ParsedOptions:
             # extract common fields with aliases
             match key:
                 case "required":
-                    result.required = _parse_bool(value_str) if isinstance(value_str, str) else bool(value)
+                    result.required = (
+                        _parse_bool(value_str)
+                        if isinstance(value_str, str)
+                        else bool(value)
+                    )
                 case "min" | "ge":
                     result.ge = float(parsed) if parsed is not None else None
                 case "max" | "le":

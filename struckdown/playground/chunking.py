@@ -64,7 +64,9 @@ def chunk_text_sentences(
         # No sentences found, return whole text as one chunk
         stripped = text.strip()
         if stripped:
-            return [{"text": stripped, "index": 0, "start_char": 0, "end_char": len(text)}]
+            return [
+                {"text": stripped, "index": 0, "start_char": 0, "end_char": len(text)}
+            ]
         return []
 
     chunks = []

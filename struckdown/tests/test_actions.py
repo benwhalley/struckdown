@@ -15,7 +15,9 @@ from struckdown.return_type_models import ResponseModel
 
 def run_executor(executor, context=None, rendered_prompt="", **kwargs):
     """Helper to run async executor in tests."""
-    return asyncio.run(executor(context=context or {}, rendered_prompt=rendered_prompt, **kwargs))
+    return asyncio.run(
+        executor(context=context or {}, rendered_prompt=rendered_prompt, **kwargs)
+    )
 
 
 class ActionRegistryTestCase(unittest.TestCase):
@@ -447,7 +449,9 @@ class RealWorldExampleTestCase(unittest.TestCase):
             "uppercase", ["text={{user_input}}"], None, False
         )
 
-        result, _ = run_executor(model._executor, context={"user_input": "make me loud"})
+        result, _ = run_executor(
+            model._executor, context={"user_input": "make me loud"}
+        )
         self.assertEqual(result.response, "MAKE ME LOUD")
 
     def test_transform_with_different_operations(self):
