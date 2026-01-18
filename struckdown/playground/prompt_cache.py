@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import re
+import secrets
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -68,14 +69,23 @@ def store_prompt(text: str) -> str:
         logger.debug(f"Prompt {prompt_id} already exists at {path}")
         return prompt_id
 
-    # Atomic write: write to temp file then rename
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    # Set restrictive permissions (owner read/write only)
-    os.chmod(tmp_path, 0o600)
-    tmp_path.rename(path)
+    # Atomic write: use unique temp file to avoid race conditions
+    tmp_suffix = secrets.token_hex(8)
+    tmp_path = PROMPT_CACHE_DIR / f"{prompt_id}.{tmp_suffix}.tmp"
+    try:
+        tmp_path.write_text(text, encoding="utf-8")
+        os.chmod(tmp_path, 0o600)
+        tmp_path.rename(path)
+        logger.debug(f"Stored prompt {prompt_id} to {path}")
+    except FileExistsError:
+        # Another request already created the file - that's fine
+        tmp_path.unlink(missing_ok=True)
+        logger.debug(f"Prompt {prompt_id} already exists (race)")
+    except Exception:
+        # Clean up temp file on any error
+        tmp_path.unlink(missing_ok=True)
+        raise
 
-    logger.debug(f"Stored prompt {prompt_id} to {path}")
     return prompt_id
 
 
