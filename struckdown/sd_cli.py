@@ -272,7 +272,9 @@ async def _run_chat_incremental(
             final_result = event.result
 
         elif isinstance(event, ProcessingError):
-            raise StruckdownLLMError(event.error_message)
+            raise StruckdownLLMError(
+                Exception(event.error_message), prompt_str, model.model_name
+            )
 
     return final_result, break_result
 

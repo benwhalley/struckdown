@@ -97,10 +97,12 @@ class LLM(BaseModel):
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
 
         # Create OpenAI-compatible instructor client (works with litellm proxies)
+        # Use JSON mode for broad compatibility (uses response_format: json_object)
         litellm.api_key = credentials.api_key
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
-        client = instructor.from_litellm(litellm.completion)
+        litellm.suppress_debug_info = True
+        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.JSON)
 
         # Attach debug hook if enabled
         if _debug_api_requests:
@@ -144,11 +146,13 @@ def _call_llm_cached(
     """
     logger.info(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
     try:
+        call_kwargs = extra_kwargs.copy() if extra_kwargs else {}
+        call_kwargs["drop_params"] = True
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=model_name,
             response_model=return_type,
             messages=messages,
-            **(extra_kwargs if extra_kwargs else {}),
+            **call_kwargs,
         )
     except ContentPolicyViolationError as e:
         logger.warning(f"Content policy violation for model {model_name}: {e}")

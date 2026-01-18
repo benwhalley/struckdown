@@ -39,6 +39,9 @@ STRUCKDOWN_UPLOAD_RATE_LIMIT = os.environ.get(
 STRUCKDOWN_PROMPT_RATE_LIMIT = os.environ.get(
     "STRUCKDOWN_PROMPT_RATE_LIMIT", "20/minute"
 )
+STRUCKDOWN_PROMPT_LOAD_RATE_LIMIT = os.environ.get(
+    "STRUCKDOWN_PROMPT_LOAD_RATE_LIMIT", "6/minute"  # 1 every 10 seconds
+)
 STRUCKDOWN_MAX_SYNTAX_LENGTH = int(
     os.environ.get("STRUCKDOWN_MAX_SYNTAX_LENGTH", "1000000")
 )
@@ -432,6 +435,12 @@ def create_app(
             has_server_api_key=bool(server_api_key),
             prompt_id=prompt_id,
             allowed_models=allowed_models,
+        )
+
+    # Apply rate limiting to prompt load endpoint (prevents hash enumeration)
+    if limiter:
+        load_from_prompt = limiter.limit(STRUCKDOWN_PROMPT_LOAD_RATE_LIMIT)(
+            load_from_prompt
         )
 
     @app.route("/api/save", methods=["POST"])
@@ -1725,9 +1734,9 @@ def create_app(
 
     @app.route("/api/save-prompt", methods=["POST"])
     def save_prompt():
-        """Save prompt text and return a new UUID (remote mode only).
+        """Save prompt text and return content hash (remote mode only).
 
-        Generates a new UUID for each save, creating an immutable version.
+        Uses content-based hashing so same content always returns same hash.
         Only saves the prompt text -- never inputs or outputs.
         """
         if not remote_mode:
@@ -1742,9 +1751,8 @@ def create_app(
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
             return jsonify({"error": "Prompt too long"}), 400
 
-        # Generate a new UUID for this version
-        prompt_id = str(uuid.uuid4())
-        prompt_cache.store_prompt(prompt_id, syntax)
+        # Store and get content-based hash
+        prompt_id = prompt_cache.store_prompt(syntax)
 
         return jsonify({"prompt_id": prompt_id})
 

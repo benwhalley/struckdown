@@ -2,9 +2,13 @@
 
 let editor = null;
 let analyseTimeout = null;
+let autosaveTimeout = null;
 let currentInputs = [];
 let currentSlots = [];
 let sessionId = null;
+
+// Autosave interval (ms) - only in remote mode
+const AUTOSAVE_INTERVAL = 60000;
 
 // CSRF protection
 function getCsrfToken() {
@@ -135,6 +139,40 @@ function markEditorDirty() {
     if (!isDirty) {
         setDirty(true);
     }
+    // Schedule autosave in remote mode
+    scheduleAutosave();
+}
+
+// Schedule autosave (debounced, remote mode only)
+function scheduleAutosave() {
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+    if (!remoteMode) return;
+
+    // Clear any pending autosave
+    if (autosaveTimeout) {
+        clearTimeout(autosaveTimeout);
+    }
+
+    // Schedule new autosave
+    autosaveTimeout = setTimeout(function() {
+        if (isDirty) {
+            autosave();
+        }
+    }, AUTOSAVE_INTERVAL);
+}
+
+// Perform autosave (remote mode only)
+function autosave() {
+    const remoteMode = document.getElementById('remote-mode').value === 'true';
+    if (!remoteMode || !isDirty) return;
+
+    savePromptAndUpdateUrl().then(() => {
+        setDirty(false);
+        // Don't show status for autosave to avoid distraction
+        console.log('Autosaved');
+    }).catch(err => {
+        console.warn('Autosave failed:', err.message);
+    });
 }
 
 // File watching
@@ -562,9 +600,14 @@ function saveOnly() {
     const remoteMode = document.getElementById('remote-mode').value === 'true';
 
     if (remoteMode) {
-        // In remote mode, just clear dirty state (nothing to save to disk)
-        setDirty(false);
-        setStatus('success', 'Saved');
+        // In remote mode, save to backend and update URL
+        setStatus('running', 'Saving...');
+        savePromptAndUpdateUrl().then(() => {
+            setDirty(false);
+            setStatus('success', 'Saved');
+        }).catch(err => {
+            setStatus('error', 'Save failed: ' + err.message);
+        });
         return;
     }
 
@@ -602,13 +645,15 @@ function saveOnly() {
 }
 
 // Save prompt to backend and update URL (remote mode only)
-// Called after successful run to create a shareable link
+// Called after successful run or save to create a shareable link
 function savePromptAndUpdateUrl() {
     const remoteMode = document.getElementById('remote-mode').value === 'true';
     if (!remoteMode) return Promise.resolve();
 
     const syntax = getSyntax();
-    if (!syntax || !syntax.trim()) return Promise.resolve();
+    if (!syntax || !syntax.trim()) {
+        return Promise.reject(new Error('Empty prompt'));
+    }
 
     return fetchWithCsrf('/api/save-prompt', {
         method: 'POST',
@@ -617,17 +662,20 @@ function savePromptAndUpdateUrl() {
     })
     .then(response => response.json())
     .then(data => {
+        if (data.error) {
+            throw new Error(data.error);
+        }
         if (data.prompt_id) {
             // Update URL without reloading
             const newUrl = '/p/' + data.prompt_id;
             history.pushState({promptId: data.prompt_id}, '', newUrl);
             // Update hidden field
-            document.getElementById('current-prompt-id').value = data.prompt_id;
+            const hiddenField = document.getElementById('current-prompt-id');
+            if (hiddenField) {
+                hiddenField.value = data.prompt_id;
+            }
         }
-    })
-    .catch(err => {
-        // Don't fail the whole operation if URL update fails
-        console.error('Failed to save prompt:', err);
+        return data.prompt_id;
     });
 }
 
@@ -738,7 +786,9 @@ function runSingle(syntax) {
             renderSingleOutputs(data);
             updateCostDisplay(data.cost);
             // Save prompt and update URL (remote mode only)
-            savePromptAndUpdateUrl();
+            savePromptAndUpdateUrl().catch(err => {
+                console.warn('Failed to save prompt URL:', err.message);
+            });
         }
     });
 }
@@ -911,7 +961,9 @@ function handleIncrementalEvent(eventType, data, results) {
             markSkippedSlots(results.slotsCompleted);
             disableSaveButton(false);
             // Save prompt and update URL (remote mode only)
-            savePromptAndUpdateUrl();
+            savePromptAndUpdateUrl().catch(err => {
+                console.warn('Failed to save prompt URL:', err.message);
+            });
             break;
 
         case 'error':
@@ -1429,7 +1481,9 @@ function runFile(syntax) {
             renderSingleOutputs(data);
             updateCostDisplay(data.cost);
             // Save prompt and update URL (remote mode only)
-            savePromptAndUpdateUrl();
+            savePromptAndUpdateUrl().catch(err => {
+                console.warn('Failed to save prompt URL:', err.message);
+            });
         }
     });
 }
