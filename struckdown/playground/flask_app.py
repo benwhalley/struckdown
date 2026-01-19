@@ -1751,10 +1751,14 @@ def create_app(
         if len(syntax) > STRUCKDOWN_MAX_SYNTAX_LENGTH:
             return jsonify({"error": "Prompt too long"}), 400
 
-        # Store and get content-based hash
-        prompt_id = prompt_cache.store_prompt(syntax)
+        # Store and get content-based hash (may truncate if over size limit)
+        prompt_id, warning = prompt_cache.store_prompt(syntax)
 
-        return jsonify({"prompt_id": prompt_id})
+        response = {"prompt_id": prompt_id}
+        if warning:
+            response["warning"] = warning
+
+        return jsonify(response)
 
     # Apply rate limiting to save-prompt endpoint in remote mode
     if limiter:

@@ -602,9 +602,13 @@ function saveOnly() {
     if (remoteMode) {
         // In remote mode, save to backend and update URL
         setStatus('running', 'Saving...');
-        savePromptAndUpdateUrl().then(() => {
+        savePromptAndUpdateUrl().then((result) => {
             setDirty(false);
-            setStatus('success', 'Saved');
+            if (result && result.warning) {
+                setStatus('warning', result.warning);
+            } else {
+                setStatus('success', 'Saved');
+            }
         }).catch(err => {
             setStatus('error', 'Save failed: ' + err.message);
         });
@@ -675,7 +679,8 @@ function savePromptAndUpdateUrl() {
                 hiddenField.value = data.prompt_id;
             }
         }
-        return data.prompt_id;
+        // Return both prompt_id and warning (if any)
+        return { prompt_id: data.prompt_id, warning: data.warning };
     });
 }
 

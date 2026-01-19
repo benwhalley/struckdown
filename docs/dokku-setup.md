@@ -29,8 +29,8 @@ dokku ps:rebuild sd
 ## Cache Configuration (optional)
 
 ```bash
-# Max single prompt size (default 1MB)
-dokku config:set sd STRUCKDOWN_PROMPT_MAX_SIZE=1048576
+# Max single prompt size (default 200KB, truncates with warning if exceeded)
+dokku config:set sd STRUCKDOWN_PROMPT_MAX_SIZE=204800
 
 # Max total cache size (default 100MB, 0=unlimited)
 dokku config:set sd STRUCKDOWN_PROMPT_CACHE_MAX_SIZE=104857600

@@ -79,7 +79,8 @@ class TestStorePrompt:
         """Store and retrieve prompt text."""
         text = "Tell me a joke: [[joke]]"
 
-        prompt_id = prompt_cache.store_prompt(text)
+        prompt_id, warning = prompt_cache.store_prompt(text)
+        assert warning is None
 
         # File should exist on disk
         cache_file = temp_cache_dir / f"{prompt_id}.txt"
@@ -95,7 +96,7 @@ class TestStorePrompt:
     def test_store_returns_hash(self, temp_cache_dir):
         """store_prompt returns valid content hash."""
         text = "test prompt"
-        prompt_id = prompt_cache.store_prompt(text)
+        prompt_id, warning = prompt_cache.store_prompt(text)
 
         # Should be valid hash
         assert prompt_cache.validate_prompt_id(prompt_id)
@@ -107,8 +108,8 @@ class TestStorePrompt:
         """Storing same content twice returns same ID."""
         text = "same content"
 
-        id1 = prompt_cache.store_prompt(text)
-        id2 = prompt_cache.store_prompt(text)
+        id1, _ = prompt_cache.store_prompt(text)
+        id2, _ = prompt_cache.store_prompt(text)
 
         assert id1 == id2
 
@@ -128,7 +129,7 @@ class TestStorePrompt:
         """Store and retrieve unicode text."""
         text = "Tell me about \u4e2d\u6587 and \u65e5\u672c\u8a9e: [[answer]]"
 
-        prompt_id = prompt_cache.store_prompt(text)
+        prompt_id, _ = prompt_cache.store_prompt(text)
         retrieved = prompt_cache.get_prompt(prompt_id)
         assert retrieved == text
 
@@ -142,18 +143,33 @@ Tell me a joke about {{topic}}.
 
 [[joke]]
 """
-        prompt_id = prompt_cache.store_prompt(text)
+        prompt_id, _ = prompt_cache.store_prompt(text)
         retrieved = prompt_cache.get_prompt(prompt_id)
         assert retrieved == text
 
     def test_file_permissions(self, temp_cache_dir):
         """Stored files have restricted permissions."""
-        prompt_id = prompt_cache.store_prompt("test")
+        prompt_id, _ = prompt_cache.store_prompt("test")
         cache_file = temp_cache_dir / f"{prompt_id}.txt"
 
         # Check permissions are 0600 (owner read/write only)
         mode = cache_file.stat().st_mode & 0o777
         assert mode == 0o600
+
+    def test_truncates_large_prompt(self, temp_cache_dir, monkeypatch):
+        """Large prompts are truncated with warning."""
+        # Set small limit for testing
+        monkeypatch.setattr(prompt_cache, "MAX_PROMPT_SIZE", 100)
+
+        text = "x" * 200  # Exceeds limit
+
+        prompt_id, warning = prompt_cache.store_prompt(text)
+        assert warning is not None
+        assert "truncated" in warning.lower()
+
+        # Retrieved content should be truncated
+        retrieved = prompt_cache.get_prompt(prompt_id)
+        assert len(retrieved) == 100
 
 
 class TestGetPrompt:
@@ -177,7 +193,7 @@ class TestPromptExists:
 
     def test_exists_true(self, temp_cache_dir):
         """Existing prompt returns True."""
-        prompt_id = prompt_cache.store_prompt("test")
+        prompt_id, _ = prompt_cache.store_prompt("test")
         assert prompt_cache.prompt_exists(prompt_id) is True
 
     def test_exists_false(self, temp_cache_dir):

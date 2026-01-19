@@ -34,8 +34,8 @@ PROMPT_CACHE_DIR = Path(
 # Use first 24 chars of SHA256 (96 bits) -- collision-resistant for this use case
 HASH_LENGTH = 24
 
-# Max single prompt size (default 1MB)
-MAX_PROMPT_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_MAX_SIZE", 1 * 1024 * 1024))
+# Max single prompt size (default 200KB)
+MAX_PROMPT_SIZE = int(os.environ.get("STRUCKDOWN_PROMPT_MAX_SIZE", 200 * 1024))
 
 # Max total cache size (default 100MB, 0 = unlimited)
 MAX_CACHE_SIZE = int(
@@ -63,24 +63,24 @@ def validate_prompt_id(prompt_id: str) -> bool:
     return bool(re.match(r"^[a-f0-9]+$", prompt_id))
 
 
-def store_prompt(text: str) -> str:
+def store_prompt(text: str) -> tuple[str, str | None]:
     """Store prompt text to disk using content-based hash.
 
     Args:
         text: Raw prompt text (struckdown syntax)
 
     Returns:
-        The content hash (prompt_id) for this prompt
-
-    Raises:
-        ValueError: If prompt exceeds MAX_PROMPT_SIZE
+        Tuple of (prompt_id, warning_message or None)
     """
-    # Check size limit
+    warning = None
     text_bytes = text.encode("utf-8")
+
+    # Truncate if over size limit
     if len(text_bytes) > MAX_PROMPT_SIZE:
-        raise ValueError(
-            f"Prompt too large ({len(text_bytes)} bytes, max {MAX_PROMPT_SIZE})"
-        )
+        warning = f"Prompt truncated ({len(text_bytes)} bytes exceeded {MAX_PROMPT_SIZE // 1024}KB limit)"
+        logger.warning(warning)
+        # Truncate bytes and decode back (may lose partial char at end)
+        text = text_bytes[:MAX_PROMPT_SIZE].decode("utf-8", errors="ignore")
 
     prompt_id = hash_content(text)
 
@@ -92,7 +92,7 @@ def store_prompt(text: str) -> str:
     if path.exists():
         path.touch()
         logger.debug(f"Prompt {prompt_id} already exists at {path}")
-        return prompt_id
+        return prompt_id, warning
 
     # Atomic write: use unique temp file to avoid race conditions
     tmp_suffix = secrets.token_hex(8)
@@ -111,7 +111,7 @@ def store_prompt(text: str) -> str:
         tmp_path.unlink(missing_ok=True)
         raise
 
-    return prompt_id
+    return prompt_id, warning
 
 
 def get_prompt(prompt_id: str) -> str:
