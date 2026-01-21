@@ -102,7 +102,7 @@ class LLM(BaseModel):
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
         litellm.suppress_debug_info = True
-        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.JSON)
+        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.TOOLS)
 
         # Attach debug hook if enabled
         if _debug_api_requests:
