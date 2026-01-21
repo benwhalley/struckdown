@@ -21,6 +21,7 @@ from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials,
                StruckdownLLMError, StruckdownTemplateError, __version__,
                chatter, chatter_async, progress_tracking)
 from .actions import discover_actions, load_actions
+from .parsing import find_slots_with_positions
 from .output_formatters import render_template, write_output
 from .type_loader import discover_yaml_types, load_yaml_types
 
@@ -898,6 +899,7 @@ async def batch_async(
     statsonly: bool = False,
     classification_errors: Optional[int] = None,
     min_n_compare: int = 1,
+    estimation_info: Optional[dict] = None,
 ):
     """
     Async implementation of batch processing with concurrent execution.
@@ -911,6 +913,12 @@ async def batch_async(
     # cost tracking - collect all ChatterResults for CostSummary
     chatter_results = []
     cost_lock = anyio.Lock()
+
+    # Count slots in prompt to estimate total completions
+    slots = find_slots_with_positions(prompt)
+    num_slots = max(1, len(slots))  # At least 1 to avoid division issues
+    num_files = len(input_data)
+    estimated_completions = num_files * num_slots
 
     # API call counter for progress display
     api_call_count = [0]  # Use list to allow mutation in nested function
@@ -934,7 +942,10 @@ async def batch_async(
             TimeRemainingColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("Processing (0 API calls)", total=len(input_data))
+            task = progress.add_task(
+                f"0/{estimated_completions} completions ({num_files} files × {num_slots} slots)",
+                total=estimated_completions,
+            )
 
             async with anyio.create_task_group() as tg:
                 for idx, input_item in enumerate(input_data):
@@ -953,7 +964,8 @@ async def batch_async(
                                     if progress_bar is not None:
                                         progress_bar.update(
                                             progress_task,
-                                            description=f"Processing ({api_call_count[0]} API calls)",
+                                            advance=1,
+                                            description=f"{api_call_count[0]}/{estimated_completions} completions",
                                         )
 
                                 # Execute chatter_async with progress tracking
@@ -993,15 +1005,6 @@ async def batch_async(
                                     import traceback
 
                                     console.print(traceback.format_exc())
-
-                            finally:
-                                # Update progress bar on completion with API call count
-                                if progress_bar is not None:
-                                    progress_bar.update(
-                                        progress_task,
-                                        advance=1,
-                                        description=f"Processing ({api_call_count[0]} API calls)",
-                                    )
 
                     tg.start_soon(run_and_store)
     else:
@@ -1059,6 +1062,34 @@ async def batch_async(
     # print cost summary to stderr (always visible)
     summary = CostSummary.from_results(chatter_results)
     typer.echo(summary.format_summary(), err=True)
+
+    # Show cost estimate for full run if --head was used
+    if estimation_info and summary.total_cost > 0:
+        total_count = estimation_info["total_count"]
+        processed_count = estimation_info["processed_count"]
+        total_size = estimation_info["total_size"]
+        processed_size = estimation_info["processed_size"]
+
+        # Calculate estimate based on size ratio (for text files) or count ratio (for tabular)
+        if processed_size > 0 and total_size > processed_size:
+            # Use size-weighted estimate for text files
+            size_ratio = total_size / processed_size
+            estimated_cost = summary.total_cost * size_ratio
+            estimated_tokens_in = int(summary.total_prompt_tokens * size_ratio)
+            estimated_tokens_out = int(summary.total_completion_tokens * size_ratio)
+        else:
+            # Use simple count ratio for tabular data
+            count_ratio = total_count / processed_count
+            estimated_cost = summary.total_cost * count_ratio
+            estimated_tokens_in = int(summary.total_prompt_tokens * count_ratio)
+            estimated_tokens_out = int(summary.total_completion_tokens * count_ratio)
+
+        typer.echo(
+            f"\nEstimated full run ({total_count} items): "
+            f"~${estimated_cost:.4f} "
+            f"(~{estimated_tokens_in:,} in / ~{estimated_tokens_out:,} out)",
+            err=True,
+        )
 
     # Report errors if any
     if errors:
@@ -1441,8 +1472,29 @@ def batch(
         )
         raise typer.Exit(1)
 
+    # Calculate input sizes for cost estimation (before --head filtering)
+    def _get_input_size(item: dict) -> int:
+        """Get size of input item for cost estimation."""
+        # For text files, use content length
+        if "content" in item:
+            return len(item["content"])
+        # For tabular data, estimate from all string values
+        return sum(len(str(v)) for v in item.values() if v is not None)
+
+    all_input_sizes = [_get_input_size(item) for item in input_data]
+    total_input_count = len(input_data)
+    total_input_size = sum(all_input_sizes)
+
     # Limit to first N inputs if --head specified
+    estimation_info = None
     if head is not None and head > 0:
+        processed_sizes = all_input_sizes[:head]
+        estimation_info = {
+            "total_count": total_input_count,
+            "processed_count": head,
+            "total_size": total_input_size,
+            "processed_size": sum(processed_sizes),
+        }
         input_data = input_data[:head]
 
     # build extra_kwargs for API parameters
@@ -1476,6 +1528,7 @@ def batch(
         statsonly,
         classification_errors,
         min_n_compare,
+        estimation_info,
     )
 
 

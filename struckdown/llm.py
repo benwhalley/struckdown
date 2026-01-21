@@ -144,7 +144,9 @@ def _call_llm_cached(
         messages: List of message dicts with 'role' and 'content' keys
         cache_version: Version string included in cache key (typically struckdown version)
     """
-    logger.info(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
+    mm = str(messages)[:20]
+    logger.info(f"LLM CALL: {mm}")
+    logger.debug(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
     try:
         call_kwargs = extra_kwargs.copy() if extra_kwargs else {}
         call_kwargs["drop_params"] = True
@@ -193,7 +195,7 @@ def _call_llm_cached(
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
         raise StruckdownLLMError(e, prompt_repr, model_name) from e
 
-    logger.info(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
 
     # for safe pickling
     com_dict = com.model_dump()
@@ -268,7 +270,7 @@ def structured_chat(
     logger.debug(f"LLM kwargs: {extra_kwargs}")
 
     start_time = time.monotonic()
-    logger.info(f"{LC.CYAN}LLM CALL START{call_hint}{LC.RESET}")
+    logger.debug(f"{LC.CYAN}LLM CALL START{call_hint}{LC.RESET}")
 
     try:
         res_dict, com_dict = _call_llm_cached(
@@ -283,26 +285,28 @@ def structured_chat(
             credentials=credentials,
             cache_version=__version__,
         )
-
-        res = return_type.model_validate(res_dict)
-        com = Box(com_dict)
-
-        elapsed_ms = (time.monotonic() - start_time) * 1000
-        was_cached = com.get("_run_id") != get_run_id()
-        cache_status = " (cached)" if was_cached else ""
-        logger.info(
-            f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}"
-        )
-
-        logger.debug(
-            f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
-        )
-        return res, com
-
-    except (EOFError, Exception) as e:
+    except StruckdownLLMError as e:
         elapsed_ms = (time.monotonic() - start_time) * 1000
         logger.warning(
             f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}"
+        )
+        raise
+
+    res = return_type.model_validate(res_dict)
+    com = Box(com_dict)
+
+    elapsed_ms = (time.monotonic() - start_time) * 1000
+    was_cached = com.get("_run_id") != get_run_id()
+    cache_status = " (cached)" if was_cached else ""
+    logger.info(was_cached and "Cache hit" or "")
+    logger.debug(
+        f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}"
+    )
+
+    logger.debug(
+        f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
+    )
+    return res, com
         )
         raise e
 
