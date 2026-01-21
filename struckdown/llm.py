@@ -9,9 +9,11 @@ import instructor
 import litellm
 from instructor.core.hooks import HookName
 
+# Configure litellm to drop unsupported params rather than error
+litellm.drop_params = True
+
 # Module-level flag for API request logging
 _debug_api_requests = False
-
 
 def enable_api_debug():
     """Enable logging of full API requests (messages + tools schema)."""
