@@ -380,6 +380,22 @@ export STRUCKDOWN_CACHE=/path/to/cache
 export STRUCKDOWN_CACHE_SIZE=5120  # 5 GB
 ```
 
+## Embeddings
+
+Generate text embeddings using API or local models:
+
+```python
+from struckdown import get_embedding
+
+# API embeddings (default)
+embeddings = get_embedding(["text 1", "text 2"])
+
+# Local embeddings (requires: uv pip install struckdown[local])
+embeddings = get_embedding(texts, model="local/all-MiniLM-L6-v2")
+```
+
+Use `local/model-name` prefix for any sentence-transformers model. API embeddings use `LLM_API_KEY` and `LLM_API_BASE` environment variables.
+
 ## Advanced Features
 
 ### List Completions

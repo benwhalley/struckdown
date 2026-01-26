@@ -45,6 +45,7 @@ dependencies = [
 
 [project.optional-dependencies]
 playwright = ["playwright>=1.40.0"]
+local = ["sentence-transformers>=2.2.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -3,7 +3,7 @@
 import json
 import logging
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import instructor
 import litellm
@@ -11,6 +11,7 @@ from instructor.core.hooks import HookName
 
 # Configure litellm to drop unsupported params rather than error
 litellm.drop_params = True
+# litellm._turn_on_debug()
 
 # Module-level flag for API request logging
 _debug_api_requests = False
@@ -106,6 +107,16 @@ class LLM(BaseModel):
         litellm.suppress_debug_info = True
         client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.TOOLS)
 
+        # Truncate validation errors in retry messages to save tokens
+        def truncate_validation_errors(**kwargs):
+            max_chars = 2000
+            for msg in kwargs.get("messages", []):
+                content = msg.get("content", "")
+                if "validation error" in content.lower() and len(content) > max_chars:
+                    msg["content"] = content[:max_chars] + "\n\n... (truncated)"
+
+        client.on(HookName.COMPLETION_KWARGS, truncate_validation_errors)
+
         # Attach debug hook if enabled
         if _debug_api_requests:
 
@@ -146,8 +157,8 @@ def _call_llm_cached(
         messages: List of message dicts with 'role' and 'content' keys
         cache_version: Version string included in cache key (typically struckdown version)
     """
-    mm = str(messages)[:20]
-    logger.info(f"LLM CALL: {mm}")
+    mm = str(messages)[:100]
+    logger.debug(f"LLM CALL: {mm}")
     logger.debug(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
     try:
         call_kwargs = extra_kwargs.copy() if extra_kwargs else {}
@@ -156,6 +167,7 @@ def _call_llm_cached(
             model=model_name,
             response_model=return_type,
             messages=messages,
+            max_retries=max_retries,
             **call_kwargs,
         )
     except ContentPolicyViolationError as e:
@@ -300,7 +312,7 @@ def structured_chat(
     elapsed_ms = (time.monotonic() - start_time) * 1000
     was_cached = com.get("_run_id") != get_run_id()
     cache_status = " (cached)" if was_cached else ""
-    logger.info(was_cached and "Cache hit" or "")
+    logger.debug(was_cached and "Cache hit" or "")
     logger.debug(
         f"{LC.GREEN}LLM CALL DONE [{elapsed_ms:.0f}ms]{cache_status}{call_hint}{LC.RESET}"
     )
@@ -309,44 +321,197 @@ def structured_chat(
         f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
     )
     return res, com
+
+
+# Singleton cache for local embedding models
+_local_embedding_models = {}
+
+
+def _get_local_embedding(
+    texts: List[str],
+    model_name: str,
+    batch_size: int = 32,
+) -> List[List[float]]:
+    """Get embeddings using local sentence-transformers model.
+
+    Args:
+        texts: List of texts to embed
+        model_name: HuggingFace model name (e.g., "all-MiniLM-L6-v2")
+        batch_size: Batch size for encoding (default: 32)
+
+    Returns:
+        List of embedding vectors
+
+    Raises:
+        ImportError: If sentence-transformers is not installed
+    """
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        raise ImportError(
+            "sentence-transformers is required for local embeddings. "
+            "Install with: pip install struckdown[local]"
         )
-        raise e
+
+    if model_name not in _local_embedding_models:
+        logger.info(f"Loading local embedding model: {model_name}")
+        _local_embedding_models[model_name] = SentenceTransformer(model_name)
+
+    model = _local_embedding_models[model_name]
+    embeddings = model.encode(
+        texts,
+        convert_to_numpy=True,
+        show_progress_bar=len(texts) > batch_size,
+        batch_size=batch_size,
+    )
+    return embeddings.tolist()
+
+
+def _get_api_embedding_batch(
+    batch: List[str],
+    model_name: str,
+    dimensions: Optional[int],
+    api_key: str,
+    base_url: Optional[str],
+    timeout: int = 60,
+) -> List[List[float]]:
+    """Get embeddings for a single batch via API (uncached)."""
+    logger.debug(f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}")
+    try:
+        response = litellm.embedding(
+            model=model_name,
+            input=list(map(str, batch)),
+            dimensions=dimensions,
+            api_key=api_key,
+            api_base=base_url,
+            timeout=timeout,
+        )
+    except Exception as e:
+        raise Exception(f"Error getting embeddings: {e}")
+    logger.debug(f"API embedding batch complete: {len(response['data'])} embeddings")
+    return [item["embedding"] for item in response["data"]]
+
+
+@memory.cache
+def _get_api_embedding_batch_cached(
+    batch: Tuple[str, ...],
+    model_name: str,
+    dimensions: Optional[int],
+) -> List[List[float]]:
+    """Get embeddings for a single batch via API (cached).
+
+    Uses tuple for batch to enable joblib caching.
+    Credentials fetched fresh each call (not part of cache key).
+    """
+    logger.debug(f"Cache miss for embedding batch: {len(batch)} texts")
+    credentials = LLMCredentials()
+    return _get_api_embedding_batch(
+        list(batch),
+        model_name,
+        dimensions,
+        credentials.api_key,
+        credentials.base_url,
+    )
 
 
 def get_embedding(
     texts: List[str],
-    llm: LLM = None,
-    credentials: LLMCredentials = None,
-    dimensions: Optional[int] = 3072,
-    batch_size: int = 500,
+    model: Optional[str] = None,
+    credentials: Optional[LLMCredentials] = None,
+    dimensions: Optional[int] = None,
+    batch_size: int = 100,
+    max_workers: int = 20,
 ) -> List[List[float]]:
     """
-    Get embeddings for a list of texts using litellm directly.
+    Get embeddings for texts using local or API models.
+
+    Supports local sentence-transformers models (prefix with "local/") or
+    API-based models via litellm.
+
+    Args:
+        texts: List of texts to embed
+        model: Model name. Use "local/model-name" for sentence-transformers
+               (e.g., "local/all-MiniLM-L6-v2"), or API model name
+               (e.g., "text-embedding-3-large"). Defaults to DEFAULT_EMBEDDING_MODEL env var.
+        credentials: Optional LLMCredentials for API calls. If provided, bypasses cache.
+        dimensions: Embedding dimensions (API models only, model-specific)
+        batch_size: Texts per batch (default: 100)
+        max_workers: Max parallel API requests (default: 20)
+
+    Returns:
+        List of embedding vectors
+
+    Examples:
+        # Local embeddings (fast, free)
+        get_embedding(texts, model="local/all-MiniLM-L6-v2")
+
+        # API embeddings (better quality)
+        get_embedding(texts, model="text-embedding-3-large")
+
+        # API embeddings with custom credentials
+        get_embedding(texts, model="text-embedding-3-large", credentials=my_creds)
     """
-    if llm is None:
-        llm = LLM(
-            model_name=env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large")
-        )
-    if credentials is None:
-        credentials = LLMCredentials()
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    api_key = credentials.api_key
-    base_url = credentials.base_url
+    if not texts:
+        return []
 
-    embeddings = []
-    for batch in chunked(texts, batch_size):
-        logger.debug(f"Getting batch of embeddings:\n{texts}")
-        try:
-            response = litellm.embedding(
-                model=llm.model_name,
-                input=list(map(str, batch)),
-                dimensions=dimensions,
-                api_key=api_key,
-                api_base=base_url,
+    # Handle tuple input for backward compatibility
+    if isinstance(texts, tuple):
+        texts = list(texts)
+
+    # Default model from env
+    if model is None:
+        model = env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large")
+
+    # Check for local/ prefix
+    if model.startswith("local/"):
+        local_model_name = model[6:]  # strip "local/"
+        logger.debug(f"Using local embeddings: {local_model_name}, {len(texts)} texts")
+        return _get_local_embedding(texts, local_model_name, batch_size=batch_size)
+
+    # API embeddings with parallel batching
+    logger.debug(f"Using API embeddings: {model}, {len(texts)} texts")
+
+    # Default dimensions for known models (only large model supports 3072)
+    if dimensions is None and "text-embedding-3-large" in model:
+        dimensions = 3072
+
+    batches = list(chunked(texts, batch_size))
+
+    # Choose batch function: cached (default) or uncached (when credentials provided)
+    if credentials is not None:
+        # Custom credentials - bypass cache
+        def get_batch(batch):
+            return _get_api_embedding_batch(
+                list(batch), model, dimensions, credentials.api_key, credentials.base_url
             )
-        except Exception as e:
-            raise Exception(f"Error getting embeddings: {e}")
+    else:
+        # Default credentials - use cache
+        def get_batch(batch):
+            return _get_api_embedding_batch_cached(tuple(batch), model, dimensions)
 
-        embeddings.extend(item["embedding"] for item in response["data"])
+    # Single batch - no parallelism needed
+    if len(batches) == 1:
+        return get_batch(batches[0])
+
+    # Multiple batches - process in parallel
+    logger.debug(f"Processing {len(batches)} batches with {max_workers} workers")
+    results: List[Optional[List[List[float]]]] = [None] * len(batches)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(get_batch, batch): idx
+            for idx, batch in enumerate(batches)
+        }
+
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+
+    # Flatten in order
+    embeddings = []
+    for batch_result in results:
+        embeddings.extend(batch_result)
 
     return embeddings
