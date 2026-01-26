@@ -19,7 +19,8 @@ from rich.progress import (BarColumn, Progress, SpinnerColumn,
 
 from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials,
                StruckdownLLMError, StruckdownTemplateError, __version__,
-               chatter, chatter_async, progress_tracking)
+               chatter, chatter_async, get_embedding, progress_tracking,
+               structured_chat)
 from .actions import discover_actions, load_actions
 from .parsing import find_slots_with_positions
 from .output_formatters import render_template, write_output
@@ -2127,6 +2128,222 @@ def serve(
         flask_app.run(host=host, port=port, debug=False, threaded=True)
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped[/dim]")
+
+
+def load_env_file(env_path: Path) -> dict:
+    """Load environment variables from .env file.
+
+    Returns:
+        Dict of key-value pairs. Empty dict if file missing.
+    """
+    env_vars = {}
+    if env_path.exists():
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    # Remove quotes if present
+                    value = value.strip().strip('"').strip("'")
+                    env_vars[key] = value
+    return env_vars
+
+
+def save_env_file(env_path: Path, env_vars: dict) -> None:
+    """Save environment variables to .env file with quoted values."""
+    with open(env_path, "w") as f:
+        for key, value in env_vars.items():
+            # Strip existing quotes to avoid double-quoting
+            value = str(value).strip('"').strip("'")
+            f.write(f'{key}="{value}"\n')
+
+
+def check_and_prompt_credentials(cwd: Path) -> tuple:
+    """Check for LLM credentials and prompt user if missing.
+
+    Returns:
+        Tuple of (api_key, base_url, model_name)
+    """
+    env_path = cwd / ".env"
+
+    # First check environment variables
+    api_key = os.getenv("LLM_API_KEY")
+    base_url = os.getenv("LLM_API_BASE")
+    model_name = os.getenv("DEFAULT_LLM")
+
+    # If not in env, check .env file
+    if not api_key or not base_url:
+        env_vars = load_env_file(env_path)
+        api_key = api_key or env_vars.get("LLM_API_KEY")
+        base_url = base_url or env_vars.get("LLM_API_BASE")
+        model_name = model_name or env_vars.get("DEFAULT_LLM")
+
+    # Prompt for missing credentials
+    missing = []
+    if not api_key:
+        missing.append("LLM_API_KEY")
+    if not base_url:
+        missing.append("LLM_API_BASE")
+
+    if missing:
+        typer.echo("Missing required LLM credentials:", err=True)
+        for var in missing:
+            typer.echo(f"   - {var}", err=True)
+
+        response = typer.confirm(
+            "Would you like to provide them now?", default=True, err=True
+        )
+        if not response:
+            typer.echo("Cannot proceed without LLM credentials", err=True)
+            raise typer.Exit(1)
+
+        # Load existing .env vars to preserve them
+        env_vars = load_env_file(env_path)
+
+        if not api_key:
+            api_key = typer.prompt("Enter LLM_API_KEY", err=True)
+            api_key = api_key.strip().strip('"').strip("'")  # strip quotes from user input
+            env_vars["LLM_API_KEY"] = api_key
+
+        if not base_url:
+            default_url = "https://api.openai.com/v1"
+            base_url = typer.prompt("Enter LLM_API_BASE", default=default_url, err=True)
+            base_url = base_url.strip().strip('"').strip("'")  # strip quotes from user input
+            env_vars["LLM_API_BASE"] = base_url
+
+        if not model_name:
+            default_model = "gpt-4.1-mini"
+            model_name = typer.prompt("Enter DEFAULT_LLM (model name)", default=default_model, err=True)
+            model_name = model_name.strip().strip('"').strip("'")  # strip quotes from user input
+            env_vars["DEFAULT_LLM"] = model_name
+
+        # Save to .env file
+        save_env_file(env_path, env_vars)
+        typer.echo(f"✓ Credentials saved to {env_path}", err=True)
+
+        # Set in current process environment
+        os.environ["LLM_API_KEY"] = api_key
+        os.environ["LLM_API_BASE"] = base_url
+        if model_name:
+            os.environ["DEFAULT_LLM"] = model_name
+
+    return api_key, base_url, model_name
+
+
+@app.command()
+def test(
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
+):
+    """Test LLM and embedding connections with current settings.
+
+    Verifies that:
+    - LLM_API_KEY and LLM_API_BASE are configured
+    - LLM API calls work (simple completion test)
+    - Embedding API calls work
+
+    If credentials are missing, prompts interactively and saves to .env file.
+
+    Examples:
+        sd test                # Test with current settings
+        sd test -v             # Verbose output
+    """
+    from pydantic import BaseModel, Field
+    from rich.console import Console
+
+    console = Console()
+
+    # Check and prompt for credentials
+    cwd = Path.cwd()
+    api_key, base_url, model_name = check_and_prompt_credentials(cwd)
+
+    # Use default model if not set
+    if not model_name:
+        model_name = "gpt-4.1-mini"
+
+    console.print(f"\n[bold]Testing struckdown configuration[/bold]")
+    console.print(f"  API Base: {base_url}")
+    console.print(f"  Model: {model_name}")
+    console.print()
+
+    credentials = LLMCredentials(api_key=api_key, base_url=base_url)
+    model = LLM(model_name=model_name)
+
+    # Test 1: LLM completion
+    console.print("[cyan]Testing LLM completion...[/cyan]")
+    try:
+        class SimpleResponse(BaseModel):
+            answer: str = Field(description="A simple answer")
+
+        result, completion = structured_chat(
+            prompt="What is 2+2? Reply with just the number.",
+            return_type=SimpleResponse,
+            llm=model,
+            credentials=credentials,
+            max_retries=1,
+        )
+
+        console.print(f"  [green]✓[/green] LLM call successful")
+        if verbose:
+            console.print(f"    Response: {result.answer}")
+            if hasattr(completion, "usage"):
+                console.print(f"    Tokens: {completion.usage.prompt_tokens} in / {completion.usage.completion_tokens} out")
+
+    except Exception as e:
+        console.print(f"  [red]✗[/red] LLM call failed: {e}")
+        if verbose:
+            import traceback
+            console.print(f"    {traceback.format_exc()}")
+
+        # Provide helpful error messages
+        error_str = str(e).lower()
+        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+            console.print("\n[yellow]Hint:[/yellow] Check that LLM_API_KEY is correct")
+        elif "not found" in error_str or "404" in error_str:
+            console.print("\n[yellow]Hint:[/yellow] Check that LLM_API_BASE URL is correct")
+        elif "model" in error_str:
+            console.print(f"\n[yellow]Hint:[/yellow] Check that model '{model_name}' is available at your API endpoint")
+        elif "connection" in error_str or "timeout" in error_str:
+            console.print(f"\n[yellow]Hint:[/yellow] Check network connectivity to {base_url}")
+
+        raise typer.Exit(1)
+
+    # Test 2: Embedding (optional -- some endpoints don't support embeddings)
+    console.print("[cyan]Testing embeddings...[/cyan]")
+    embedding_ok = False
+    try:
+        embeddings = get_embedding(
+            ["This is a test sentence."],
+            credentials=credentials,
+        )
+
+        if embeddings and len(embeddings) > 0 and len(embeddings[0]) > 0:
+            console.print(f"  [green]✓[/green] Embedding call successful")
+            if verbose:
+                console.print(f"    Embedding dimensions: {len(embeddings[0])}")
+            embedding_ok = True
+        else:
+            console.print(f"  [yellow]⚠[/yellow] Embedding returned empty result (embeddings may not be supported)")
+
+    except Exception as e:
+        console.print(f"  [yellow]⚠[/yellow] Embedding call failed: {e}")
+        if verbose:
+            import traceback
+            console.print(f"    {traceback.format_exc()}")
+
+        # Provide helpful error messages
+        error_str = str(e).lower()
+        if "connection" in error_str:
+            console.print("    [dim]Hint: Your API endpoint may not support the text-embedding-3-large model[/dim]")
+        elif "authentication" in error_str or "api key" in error_str:
+            console.print("    [dim]Hint: Check that your API key has embedding permissions[/dim]")
+        elif "model" in error_str:
+            console.print("    [dim]Hint: Check that your API endpoint supports the embedding model[/dim]")
+
+    if embedding_ok:
+        console.print("\n[green bold]All tests passed![/green bold]")
+    else:
+        console.print("\n[green]✓ LLM test passed![/green] (Embeddings not available -- some features may be limited)")
+    console.print(f"Configuration saved in: {cwd / '.env'}")
 
 
 if __name__ == "__main__":
