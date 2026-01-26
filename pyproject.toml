@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.3.11"
+version = "0.3.13"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
   { name = "Ben Whalley", email = "benwhalley@gmail.com" }
 ]
 
-readme = "README.md"
+readme = "README_PYPI.md"
 requires-python = ">=3.12"
 dependencies = [
     "asgiref>=3.7.0",
