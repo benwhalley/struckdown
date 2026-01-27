@@ -181,6 +181,12 @@ def clear_cache():
     This is useful if cache files become corrupted or you want to force
     fresh LLM calls for all prompts.
     """
+    # clear embedding cache (uses diskcache, separate from joblib cache)
+    from .embedding_cache import clear_embedding_cache
+
+    clear_embedding_cache()
+
+    # clear joblib cache
     cache_dir = get_cache_dir()
     if cache_dir is None:
         logger.info("Caching is disabled, nothing to clear")

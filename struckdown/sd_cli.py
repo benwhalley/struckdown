@@ -6,7 +6,9 @@ import traceback
 from glob import glob
 from pathlib import Path
 from typing import List, Optional
-
+import random
+import string
+    
 import anyio
 import typer
 from decouple import config as env_config
@@ -1737,7 +1739,7 @@ def explain(
 
     # Analyze and build execution plan data
     structure = analyze_sections(sections)
-    console.print("[cyan]Generating summaries of prompts...[/cyan]")
+    console.print("Generating summaries of prompts...")
     plan_data = build_execution_plan_data(
         structure, prompt_name=prompt_file.stem, sections_data=sections, summarize=True
     )
@@ -1749,12 +1751,12 @@ def explain(
             # Render as HTML
             html_content = render_execution_plan(plan_data, format="html")
             output.write_text(html_content)
-            console.print(f"[green]✓[/green] Wrote HTML to [cyan]{output}[/cyan]")
+            console.print(f"[green]✓[/green] Wrote HTML to {output}")
         else:
             # Render as plain text
             text_content = render_execution_plan(plan_data, format="text")
             output.write_text(text_content)
-            console.print(f"[green]✓[/green] Wrote plan to [cyan]{output}[/cyan]")
+            console.print(f"[green]✓[/green] Wrote plan to {output}")
     else:
         # Print to stdout
         text_content = render_execution_plan(plan_data, format="text")
@@ -1860,7 +1862,7 @@ def preview(
 
     if output:
         output.write_text(html, encoding="utf-8")
-        console.print(f"[green]Wrote preview to[/green] [cyan]{output}[/cyan]")
+        console.print(f"[green]Wrote preview to[/green] {output}")
     else:
         # write to /tmp (more accessible to sandboxed apps) or system temp
         import platform
@@ -1920,7 +1922,7 @@ def flat(
         if output:
             output.write_text(flattened)
             console.print(
-                f"[green]✓[/green] Wrote flattened template to [cyan]{output}[/cyan]"
+                f"[green]✓[/green] Wrote flattened template to {output}"
             )
         else:
             # Use print() instead of console.print() to avoid Rich markup interpretation
@@ -2269,7 +2271,7 @@ def test(
     model = LLM(model_name=model_name)
 
     # Test 1: LLM completion
-    console.print("[cyan]Testing LLM completion...[/cyan]")
+    console.print("Testing LLM completion...")
     try:
         class SimpleResponse(BaseModel):
             answer: str = Field(description="A simple answer")
@@ -2308,11 +2310,12 @@ def test(
         raise typer.Exit(1)
 
     # Test 2: Embedding (optional -- some endpoints don't support embeddings)
-    console.print("[cyan]Testing embeddings...[/cyan]")
+    console.print("Testing embeddings...")
     embedding_ok = False
+    
     try:
         embeddings = get_embedding(
-            ["This is a test sentence."],
+            ["hello", "world", "".join(random.choices(string.ascii_letters + " ", k=64))],
             credentials=credentials,
         )
 

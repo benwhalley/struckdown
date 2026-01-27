@@ -46,6 +46,7 @@ from more_itertools import chunked
 from pydantic import BaseModel, Field
 
 from .cache import hash_return_type, memory
+from .embedding_cache import clear_embedding_cache, get_cached_embeddings, store_embeddings
 from .errors import StruckdownLLMError
 from .results import get_run_id
 
@@ -105,6 +106,8 @@ class LLM(BaseModel):
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
         litellm.suppress_debug_info = True
+        # litellm._turn_on_debug()
+        
         client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.TOOLS)
 
         # Truncate validation errors in retry messages to save tokens
@@ -116,6 +119,12 @@ class LLM(BaseModel):
                     msg["content"] = content[:max_chars] + "\n\n... (truncated)"
 
         client.on(HookName.COMPLETION_KWARGS, truncate_validation_errors)
+
+        # Log errors/retries so users see when calls fail and retry
+        def log_completion_error(error, **kwargs):
+            logger.warning(f"LLM error, retrying: {type(error).__name__}")
+
+        client.on(HookName.COMPLETION_ERROR, log_completion_error)
 
         # Attach debug hook if enabled
         if _debug_api_requests:
@@ -286,6 +295,22 @@ def structured_chat(
     start_time = time.monotonic()
     logger.debug(f"{LC.CYAN}LLM CALL START{call_hint}{LC.RESET}")
 
+    # Warn user if call takes longer than threshold
+    import threading
+
+    SLOW_CALL_THRESHOLD = 45  # seconds
+
+    def _slow_call_warning(hint, cancel_event):
+        if cancel_event.wait(SLOW_CALL_THRESHOLD):
+            return  # call completed before threshold
+        logger.warning(f"LLM call still in progress after {SLOW_CALL_THRESHOLD}s...{hint}")
+
+    cancel_event = threading.Event()
+    warning_thread = threading.Thread(
+        target=_slow_call_warning, args=(call_hint, cancel_event), daemon=True
+    )
+    warning_thread.start()
+
     try:
         res_dict, com_dict = _call_llm_cached(
             messages=messages,
@@ -305,6 +330,8 @@ def structured_chat(
             f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}"
         )
         raise
+    finally:
+        cancel_event.set()  # stop the warning thread
 
     res = return_type.model_validate(res_dict)
     com = Box(com_dict)
@@ -367,7 +394,7 @@ def _get_local_embedding(
     return embeddings.tolist()
 
 
-def _get_api_embedding_batch(
+async def _get_api_embedding_batch_async(
     batch: List[str],
     model_name: str,
     dimensions: Optional[int],
@@ -375,84 +402,77 @@ def _get_api_embedding_batch(
     base_url: Optional[str],
     timeout: int = 60,
 ) -> List[List[float]]:
-    """Get embeddings for a single batch via API (uncached)."""
+    """Get embeddings for a single batch via async API call."""
     logger.debug(f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}")
-    try:
-        response = litellm.embedding(
-            model=model_name,
-            input=list(map(str, batch)),
-            dimensions=dimensions,
-            api_key=api_key,
-            api_base=base_url,
-            timeout=timeout,
-        )
-    except Exception as e:
-        raise Exception(f"Error getting embeddings: {e}")
+    response = await litellm.aembedding(
+        model=model_name,
+        input=list(map(str, batch)),
+        dimensions=dimensions,
+        api_key=api_key,
+        api_base=base_url,
+        timeout=timeout,
+    )
     logger.debug(f"API embedding batch complete: {len(response['data'])} embeddings")
     return [item["embedding"] for item in response["data"]]
 
 
-@memory.cache
-def _get_api_embedding_batch_cached(
-    batch: Tuple[str, ...],
+async def _compute_embeddings_async(
+    texts: List[str],
     model_name: str,
     dimensions: Optional[int],
+    api_key: str,
+    base_url: Optional[str],
+    batch_size: int,
 ) -> List[List[float]]:
-    """Get embeddings for a single batch via API (cached).
+    """Compute embeddings for texts via parallel async API calls."""
+    import asyncio
 
-    Uses tuple for batch to enable joblib caching.
-    Credentials fetched fresh each call (not part of cache key).
-    """
-    logger.debug(f"Cache miss for embedding batch: {len(batch)} texts")
-    credentials = LLMCredentials()
-    return _get_api_embedding_batch(
-        list(batch),
-        model_name,
-        dimensions,
-        credentials.api_key,
-        credentials.base_url,
-    )
+    batches = list(chunked(texts, batch_size))
+
+    if len(batches) == 1:
+        return await _get_api_embedding_batch_async(
+            batches[0], model_name, dimensions, api_key, base_url
+        )
+
+    logger.debug(f"Computing {len(texts)} embeddings in {len(batches)} parallel batches")
+
+    tasks = [
+        _get_api_embedding_batch_async(batch, model_name, dimensions, api_key, base_url)
+        for batch in batches
+    ]
+
+    results = await asyncio.gather(*tasks)
+    return [emb for batch_result in results for emb in batch_result]
 
 
-def get_embedding(
+DEFAULT_EMBEDDING_BATCH_SIZE = env_config("SD_EMBEDDING_BATCH_SIZE", default=100, cast=int)
+
+
+async def get_embedding_async(
     texts: List[str],
     model: Optional[str] = None,
     credentials: Optional[LLMCredentials] = None,
     dimensions: Optional[int] = None,
-    batch_size: int = 100,
-    max_workers: int = 20,
+    batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
 ) -> List[List[float]]:
     """
-    Get embeddings for texts using local or API models.
+    Async version of get_embedding. Use this when calling from an async context.
 
-    Supports local sentence-transformers models (prefix with "local/") or
-    API-based models via litellm.
+    Get embeddings for texts using local or API models.
+    Uses per-string caching via diskcache to avoid redundant API calls.
 
     Args:
         texts: List of texts to embed
         model: Model name. Use "local/model-name" for sentence-transformers
                (e.g., "local/all-MiniLM-L6-v2"), or API model name
                (e.g., "text-embedding-3-large"). Defaults to DEFAULT_EMBEDDING_MODEL env var.
-        credentials: Optional LLMCredentials for API calls. If provided, bypasses cache.
+        credentials: Optional LLMCredentials for API calls.
         dimensions: Embedding dimensions (API models only, model-specific)
         batch_size: Texts per batch (default: 100)
-        max_workers: Max parallel API requests (default: 20)
 
     Returns:
         List of embedding vectors
-
-    Examples:
-        # Local embeddings (fast, free)
-        get_embedding(texts, model="local/all-MiniLM-L6-v2")
-
-        # API embeddings (better quality)
-        get_embedding(texts, model="text-embedding-3-large")
-
-        # API embeddings with custom credentials
-        get_embedding(texts, model="text-embedding-3-large", credentials=my_creds)
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     if not texts:
         return []
 
@@ -470,48 +490,105 @@ def get_embedding(
         logger.debug(f"Using local embeddings: {local_model_name}, {len(texts)} texts")
         return _get_local_embedding(texts, local_model_name, batch_size=batch_size)
 
-    # API embeddings with parallel batching
+    # API embeddings
     logger.debug(f"Using API embeddings: {model}, {len(texts)} texts")
 
     # Default dimensions for known models (only large model supports 3072)
     if dimensions is None and "text-embedding-3-large" in model:
         dimensions = 3072
 
-    batches = list(chunked(texts, batch_size))
+    # Get credentials (use default if not provided)
+    if credentials is None:
+        credentials = LLMCredentials()
 
-    # Choose batch function: cached (default) or uncached (when credentials provided)
-    if credentials is not None:
-        # Custom credentials - bypass cache
-        def get_batch(batch):
-            return _get_api_embedding_batch(
-                list(batch), model, dimensions, credentials.api_key, credentials.base_url
-            )
-    else:
-        # Default credentials - use cache
-        def get_batch(batch):
-            return _get_api_embedding_batch_cached(tuple(batch), model, dimensions)
+    # Check cache for existing embeddings
+    cached, missing = get_cached_embeddings(texts, model, dimensions)
 
-    # Single batch - no parallelism needed
-    if len(batches) == 1:
-        return get_batch(batches[0])
+    # If all cached, return immediately
+    if not missing:
+        logger.debug(f"All {len(texts)} embeddings found in cache")
+        return [cached[i] for i in range(len(texts))]
 
-    # Multiple batches - process in parallel
-    logger.debug(f"Processing {len(batches)} batches with {max_workers} workers")
-    results: List[Optional[List[List[float]]]] = [None] * len(batches)
+    # Compute missing embeddings
+    missing_texts = [text for _, text in missing]
+    logger.debug(f"Computing {len(missing_texts)} missing embeddings")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_idx = {
-            executor.submit(get_batch, batch): idx
-            for idx, batch in enumerate(batches)
-        }
+    missing_embeddings = await _compute_embeddings_async(
+        missing_texts,
+        model,
+        dimensions,
+        credentials.api_key,
+        credentials.base_url,
+        batch_size,
+    )
 
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            results[idx] = future.result()
+    # Store in cache
+    store_embeddings(missing_texts, missing_embeddings, model, dimensions)
 
-    # Flatten in order
-    embeddings = []
-    for batch_result in results:
-        embeddings.extend(batch_result)
+    # Merge cached and computed embeddings in original order
+    for (idx, _), emb in zip(missing, missing_embeddings):
+        cached[idx] = emb
 
-    return embeddings
+    return [cached[i] for i in range(len(texts))]
+
+
+def get_embedding(
+    texts: List[str],
+    model: Optional[str] = None,
+    credentials: Optional[LLMCredentials] = None,
+    dimensions: Optional[int] = None,
+    batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
+    max_workers: int = MAX_LLM_CONCURRENCY,
+) -> List[List[float]]:
+    """
+    Get embeddings for texts using local or API models (sync version).
+
+    For async contexts, use get_embedding_async() instead.
+
+    Supports local sentence-transformers models (prefix with "local/") or
+    API-based models via litellm.
+
+    Uses per-string caching via diskcache to avoid redundant API calls.
+
+    Args:
+        texts: List of texts to embed
+        model: Model name. Use "local/model-name" for sentence-transformers
+               (e.g., "local/all-MiniLM-L6-v2"), or API model name
+               (e.g., "text-embedding-3-large"). Defaults to DEFAULT_EMBEDDING_MODEL env var.
+        credentials: Optional LLMCredentials for API calls.
+        dimensions: Embedding dimensions (API models only, model-specific)
+        batch_size: Texts per batch (default: 100)
+        max_workers: Unused, kept for backward compatibility.
+
+    Returns:
+        List of embedding vectors
+
+    Raises:
+        RuntimeError: If called from within a running async event loop.
+
+    Examples:
+        # Local embeddings (fast, free)
+        get_embedding(texts, model="local/all-MiniLM-L6-v2")
+
+        # API embeddings (better quality)
+        get_embedding(texts, model="text-embedding-3-large")
+
+        # API embeddings with custom credentials
+        get_embedding(texts, model="text-embedding-3-large", credentials=my_creds)
+    """
+    import asyncio
+
+    # Check if we're in an async context
+    try:
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "get_embedding() cannot be called from an async context. "
+            "Use 'await get_embedding_async(...)' instead."
+        )
+    except RuntimeError as e:
+        if "no running event loop" not in str(e):
+            raise
+
+    return asyncio.run(
+        get_embedding_async(texts, model, credentials, dimensions, batch_size)
+    )
