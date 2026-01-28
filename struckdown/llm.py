@@ -3,7 +3,7 @@
 import json
 import logging
 import traceback
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import instructor
 import litellm
@@ -416,6 +416,10 @@ async def _get_api_embedding_batch_async(
     return [item["embedding"] for item in response["data"]]
 
 
+# Type alias for progress callback: receives count of items just completed
+ProgressCallback = Callable[[int], None]
+
+
 async def _compute_embeddings_async(
     texts: List[str],
     model_name: str,
@@ -423,26 +427,74 @@ async def _compute_embeddings_async(
     api_key: str,
     base_url: Optional[str],
     batch_size: int,
+    progress_callback: Optional[ProgressCallback] = None,
+    base_progress: int = 0,
 ) -> List[List[float]]:
-    """Compute embeddings for texts via parallel async API calls."""
+    """Compute embeddings for texts via concurrent async API calls with progress.
+
+    Caches embeddings incrementally as each batch completes, so partial progress
+    is preserved if the process is interrupted.
+
+    Args:
+        texts: List of texts to embed
+        model_name: Model name for API
+        dimensions: Embedding dimensions
+        api_key: API key
+        base_url: API base URL
+        batch_size: Texts per batch
+        progress_callback: Optional callback(n) called with cumulative count completed
+        base_progress: Starting progress count (e.g., from cached items)
+    """
     import asyncio
 
     batches = list(chunked(texts, batch_size))
+    # track which texts are in each batch for incremental caching
+    batch_texts = list(chunked(texts, batch_size))
 
     if len(batches) == 1:
-        return await _get_api_embedding_batch_async(
+        result = await _get_api_embedding_batch_async(
             batches[0], model_name, dimensions, api_key, base_url
         )
+        # cache immediately
+        store_embeddings(batches[0], result, model_name, dimensions)
+        if progress_callback:
+            progress_callback(base_progress + len(batches[0]))
+        return result
 
-    logger.debug(f"Computing {len(texts)} embeddings in {len(batches)} parallel batches")
+    logger.debug(f"Computing {len(texts)} embeddings in {len(batches)} batches concurrently")
 
-    tasks = [
-        _get_api_embedding_batch_async(batch, model_name, dimensions, api_key, base_url)
-        for batch in batches
-    ]
+    # track progress across concurrent batches
+    completed_count = 0
+    progress_lock = asyncio.Lock()
 
-    results = await asyncio.gather(*tasks)
-    return [emb for batch_result in results for emb in batch_result]
+    sem = get_llm_semaphore()
+
+    async def process_batch(batch_idx: int, batch: List[str]) -> tuple:
+        nonlocal completed_count
+        async with sem:
+            result = await _get_api_embedding_batch_async(
+                batch, model_name, dimensions, api_key, base_url
+            )
+            # cache this batch immediately so partial progress is preserved
+            store_embeddings(batch, result, model_name, dimensions)
+            if progress_callback:
+                async with progress_lock:
+                    completed_count += len(batch)
+                    progress_callback(base_progress + completed_count)
+            return batch_idx, result
+
+    # run all batches concurrently, semaphore limits concurrency
+    results = await asyncio.gather(*[
+        process_batch(idx, batch) for idx, batch in enumerate(batches)
+    ])
+
+    # reassemble in original order
+    results_ordered = sorted(results, key=lambda x: x[0])
+    all_embeddings = []
+    for _, batch_result in results_ordered:
+        all_embeddings.extend(batch_result)
+
+    return all_embeddings
 
 
 DEFAULT_EMBEDDING_BATCH_SIZE = env_config("SD_EMBEDDING_BATCH_SIZE", default=100, cast=int)
@@ -454,6 +506,7 @@ async def get_embedding_async(
     credentials: Optional[LLMCredentials] = None,
     dimensions: Optional[int] = None,
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> List[List[float]]:
     """
     Async version of get_embedding. Use this when calling from an async context.
@@ -469,6 +522,7 @@ async def get_embedding_async(
         credentials: Optional LLMCredentials for API calls.
         dimensions: Embedding dimensions (API models only, model-specific)
         batch_size: Texts per batch (default: 100)
+        progress_callback: Optional callback(n) called after each batch with count of items completed
 
     Returns:
         List of embedding vectors
@@ -504,10 +558,17 @@ async def get_embedding_async(
     # Check cache for existing embeddings
     cached, missing = get_cached_embeddings(texts, model, dimensions)
 
-    # If all cached, return immediately
+    # If all cached, return immediately (still call progress callback)
     if not missing:
         logger.debug(f"All {len(texts)} embeddings found in cache")
+        if progress_callback:
+            progress_callback(len(texts))
         return [cached[i] for i in range(len(texts))]
+
+    # Report cached items as progress
+    n_cached = len(texts) - len(missing)
+    if n_cached > 0 and progress_callback:
+        progress_callback(n_cached)
 
     # Compute missing embeddings
     missing_texts = [text for _, text in missing]
@@ -520,10 +581,12 @@ async def get_embedding_async(
         credentials.api_key,
         credentials.base_url,
         batch_size,
+        progress_callback,
+        base_progress=n_cached,
     )
 
-    # Store in cache
-    store_embeddings(missing_texts, missing_embeddings, model, dimensions)
+    # Note: embeddings are cached incrementally in _compute_embeddings_async
+    # as each batch completes, so partial progress is preserved on interruption
 
     # Merge cached and computed embeddings in original order
     for (idx, _), emb in zip(missing, missing_embeddings):
@@ -539,6 +602,7 @@ def get_embedding(
     dimensions: Optional[int] = None,
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
     max_workers: int = MAX_LLM_CONCURRENCY,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> List[List[float]]:
     """
     Get embeddings for texts using local or API models (sync version).
@@ -559,6 +623,7 @@ def get_embedding(
         dimensions: Embedding dimensions (API models only, model-specific)
         batch_size: Texts per batch (default: 100)
         max_workers: Unused, kept for backward compatibility.
+        progress_callback: Optional callback(n) called after each batch with count of items completed
 
     Returns:
         List of embedding vectors
@@ -590,5 +655,5 @@ def get_embedding(
             raise
 
     return asyncio.run(
-        get_embedding_async(texts, model, credentials, dimensions, batch_size)
+        get_embedding_async(texts, model, credentials, dimensions, batch_size, progress_callback)
     )

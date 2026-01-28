@@ -40,9 +40,9 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
                           struckdown_finalize)
 # Re-export from llm module
 from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
-                  _call_llm_cached, disable_api_debug, enable_api_debug,
-                  get_embedding, get_embedding_async, get_llm_semaphore,
-                  structured_chat)
+                  ProgressCallback, _call_llm_cached, disable_api_debug,
+                  enable_api_debug, get_embedding, get_embedding_async,
+                  get_llm_semaphore, structured_chat)
 from .parsing import (_add_default_completion_if_needed,
                       extract_slot_variable_refs, parser, parser_with_state,
                       resolve_includes, split_by_checkpoint)
