@@ -1,5 +1,15 @@
 """Struckdown -- structured LLM prompting with template syntax."""
 
+# Fix SSL certificate issues on macOS with uv-managed Python
+# Must be set before any httpx clients are created
+import os
+try:
+    import certifi
+    if not os.environ.get("SSL_CERT_FILE"):
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+except ImportError:
+    pass
+
 import logging
 import warnings
 from pathlib import Path

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -11,7 +12,6 @@ from instructor.core.hooks import HookName
 
 # Configure litellm to drop unsupported params rather than error
 litellm.drop_params = True
-# litellm._turn_on_debug()
 
 # Module-level flag for API request logging
 _debug_api_requests = False
