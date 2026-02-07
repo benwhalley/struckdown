@@ -365,6 +365,112 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
             return model
 
 
+def _build_numeric_response_model(
+    value_type: type,
+    options=None,
+    quantifier=None,
+    required_prefix=False,
+    temperature: float = 0.0,
+    single_desc: str = "Valid value.",
+    single_optional_desc: str = "A valid value, or null if not determinable.",
+    list_desc: str = "Return {quant_desc} valid values.",
+    model_name: str = "NumericResponse",
+    cast_fn=None,
+):
+    """Helper to build numeric response models with proper constraints.
+
+    Args:
+        value_type: The Python type (int, float, or Union[int, float])
+        options: Options list with min/max constraints
+        quantifier: Optional (min_items, max_items) for list responses
+        required_prefix: Whether ! prefix was used
+        temperature: LLM temperature setting
+        single_desc: Description for required single value
+        single_optional_desc: Description for optional single value
+        list_desc: Description template for list (use {quant_desc} and {constraint_desc})
+        model_name: Base name for the dynamic model
+        cast_fn: Optional function to cast min/max values (e.g., int for integers)
+
+    Returns:
+        Pydantic model with proper ge/le constraints
+    """
+    opts = parse_options(options)
+    is_required = opts.required or required_prefix
+
+    # Parse and optionally cast min/max values
+    min_val = opts.ge
+    max_val = opts.le
+    if cast_fn:
+        min_val = cast_fn(min_val) if min_val is not None else None
+        max_val = cast_fn(max_val) if max_val is not None else None
+
+    # Build constraint kwargs for Pydantic Field
+    field_kwargs = {}
+    if min_val is not None:
+        field_kwargs["ge"] = min_val
+    if max_val is not None:
+        field_kwargs["le"] = max_val
+
+    # Build description suffix
+    constraint_desc = ""
+    if min_val is not None and max_val is not None:
+        constraint_desc = f" Range: {min_val} to {max_val}."
+    elif min_val is not None:
+        constraint_desc = f" Minimum: {min_val}."
+    elif max_val is not None:
+        constraint_desc = f" Maximum: {max_val}."
+
+    if quantifier:
+        min_items, max_items = quantifier
+
+        list_field_kwargs = dict(field_kwargs)  # copy value constraints
+        if min_items is not None:
+            list_field_kwargs["min_length"] = min_items
+        if max_items is not None:
+            list_field_kwargs["max_length"] = max_items
+
+        if min_items == max_items:
+            quant_desc = f"exactly {min_items}"
+        elif max_items is None:
+            quant_desc = f"at least {min_items}" if min_items > 0 else "any number of"
+        elif min_items == 0:
+            quant_desc = f"up to {max_items}"
+        else:
+            quant_desc = f"between {min_items} and {max_items}"
+
+        description = list_desc.format(quant_desc=quant_desc, constraint_desc=constraint_desc)
+
+        model = create_model(
+            f"Multi{model_name}",
+            __base__=ResponseModel,
+            response=(
+                List[value_type],
+                Field(default_factory=list, description=description, **list_field_kwargs),
+            ),
+            __module__=__name__,
+        )
+        model.llm_config = LLMConfig(temperature=temperature, model=None)
+        return model
+    else:
+        if is_required:
+            response_type = value_type
+            default = ...
+            description = f"{single_desc}{constraint_desc}"
+        else:
+            response_type = Union[value_type, None]
+            default = None
+            description = f"{single_optional_desc}{constraint_desc}"
+
+        model = create_model(
+            model_name,
+            __base__=ResponseModel,
+            response=(response_type, Field(default, description=description, **field_kwargs)),
+            __module__=__name__,
+        )
+        model.llm_config = LLMConfig(temperature=temperature, model=None)
+        return model
+
+
 @ResponseTypes.register("int")
 def integer_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce integer response models with optional list support.
@@ -378,73 +484,18 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
     Returns:
         Pydantic model with int or List[int] response field
     """
-    opts = parse_options(options)
-    is_required = opts.required or required_prefix
-    min_val = int(opts.ge) if opts.ge is not None else None
-    max_val = int(opts.le) if opts.le is not None else None
-
-    # Build description with constraints
-    constraint_desc = ""
-    if min_val is not None and max_val is not None:
-        constraint_desc = f" Range: {min_val} to {max_val}."
-    elif min_val is not None:
-        constraint_desc = f" Minimum: {min_val}."
-    elif max_val is not None:
-        constraint_desc = f" Maximum: {max_val}."
-
-    if quantifier:
-        # Multiple items mode
-        min_items, max_items = quantifier
-
-        field_kwargs = {}
-        if min_items is not None:
-            field_kwargs["min_length"] = min_items
-        if max_items is not None:
-            field_kwargs["max_length"] = max_items
-
-        if min_items == max_items:
-            quant_desc = f"exactly {min_items}"
-        elif max_items is None:
-            quant_desc = f"at least {min_items}" if min_items > 0 else "any number of"
-        elif min_items == 0:
-            quant_desc = f"up to {max_items}"
-        else:
-            quant_desc = f"between {min_items} and {max_items}"
-
-        list_description = f"Return {quant_desc} valid integers.{constraint_desc}"
-
-        model = create_model(
-            "MultiIntegerResponse",
-            __base__=ResponseModel,
-            response=(
-                List[int],
-                Field(
-                    default_factory=list, description=list_description, **field_kwargs
-                ),
-            ),
-            __module__=__name__,
-        )
-        model.llm_config = LLMConfig(temperature=0.0, model=None)
-        return model
-    else:
-        # Single item mode
-        if is_required:
-            return IntegerResponse
-        else:
-            model = create_model(
-                "OptionalIntegerResponse",
-                __base__=ResponseModel,
-                response=(
-                    Union[int, None],
-                    Field(
-                        default=None,
-                        description=f"A valid integer, or null if no integer can be determined.{constraint_desc}",
-                    ),
-                ),
-                __module__=__name__,
-            )
-            model.llm_config = LLMConfig(temperature=0.0, model=None)
-            return model
+    return _build_numeric_response_model(
+        value_type=int,
+        options=options,
+        quantifier=quantifier,
+        required_prefix=required_prefix,
+        temperature=0.0,
+        single_desc="Valid integer.",
+        single_optional_desc="A valid integer, or null if no integer can be determined.",
+        list_desc="Return {quant_desc} valid integers.{constraint_desc}",
+        model_name="IntegerResponse",
+        cast_fn=int,
+    )
 
 
 @ResponseTypes.register("boolean")
@@ -745,90 +796,17 @@ def number_response_model(options=None, quantifier=None, required_prefix=False):
     Returns:
         Pydantic model with Union[int, float] field that can be validated post-extraction
     """
-    opts = parse_options(options)
-    is_required = opts.required or required_prefix
-    min_val = opts.ge
-    max_val = opts.le
-
-    # Build description with constraints as hints
-    constraint_desc = ""
-    if min_val is not None and max_val is not None:
-        constraint_desc = f" Suggested range: {min_val} to {max_val}."
-    elif min_val is not None:
-        constraint_desc = f" Suggested minimum: {min_val}."
-    elif max_val is not None:
-        constraint_desc = f" Suggested maximum: {max_val}."
-
-    if quantifier:
-        # Multiple extraction mode - return a list
-        min_items, max_items = quantifier
-
-        # Build field kwargs dynamically
-        field_kwargs = {}
-        if min_items is not None:
-            field_kwargs["min_length"] = min_items
-        if max_items is not None:
-            field_kwargs["max_length"] = max_items
-
-        # Build description based on constraints
-        if min_items == max_items:
-            quant_desc = f"exactly {min_items}"
-        elif max_items is None:
-            quant_desc = f"at least {min_items}" if min_items > 0 else "any number of"
-        elif min_items == 0:
-            quant_desc = f"up to {max_items}"
-        else:
-            quant_desc = f"between {min_items} and {max_items}"
-
-        list_description = f"Extract {quant_desc} numeric values (integers or decimals) from the text.{constraint_desc} Return empty list if no numbers found."
-
-        model = create_model(
-            "MultiNumberResponse",
-            __base__=ResponseModel,
-            response=(
-                List[Union[int, float]],
-                Field(
-                    default_factory=list, description=list_description, **field_kwargs
-                ),
-            ),
-            __module__=__name__,
-        )
-        model.llm_config = LLMConfig(
-            temperature=0.1, model=None
-        )  # Slightly flexible for extraction
-        return model
-    else:
-        # Single extraction mode
-        if is_required:
-            # Required field - must return a number
-            single_description = f"Extract a single numeric value (integer or decimal) from the text.{constraint_desc}"
-
-            model = create_model(
-                "NumberResponse",
-                __base__=ResponseModel,
-                response=(
-                    Union[int, float],
-                    Field(..., description=single_description),
-                ),
-                __module__=__name__,
-            )
-        else:
-            # Optional field - can return None
-            single_description = f"Extract a single numeric value (integer or decimal) from the text.{constraint_desc} Return null if no number found."
-
-            model = create_model(
-                "NumberResponse",
-                __base__=ResponseModel,
-                response=(
-                    Union[int, float, None],
-                    Field(default=None, description=single_description),
-                ),
-                __module__=__name__,
-            )
-        model.llm_config = LLMConfig(
-            temperature=0.1, model=None
-        )  # Slightly flexible for extraction
-        return model
+    return _build_numeric_response_model(
+        value_type=Union[int, float],
+        options=options,
+        quantifier=quantifier,
+        required_prefix=required_prefix,
+        temperature=0.1,
+        single_desc="Extract a single numeric value (integer or decimal) from the text.",
+        single_optional_desc="Extract a single numeric value (integer or decimal) from the text. Return null if no number found.",
+        list_desc="Extract {quant_desc} numeric values (integers or decimals) from the text.{constraint_desc} Return empty list if no numbers found.",
+        model_name="NumberResponse",
+    )
 
 
 @ResponseTypes.register("date_rule")
