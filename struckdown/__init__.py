@@ -12,8 +12,9 @@ except ImportError:
 
 import logging
 import warnings
+from functools import partial
 from pathlib import Path
-from typing import AsyncGenerator, Generator, List, Optional
+from typing import AsyncGenerator, Generator, List, Optional, Union
 
 import anyio
 from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -52,7 +53,7 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
 from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
                   ProgressCallback, _call_llm_cached, disable_api_debug,
                   enable_api_debug, get_embedding, get_embedding_async,
-                  get_llm_semaphore, structured_chat)
+                  get_cross_encoder_scores, get_llm_semaphore, structured_chat)
 from .parsing import (_add_default_completion_if_needed,
                       extract_slot_variable_refs, parser, parser_with_state,
                       resolve_includes, split_by_checkpoint)
@@ -68,7 +69,7 @@ from .validation import (ParsedOptions, parse_options,
                          validate_number_constraints)
 
 
-async def chatter_async(
+async def _chatter_single_async(
     multipart_prompt: str,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
@@ -77,31 +78,8 @@ async def chatter_async(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
-):
-    """
-    Process a struckdown template and return results.
-
-    Example:
-        chatter("tell a joke [[joke]]")
-
-    Processing happens in two phases:
-    1. Compile time: <include> tags resolved, template split by <checkpoint>
-    2. Execution time: Each segment is Jinja2-rendered with accumulated context,
-       then parsed and executed. Jinja conditionals can react to slot values
-       filled within the same segment via delta-based re-rendering.
-
-    Independent segments (no variable dependencies) are processed in parallel.
-
-    Args:
-        multipart_prompt: Struckdown template string
-        model: LLM configuration (default: from environment)
-        credentials: API credentials (default: from environment)
-        context: Initial context variables
-        extra_kwargs: Additional LLM parameters
-        template_path: Path to template file (for includes)
-        include_paths: Additional directories to search for <include> files
-        strict_undefined: If True, raise error when template variables not found
-    """
+) -> ChatterResult:
+    """Internal: process a single context through a struckdown template."""
     import asyncio
 
     from .parsing import parse_syntax
@@ -356,29 +334,125 @@ async def chatter_async(
     return final
 
 
-def chatter(
+async def chatter_async(
     multipart_prompt: str,
+    context: Union[dict, List[dict]] = {},
+    *,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
-    context={},
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
-):
-    """Synchronous wrapper for chatter_async."""
-    if model is None:
-        model = LLM()
+    max_concurrent: Optional[int] = None,
+    on_complete: Optional[callable] = None,
+) -> Union[ChatterResult, List[ChatterResult]]:
+    """
+    Process a struckdown template with one or more contexts.
+
+    Accepts either a single context dict or a list of context dicts.
+    When given a list, processes all contexts in parallel with concurrency control.
+
+    Examples:
+        # Single context - returns ChatterResult
+        result = await chatter_async("tell a joke [[joke]]", {"topic": "cats"})
+
+        # Multiple contexts - returns List[ChatterResult]
+        results = await chatter_async(
+            "tell a joke about {{topic}} [[joke]]",
+            [{"topic": "cats"}, {"topic": "dogs"}]
+        )
+
+    Args:
+        multipart_prompt: Struckdown template string
+        context: Single context dict OR list of context dicts
+        model: LLM configuration (default: from environment)
+        credentials: API credentials (default: from environment)
+        extra_kwargs: Additional LLM parameters
+        template_path: Path to template file (for includes)
+        include_paths: Additional directories to search for <include> files
+        strict_undefined: If True, raise error when template variables not found
+        max_concurrent: Maximum concurrent requests when processing list (default: SD_MAX_CONCURRENCY)
+        on_complete: Optional callback(index, result) called after each completion (list mode only)
+
+    Returns:
+        ChatterResult for single context, List[ChatterResult] for list of contexts.
+    """
+    if isinstance(context, list):
+        # Multiple contexts - process in parallel
+        sem = anyio.Semaphore(max_concurrent) if max_concurrent else get_llm_semaphore()
+        results: List[ChatterResult | Exception] = [None] * len(context)
+
+        async with anyio.create_task_group() as tg:
+            for idx, ctx in enumerate(context):
+
+                async def run_and_store(index=idx, context_item=ctx):
+                    async with sem:
+                        try:
+                            result = await _chatter_single_async(
+                                multipart_prompt=multipart_prompt,
+                                context=context_item,
+                                model=model,
+                                credentials=credentials,
+                                extra_kwargs=extra_kwargs,
+                                template_path=template_path,
+                                include_paths=include_paths,
+                                strict_undefined=strict_undefined,
+                            )
+                            results[index] = result
+                            if on_complete:
+                                on_complete(index, result)
+                        except Exception as e:
+                            logger.error(f"Error processing context {index}: {e}")
+                            results[index] = e
+                            if on_complete:
+                                on_complete(index, e)
+
+                tg.start_soon(run_and_store)
+
+        return results
+    else:
+        # Single context
+        return await _chatter_single_async(
+            multipart_prompt=multipart_prompt,
+            context=context,
+            model=model,
+            credentials=credentials,
+            extra_kwargs=extra_kwargs,
+            template_path=template_path,
+            include_paths=include_paths,
+            strict_undefined=strict_undefined,
+        )
+
+
+def chatter(
+    multipart_prompt: str,
+    context: Union[dict, List[dict]] = {},
+    *,
+    model: LLM = None,
+    credentials: Optional[LLMCredentials] = None,
+    extra_kwargs=None,
+    template_path: Optional[Path] = None,
+    include_paths: Optional[List[Path]] = None,
+    strict_undefined: bool = False,
+    max_concurrent: Optional[int] = None,
+    on_complete: Optional[callable] = None,
+) -> Union[ChatterResult, List[ChatterResult]]:
+    """Synchronous wrapper for chatter_async. Accepts single dict or list of dicts."""
     return anyio.run(
-        chatter_async,
-        multipart_prompt,
-        model,
-        credentials,
-        context,
-        extra_kwargs,
-        template_path,
-        include_paths,
-        strict_undefined,
+        partial(
+            chatter_async,
+            multipart_prompt,
+            context,
+            model=model,
+            credentials=credentials,
+            extra_kwargs=extra_kwargs,
+            template_path=template_path,
+            include_paths=include_paths,
+            strict_undefined=strict_undefined,
+            max_concurrent=max_concurrent,
+            on_complete=on_complete,
+        )
     )
 
 
@@ -742,11 +816,14 @@ __all__ = [
     # Main entry points
     "chatter",
     "chatter_async",
+    "chatter_many",
+    "chatter_many_async",
     "chatter_incremental",
     "chatter_incremental_async",
     "structured_chat",
     "get_embedding",
     "get_embedding_async",
+    "get_cross_encoder_scores",
     # Incremental events
     "IncrementalEvent",
     "SlotCompleted",

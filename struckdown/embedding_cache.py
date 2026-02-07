@@ -157,3 +157,76 @@ def clear_embedding_cache() -> None:
         logger.info(f"Cleared embedding cache directory: {cache_dir}")
     else:
         logger.info(f"Embedding cache directory does not exist: {cache_dir}")
+
+
+def _make_pair_cache_key(text_a: str, text_b: str, model: str) -> str:
+    """Create a deterministic cache key for a cross-encoder pair score."""
+    # hash both texts together to form a unique key for the pair
+    combined = f"{text_a}\x00{text_b}"  # null byte separator
+    pair_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:32]
+    return f"pair:{model}:{pair_hash}"
+
+
+def get_cached_pair_scores(
+    pairs: List[Tuple[str, str]],
+    model: str,
+) -> Tuple[Dict[int, float], List[Tuple[int, Tuple[str, str]]]]:
+    """
+    Check cache for existing cross-encoder pair scores.
+
+    Args:
+        pairs: List of (text_a, text_b) tuples to check
+        model: Model name used for scoring
+
+    Returns:
+        Tuple of:
+        - cached: Dict mapping index -> score for pairs found in cache
+        - missing: List of (index, pair) tuples for pairs not in cache
+    """
+    cache = _get_embedding_cache()
+
+    cached: Dict[int, float] = {}
+    missing: List[Tuple[int, Tuple[str, str]]] = []
+
+    if cache is None:
+        # caching disabled, all pairs are "missing"
+        return {}, [(i, pair) for i, pair in enumerate(pairs)]
+
+    for idx, (text_a, text_b) in enumerate(pairs):
+        key = _make_pair_cache_key(text_a, text_b, model)
+        score = cache.get(key)
+
+        if score is not None:
+            cached[idx] = score
+        else:
+            missing.append((idx, (text_a, text_b)))
+
+    if cached:
+        logger.debug(f"Pair score cache: {len(cached)} hits, {len(missing)} misses")
+
+    return cached, missing
+
+
+def store_pair_scores(
+    pairs: List[Tuple[str, str]],
+    scores: List[float],
+    model: str,
+) -> None:
+    """
+    Store cross-encoder pair scores in cache.
+
+    Args:
+        pairs: List of (text_a, text_b) tuples that were scored
+        scores: Corresponding scores
+        model: Model name used
+    """
+    cache = _get_embedding_cache()
+
+    if cache is None:
+        return
+
+    for (text_a, text_b), score in zip(pairs, scores):
+        key = _make_pair_cache_key(text_a, text_b, model)
+        cache.set(key, score)
+
+    logger.debug(f"Stored {len(pairs)} pair scores in cache")

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import instructor
 import litellm
@@ -46,7 +46,13 @@ from more_itertools import chunked
 from pydantic import BaseModel, Field
 
 from .cache import hash_return_type, memory
-from .embedding_cache import clear_embedding_cache, get_cached_embeddings, store_embeddings
+from .embedding_cache import (
+    clear_embedding_cache,
+    get_cached_embeddings,
+    get_cached_pair_scores,
+    store_embeddings,
+    store_pair_scores,
+)
 from .errors import StruckdownLLMError
 from .results import get_run_id
 
@@ -105,10 +111,8 @@ class LLM(BaseModel):
         litellm.api_key = credentials.api_key
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
-        litellm.suppress_debug_info = True
-        # litellm._turn_on_debug()
         
-        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.TOOLS)
+        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.JSON)
 
         # Truncate validation errors in retry messages to save tokens
         def truncate_validation_errors(**kwargs):
@@ -128,7 +132,6 @@ class LLM(BaseModel):
 
         # Attach debug hook if enabled
         if _debug_api_requests:
-
             def log_api_request(**kwargs):
                 """Log the full API request as JSON."""
                 import sys
@@ -171,7 +174,6 @@ def _call_llm_cached(
     logger.debug(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
     try:
         call_kwargs = extra_kwargs.copy() if extra_kwargs else {}
-        call_kwargs["drop_params"] = True
         res, com = llm.client(credentials).chat.completions.create_with_completion(
             model=model_name,
             response_model=return_type,
@@ -353,11 +355,25 @@ def structured_chat(
 # Singleton cache for local embedding models
 _local_embedding_models = {}
 
+# Singleton cache for cross-encoder models
+_cross_encoder_models = {}
+
+
+def _get_best_device() -> str:
+    """Auto-detect the best available device for local models."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
 
 def _get_local_embedding(
     texts: List[str],
     model_name: str,
     batch_size: int = 32,
+    device: str = None,
 ) -> List[List[float]]:
     """Get embeddings using local sentence-transformers model.
 
@@ -365,6 +381,7 @@ def _get_local_embedding(
         texts: List of texts to embed
         model_name: HuggingFace model name (e.g., "all-MiniLM-L6-v2")
         batch_size: Batch size for encoding (default: 32)
+        device: Device to use ("cpu", "cuda", "mps"). None for auto-detect.
 
     Returns:
         List of embedding vectors
@@ -380,11 +397,15 @@ def _get_local_embedding(
             "Install with: pip install struckdown[local]"
         )
 
-    if model_name not in _local_embedding_models:
-        logger.info(f"Loading local embedding model: {model_name}")
-        _local_embedding_models[model_name] = SentenceTransformer(model_name)
+    if device is None:
+        device = _get_best_device()
 
-    model = _local_embedding_models[model_name]
+    cache_key = (model_name, device)
+    if cache_key not in _local_embedding_models:
+        logger.info(f"Loading local embedding model: {model_name} on {device}")
+        _local_embedding_models[cache_key] = SentenceTransformer(model_name, device=device)
+
+    model = _local_embedding_models[cache_key]
     embeddings = model.encode(
         texts,
         convert_to_numpy=True,
@@ -538,27 +559,12 @@ async def get_embedding_async(
     if model is None:
         model = env_config("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large")
 
-    # Check for local/ prefix
-    if model.startswith("local/"):
-        local_model_name = model[6:]  # strip "local/"
-        logger.debug(f"Using local embeddings: {local_model_name}, {len(texts)} texts")
-        return _get_local_embedding(texts, local_model_name, batch_size=batch_size)
+    is_local = model.startswith("local/")
 
-    # API embeddings
-    logger.debug(f"Using API embeddings: {model}, {len(texts)} texts")
-
-    # Default dimensions for known models (only large model supports 3072)
-    if dimensions is None and "text-embedding-3-large" in model:
-        dimensions = 3072
-
-    # Get credentials (use default if not provided)
-    if credentials is None:
-        credentials = LLMCredentials()
-
-    # Check cache for existing embeddings
+    # Check cache first -- avoids loading local model if everything is cached
     cached, missing = get_cached_embeddings(texts, model, dimensions)
 
-    # If all cached, return immediately (still call progress callback)
+    # If all cached, return immediately (no model loading needed)
     if not missing:
         logger.debug(f"All {len(texts)} embeddings found in cache")
         if progress_callback:
@@ -572,21 +578,35 @@ async def get_embedding_async(
 
     # Compute missing embeddings
     missing_texts = [text for _, text in missing]
-    logger.debug(f"Computing {len(missing_texts)} missing embeddings")
+    logger.debug(f"Computing {len(missing_texts)} missing embeddings ({n_cached} cached)")
 
-    missing_embeddings = await _compute_embeddings_async(
-        missing_texts,
-        model,
-        dimensions,
-        credentials.api_key,
-        credentials.base_url,
-        batch_size,
-        progress_callback,
-        base_progress=n_cached,
-    )
+    if is_local:
+        local_model_name = model[6:]  # strip "local/"
+        logger.debug(f"Using local embeddings: {local_model_name}")
+        missing_embeddings = _get_local_embedding(missing_texts, local_model_name, batch_size=batch_size)
+        # Cache the computed local embeddings
+        store_embeddings(missing_texts, missing_embeddings, model, dimensions)
+        if progress_callback:
+            progress_callback(len(texts))
+    else:
+        # API embeddings
+        logger.debug(f"Using API embeddings: {model}")
 
-    # Note: embeddings are cached incrementally in _compute_embeddings_async
-    # as each batch completes, so partial progress is preserved on interruption
+        # Get credentials (use default if not provided)
+        if credentials is None:
+            credentials = LLMCredentials()
+
+        missing_embeddings = await _compute_embeddings_async(
+            missing_texts,
+            model,
+            dimensions,
+            credentials.api_key,
+            credentials.base_url,
+            batch_size,
+            progress_callback,
+            base_progress=n_cached,
+        )
+        # Note: API embeddings are cached incrementally in _compute_embeddings_async
 
     # Merge cached and computed embeddings in original order
     for (idx, _), emb in zip(missing, missing_embeddings):
@@ -595,35 +615,15 @@ async def get_embedding_async(
     return [cached[i] for i in range(len(texts))]
 
 
-def get_embedding(
-    texts: List[str],
-    model: Optional[str] = None,
-    credentials: Optional[LLMCredentials] = None,
-    dimensions: Optional[int] = None,
-    batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
-    max_workers: int = MAX_LLM_CONCURRENCY,
-    progress_callback: Optional[ProgressCallback] = None,
-) -> List[List[float]]:
+def get_embedding(texts: List[str], **kwargs) -> List[List[float]]:
     """
     Get embeddings for texts using local or API models (sync version).
 
     For async contexts, use get_embedding_async() instead.
 
-    Supports local sentence-transformers models (prefix with "local/") or
-    API-based models via litellm.
-
-    Uses per-string caching via diskcache to avoid redundant API calls.
-
     Args:
         texts: List of texts to embed
-        model: Model name. Use "local/model-name" for sentence-transformers
-               (e.g., "local/all-MiniLM-L6-v2"), or API model name
-               (e.g., "text-embedding-3-large"). Defaults to DEFAULT_EMBEDDING_MODEL env var.
-        credentials: Optional LLMCredentials for API calls.
-        dimensions: Embedding dimensions (API models only, model-specific)
-        batch_size: Texts per batch (default: 100)
-        max_workers: Unused, kept for backward compatibility.
-        progress_callback: Optional callback(n) called after each batch with count of items completed
+        **kwargs: Forwarded to get_embedding_async (model, credentials, dimensions, etc.)
 
     Returns:
         List of embedding vectors
@@ -654,6 +654,108 @@ def get_embedding(
         if "no running event loop" not in str(e):
             raise
 
-    return asyncio.run(
-        get_embedding_async(texts, model, credentials, dimensions, batch_size, progress_callback)
+    return asyncio.run(get_embedding_async(texts, **kwargs))
+
+
+# --- Cross-encoder similarity ---
+
+DEFAULT_CROSS_ENCODER_MODEL = "cross-encoder/stsb-roberta-large"
+
+
+def get_cross_encoder_scores(
+    pairs: List[Tuple[str, str]],
+    model: str = DEFAULT_CROSS_ENCODER_MODEL,
+    normalise_with: Optional[Callable[[List[float], str], List[float]]] = None,
+    batch_size: int = 32,
+    device: str = None,
+    show_progress: bool = True,
+) -> List[float]:
+    """
+    Compute semantic similarity scores for text pairs using a cross-encoder.
+
+    Cross-encoders process both texts together through attention, providing
+    more accurate similarity judgments than comparing independent embeddings.
+
+    Uses per-pair caching via diskcache to avoid redundant model calls.
+    Note: Scores are cached BEFORE normalisation is applied, so changing
+    normalise_with will still use cached raw scores.
+
+    Args:
+        pairs: List of (text_a, text_b) tuples to score
+        model: Cross-encoder model name from HuggingFace
+               (default: "cross-encoder/stsb-roberta-large")
+        normalise_with: Optional function(scores, model_name) -> normalised_scores.
+                        If None, returns raw model scores.
+        batch_size: Batch size for encoding (default: 32)
+        device: Device to use ("cpu", "cuda", "mps"). None for auto-detect.
+        show_progress: Show progress bar for large batches
+
+    Returns:
+        List of similarity scores (one per pair)
+
+    Examples:
+        # Raw scores (no normalisation)
+        scores = get_cross_encoder_scores(pairs)
+
+        # STS-B models output [0, 5], normalise to [0, 1]
+        scores = get_cross_encoder_scores(pairs, normalise_with=lambda s, m: [x / 5 for x in s])
+    """
+    if not pairs:
+        return []
+
+    # Check cache first -- avoids loading model if everything is cached
+    cached, missing = get_cached_pair_scores(pairs, model)
+
+    # If all cached, return immediately (no model loading needed)
+    if not missing:
+        logger.debug(f"All {len(pairs)} pair scores found in cache")
+        scores = [cached[i] for i in range(len(pairs))]
+        if normalise_with is not None:
+            scores = normalise_with(scores, model)
+        return scores
+
+    # Need to compute some scores, so load the model
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError:
+        raise ImportError(
+            "sentence-transformers is required for cross-encoder scoring. "
+            "Install with: pip install sentence-transformers"
+        )
+
+    if device is None:
+        device = _get_best_device()
+
+    # Load or retrieve cached model
+    model_cache_key = (model, device)
+    if model_cache_key not in _cross_encoder_models:
+        logger.info(f"Loading cross-encoder model: {model} on {device}")
+        _cross_encoder_models[model_cache_key] = CrossEncoder(model, device=device)
+
+    encoder = _cross_encoder_models[model_cache_key]
+
+    # Score only missing pairs
+    missing_pairs = [pair for _, pair in missing]
+    n_cached = len(pairs) - len(missing)
+    logger.debug(f"Computing {len(missing_pairs)} missing pair scores ({n_cached} cached)")
+
+    missing_scores = encoder.predict(
+        missing_pairs,
+        batch_size=batch_size,
+        show_progress_bar=show_progress and len(missing_pairs) > batch_size,
     )
+    missing_scores = list(missing_scores)
+
+    # Cache the computed scores (raw, before normalisation)
+    store_pair_scores(missing_pairs, missing_scores, model)
+
+    # Merge cached and computed scores in original order
+    for (idx, _), score in zip(missing, missing_scores):
+        cached[idx] = score
+
+    scores = [cached[i] for i in range(len(pairs))]
+
+    if normalise_with is not None:
+        scores = normalise_with(scores, model)
+
+    return scores
