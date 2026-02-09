@@ -2349,5 +2349,65 @@ def test(
     console.print(f"Configuration saved in: {cwd / '.env'}")
 
 
+@app.command(name="install-skill")
+def install_skill(
+    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing skill file"),
+):
+    """Install the Struckdown prompt-writing skill for Claude Code.
+
+    Copies the struckdown.md skill file to ~/.claude/commands/ so it can be
+    invoked with /struckdown in Claude Code.
+
+    The skill helps write well-engineered Struckdown prompts by:
+    - Gathering requirements through conversation
+    - Using appropriate slot types and constraints
+    - Testing prompts with sample data
+    - Suggesting batch processing commands
+
+    Examples:
+        sd install-skill           # Install the skill
+        sd install-skill --force   # Overwrite existing
+    """
+    import shutil
+    from importlib.resources import files
+
+    console = Console()
+
+    # Source: bundled with package
+    try:
+        skill_source = files("struckdown.claude").joinpath("struckdown-skill.md")
+        skill_content = skill_source.read_text()
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Could not find bundled skill file: {e}")
+        raise typer.Exit(1)
+
+    # Destination: ~/.claude/commands/
+    claude_commands_dir = Path.home() / ".claude" / "commands"
+    skill_dest = claude_commands_dir / "struckdown.md"
+
+    # Check if destination exists
+    if skill_dest.exists() and not force:
+        console.print(f"[yellow]Skill already installed at:[/yellow] {skill_dest}")
+        console.print("Use --force to overwrite.")
+        raise typer.Exit(0)
+
+    # Create directory if needed
+    claude_commands_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write the skill file
+    try:
+        skill_dest.write_text(skill_content)
+        console.print(f"[green]✓[/green] Installed Struckdown skill to: {skill_dest}")
+        console.print()
+        console.print("You can now use [bold]/struckdown[/bold] in Claude Code to write prompts.")
+        console.print()
+        console.print("Example usage:")
+        console.print("  /struckdown extract contact details from business cards")
+        console.print("  /struckdown analyse sentiment with slots: sentiment, urgency")
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Could not write skill file: {e}")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

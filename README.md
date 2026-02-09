@@ -192,6 +192,25 @@ cd vscode-extension && ./install.sh
 
 Select theme: **Cmd/Ctrl+Shift+P** → "Color Theme" → "Struckdown Dark"
 
+### Claude Code Skill
+
+Struckdown includes a skill for [Claude Code](https://claude.ai/code) that helps you write well-engineered prompts:
+
+```bash
+# Install the skill
+sd install-skill
+
+# Then in Claude Code, use:
+# /struckdown extract contact details from business cards
+# /struckdown analyse sentiment with slots: sentiment, urgency
+```
+
+The skill guides you through:
+- Gathering requirements and clarifying intent
+- Choosing appropriate slot types and constraints
+- Testing prompts with sample data
+- Suggesting batch processing commands
+
 ## Basic Syntax
 
 ### Completions (Slots)
@@ -438,6 +457,23 @@ sd chat "Price: [[!number:price]]"
 # Multiple numbers
 sd chat "Extract all prices: [[number*:prices]]"
 ```
+
+### Pattern Matching
+
+Constrain text extraction with regex patterns:
+
+```bash
+# Module code: 4 letters followed by digits
+sd chat 'Module code: [[x|pattern="\w{4}\d+"]]'
+
+# UK postcode pattern
+sd chat 'Postcode: [[postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]'
+
+# Email-like pattern
+sd chat 'Email: [[email|pattern="[^@]+@[^@]+\.[^@]+"]]'
+```
+
+Note: Patterns must be quoted strings. Use `\\` for literal backslashes.
 
 ### Custom Actions
 

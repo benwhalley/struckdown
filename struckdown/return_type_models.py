@@ -294,16 +294,43 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
     """Factory to produce default text response models with optional list support.
 
     Args:
-        options: Optional list of options (currently unused for default type)
+        options: Optional list of options. Supports:
+            - pattern="regex" or regex="regex": Regex pattern for validation
+            - min_length=N: Minimum string length
+            - max_length=N: Maximum string length
+            - required: Whether field is required
         quantifier: Optional tuple of (min_items, max_items) for list responses
                    None means single value. Examples: (1, 3) = 1 to 3 items, (0, None) = 0 or more
         required_prefix: Boolean indicating if ! prefix was used
 
     Returns:
         Pydantic model with str or List[str] response field
+
+    Examples:
+        [[x|pattern="\\d{3}\\w+"]]  # Must match regex
+        [[x|min_length=10|max_length=100]]  # Length constraints
     """
     opts = parse_options(options)
     is_required = opts.required or required_prefix
+
+    # Build field kwargs for string constraints
+    string_field_kwargs = {}
+    if opts.pattern:
+        string_field_kwargs["pattern"] = opts.pattern
+    if opts.min_length is not None:
+        string_field_kwargs["min_length"] = opts.min_length
+    if opts.max_length is not None:
+        string_field_kwargs["max_length"] = opts.max_length
+
+    # Build description with constraints info
+    constraints_desc = []
+    if opts.pattern:
+        constraints_desc.append(f"matching pattern: {opts.pattern}")
+    if opts.min_length is not None:
+        constraints_desc.append(f"at least {opts.min_length} characters")
+    if opts.max_length is not None:
+        constraints_desc.append(f"at most {opts.max_length} characters")
+    constraints_suffix = f" ({', '.join(constraints_desc)})" if constraints_desc else ""
 
     if quantifier:
         # Multiple items mode - return a list
@@ -328,13 +355,22 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
         else:
             constraint_desc = f"between {min_items} and {max_items}"
 
-        list_description = f"Generate {constraint_desc} intelligent completions that respond to the context in a concise manner. Each item should be a separate, distinct response."
+        list_description = f"Generate {constraint_desc} intelligent completions that respond to the context in a concise manner{constraints_suffix}. Each item should be a separate, distinct response."
+
+        # For list mode with pattern, use Annotated type
+        if string_field_kwargs:
+            from typing import Annotated
+            from pydantic import StringConstraints
+            ConstrainedStr = Annotated[str, StringConstraints(**string_field_kwargs)]
+            response_type = List[ConstrainedStr]
+        else:
+            response_type = List[str]
 
         model = create_model(
             "MultiDefaultResponse",
             __base__=ResponseModel,
             response=(
-                List[str],
+                response_type,
                 Field(
                     default_factory=list, description=list_description, **field_kwargs
                 ),
@@ -345,8 +381,27 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
         return model
     else:
         # Single item mode
+        base_desc = "An intelligent completion that responds to the context in a concise manner"
+
         if is_required:
-            return DefaultResponse
+            if string_field_kwargs:
+                # Required with constraints
+                model = create_model(
+                    "ConstrainedDefaultResponse",
+                    __base__=ResponseModel,
+                    response=(
+                        str,
+                        Field(
+                            description=f"{base_desc}{constraints_suffix}.",
+                            **string_field_kwargs,
+                        ),
+                    ),
+                    __module__=__name__,
+                )
+                model.llm_config = LLMConfig(temperature=0.7, model=None)
+                return model
+            else:
+                return DefaultResponse
         else:
             # Optional field - can return None
             model = create_model(
@@ -356,7 +411,8 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
                     Union[str, None],
                     Field(
                         default=None,
-                        description="An intelligent completion that responds to the context in a concise manner, or null if no response is appropriate.",
+                        description=f"{base_desc}, or null if no response is appropriate{constraints_suffix}.",
+                        **string_field_kwargs,
                     ),
                 ),
                 __module__=__name__,

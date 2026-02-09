@@ -21,6 +21,7 @@ class ParsedOptions:
         lt: Less than constraint
         min_length: Minimum string/list length
         max_length: Maximum string/list length
+        pattern: Regex pattern for string validation
         positional: Non-keyword options (e.g., enum values)
         kwargs: All key=value pairs as a dict
     """
@@ -32,6 +33,7 @@ class ParsedOptions:
     lt: float | None = None
     min_length: int | None = None
     max_length: int | None = None
+    pattern: str | None = None
     positional: list[str] = field(default_factory=list)
     kwargs: dict[str, Any] = field(default_factory=dict)
 
@@ -138,6 +140,8 @@ def parse_options(options: list[str] | None) -> ParsedOptions:
                     result.min_length = int(parsed) if parsed is not None else None
                 case "max_length" | "maxlength":
                     result.max_length = int(parsed) if parsed is not None else None
+                case "pattern" | "regex":
+                    result.pattern = str(parsed) if parsed is not None else None
         else:
             # positional value (bare keywords like "required" are just values for pick type)
             result.positional.append(value)

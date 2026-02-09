@@ -64,6 +64,9 @@ sd chat "Price: $19.99 [[number:price]]"
 
 # Integer
 sd chat "Count the words: 'hello world' [[int:count]]"
+
+# Pattern matching (regex)
+sd chat 'Module code: [[code|pattern="\w{4}\d+"]]'
 ```
 
 ### Template Variables

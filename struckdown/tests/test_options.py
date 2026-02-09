@@ -126,6 +126,23 @@ class TestParseOptions:
         assert opts.positional == ["valid"]
 
 
+    def test_pattern_option(self):
+        """Test pattern/regex option parsing."""
+        opts = parse_options(["pattern=\\d{3}-\\d{4}"])
+        assert opts.pattern == "\\d{3}-\\d{4}"
+
+    def test_regex_alias(self):
+        """Test regex is an alias for pattern."""
+        opts = parse_options(["regex=[A-Z]+"])
+        assert opts.pattern == "[A-Z]+"
+
+    def test_pattern_with_quotes(self):
+        """Test pattern option with quoted value (as would come from grammar)."""
+        # When parsed from grammar, quotes are stripped by the parser
+        opts = parse_options(["pattern=\\d{3}"])
+        assert opts.pattern == "\\d{3}"
+
+
 class TestParsedOptions:
     """Test the ParsedOptions dataclass."""
 
@@ -139,5 +156,6 @@ class TestParsedOptions:
         assert opts.lt is None
         assert opts.min_length is None
         assert opts.max_length is None
+        assert opts.pattern is None
         assert opts.positional == []
         assert opts.kwargs == {}
