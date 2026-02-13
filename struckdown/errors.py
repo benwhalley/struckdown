@@ -3,7 +3,10 @@
 from typing import Any, Dict, List, Optional
 
 
-class StruckdownSafe:
+# --- Marker classes ---
+
+
+class Safe:
     """Marker class for content that should NOT be auto-escaped.
 
     Similar to Django's SafeString or Jinja2's Markup. Wraps content that contains
@@ -25,12 +28,12 @@ class StruckdownSafe:
         return str(self.content)
 
     def __repr__(self) -> str:
-        return f"StruckdownSafe({self.content!r})"
+        return f"Safe({self.content!r})"
 
     def __eq__(self, other) -> bool:
-        if isinstance(other, StruckdownSafe):
+        if isinstance(other, Safe):
             return self.content == other.content
-        return False  # StruckdownSafe is never equal to raw values
+        return False  # Safe is never equal to raw values
 
     def __hash__(self) -> int:
         try:
@@ -39,7 +42,8 @@ class StruckdownSafe:
             return hash(id(self))
 
 
-class StruckdownTemplateError(Exception):
+
+class TemplateError(Exception):
     """User-friendly wrapper for template rendering errors."""
 
     def __init__(
@@ -70,41 +74,90 @@ class StruckdownTemplateError(Exception):
         return "\n".join(parts)
 
 
-class StruckdownLLMError(Exception):
-    """Wrapper for LLM API errors with rich context.
+class LLMError(Exception):
+    """Base class for LLM API errors with rich context.
 
     Preserves the original exception while adding prompt, model, and additional context
     to help consumers make informed decisions about error handling.
     """
 
-    def __init__(
-        self,
-        original_error: Exception,
-        prompt: str,
-        model_name: str,
-        extra_context: Optional[Dict[str, Any]] = None,
-    ):
+    def __init__(self, original_error: Exception, prompt: str, model_name: str):
         self.original_error = original_error
-        self.error_type = type(original_error).__name__
         self.prompt = prompt
         self.model_name = model_name
-        self.extra_context = extra_context or {}
-
-        # preserve original error message
         super().__init__(str(original_error))
 
     def __str__(self):
-        return (
-            f"Error: {self.error_type}\n"
-            f"  Model: {self.model_name}\n"
-            f"  {self.original_error}"
-        )
+        return f"Error: {type(self).__name__}\n  Model: {self.model_name}\n  {self.original_error}"
 
     def __repr__(self):
-        return f"StruckdownLLMError({self.error_type}, model={self.model_name})"
+        return f"{type(self).__name__}(model={self.model_name})"
 
 
-class StruckdownFetchError(Exception):
+class ContentFilterError(LLMError):
+    """Content policy violation (Azure, OpenAI safety filters)."""
+
+    def _get_filter_result(self) -> Optional[Dict]:
+        """Extract content_filter_result from original error (Azure/OpenAI format)."""
+        psf = getattr(self.original_error, "provider_specific_fields", None) or {}
+        if "content_filter_result" in psf:
+            return psf["content_filter_result"]
+        if "innererror" in psf and isinstance(psf["innererror"], dict):
+            return psf["innererror"].get("content_filter_result")
+        return None
+
+    def get_triggered_filters(self) -> List[str]:
+        """Return list of content filters that were triggered."""
+        cfr = self._get_filter_result()
+        if not cfr:
+            return []
+        return [
+            f"{cat}={res.get('severity', 'unknown')}"
+            for cat, res in cfr.items()
+            if isinstance(res, dict) and res.get("filtered")
+        ]
+
+    def __str__(self):
+        triggered = self.get_triggered_filters()
+        if triggered:
+            filters = f"Triggered filters: {', '.join(triggered)}"
+        else:
+            filters = "Provider content filter blocked this request"
+        return f"Content Policy Violation ({self.model_name}): {filters}"
+
+
+class RateLimitError(LLMError):
+    """Rate limit exceeded."""
+
+    pass
+
+
+class ContextWindowError(LLMError):
+    """Context window exceeded."""
+
+    pass
+
+
+class AuthError(LLMError):
+    """Authentication or permission errors."""
+
+    pass
+
+
+class BadRequestError(LLMError):
+    """Invalid request parameters."""
+
+    pass
+
+
+class ConnectionError(LLMError):
+    """Network or API connection errors."""
+
+    pass
+
+
+
+class FetchError(Exception):
     """User-friendly wrapper for URL fetch errors."""
 
     def __init__(self, url: str, reason: str):

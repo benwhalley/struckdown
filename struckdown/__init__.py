@@ -36,7 +36,18 @@ logger = logging.getLogger(__name__)
 from .actions import Actions
 from .cache import clear_cache
 # Re-export from errors module
-from .errors import StruckdownLLMError, StruckdownSafe, StruckdownTemplateError
+from .errors import (
+    Safe,
+    TemplateError,
+    LLMError,
+    ContentFilterError,
+    RateLimitError,
+    ContextWindowError,
+    AuthError,
+    BadRequestError,
+    ConnectionError,
+    FetchError,
+)
 # Re-export from execution module
 from .execution import SegmentDependencyGraph, merge_contexts
 # Re-export from incremental module
@@ -838,10 +849,17 @@ __all__ = [
     "LLM",
     "LLMCredentials",
     "LLMConfig",
-    # Errors
-    "StruckdownSafe",
-    "StruckdownTemplateError",
-    "StruckdownLLMError",
+    # Errors (new names)
+    "Safe",
+    "TemplateError",
+    "LLMError",
+    "ContentFilterError",
+    "RateLimitError",
+    "ContextWindowError",
+    "AuthError",
+    "BadRequestError",
+    "ConnectionError",
+    "FetchError",
     "StruckdownEarlyTermination",
     # Actions
     "Actions",

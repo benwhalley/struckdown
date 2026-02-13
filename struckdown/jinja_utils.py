@@ -6,7 +6,7 @@ from typing import Any
 from jinja2 import Undefined, UndefinedError, meta
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from .errors import StruckdownSafe
+from .errors import Safe
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def make_strict_undefined(available_vars: list[str]):
     return StrictUndefinedWithHint
 
 
-def mark_struckdown_safe(content: Any) -> StruckdownSafe:
+def mark_struckdown_safe(content: Any) -> Safe:
     """Mark content as safe for struckdown (won't be auto-escaped).
 
     Use this when you want to pass actual struckdown commands in context variables.
@@ -85,7 +85,7 @@ def mark_struckdown_safe(content: Any) -> StruckdownSafe:
         content: Content that contains legitimate struckdown syntax
 
     Returns:
-        StruckdownSafe wrapper that prevents auto-escaping
+        Safe wrapper that prevents auto-escaping
 
     Example:
         >>> from struckdown import mark_struckdown_safe, chatter
@@ -97,10 +97,10 @@ def mark_struckdown_safe(content: Any) -> StruckdownSafe:
         >>> trusted_system = mark_struckdown_safe("<system>You are helpful</system>")
         >>> result = chatter("{{cmd}}", context={"cmd": trusted_system})
     """
-    if isinstance(content, StruckdownSafe):
+    if isinstance(content, Safe):
         # Already marked safe
         return content
-    return StruckdownSafe(content)
+    return Safe(content)
 
 
 def escape_struckdown_syntax(value: Any, var_name: str = "") -> tuple[Any, bool]:
@@ -176,7 +176,7 @@ def struckdown_finalize(value: Any) -> str:
     """Finalize function for Jinja2 that auto-escapes struckdown syntax.
 
     This is the core of struckdown's auto-escaping system. Called by Jinja2 for
-    every {{variable}} interpolation. Values marked with StruckdownSafe are passed
+    every {{variable}} interpolation. Values marked with Safe are passed
     through unchanged, everything else is escaped to prevent prompt injection.
 
     Args:
@@ -189,7 +189,7 @@ def struckdown_finalize(value: Any) -> str:
         This function is set as the `finalize` parameter on Jinja2 Environment,
         making escaping automatic and transparent.
     """
-    if isinstance(value, StruckdownSafe):
+    if isinstance(value, Safe):
         return str(value.content)
     if value is None:
         return ""

@@ -737,10 +737,10 @@ def fetch_url_playwright(
     Returns:
         Tuple of (content, content_type)
     """
-    from struckdown.errors import StruckdownFetchError
+    from struckdown.errors import FetchError
 
     if not PLAYWRIGHT_AVAILABLE:
-        raise StruckdownFetchError(
+        raise FetchError(
             url,
             "Playwright not installed. Install with: pip install struckdown[playwright] && playwright install chromium",
         )
@@ -766,8 +766,8 @@ def fetch_url_playwright(
     except Exception as e:
         error_msg = str(e)
         if "timeout" in error_msg.lower():
-            raise StruckdownFetchError(url, f"request timed out after {timeout}s")
-        raise StruckdownFetchError(url, error_msg)
+            raise FetchError(url, f"request timed out after {timeout}s")
+        raise FetchError(url, error_msg)
 
 
 def fetch_url(
@@ -788,7 +788,7 @@ def fetch_url(
     Returns:
         Tuple of (content, content_type)
     """
-    from struckdown.errors import StruckdownFetchError
+    from struckdown.errors import FetchError
 
     # use playwright directly if requested
     if playwright:
@@ -808,18 +808,18 @@ def fetch_url(
                 ctype = sniffed
         return response.text, ctype
     except requests.exceptions.ConnectionError:
-        raise StruckdownFetchError(url, "could not connect (check the URL is correct)")
+        raise FetchError(url, "could not connect (check the URL is correct)")
     except requests.exceptions.Timeout:
-        raise StruckdownFetchError(url, f"request timed out after {timeout}s")
+        raise FetchError(url, f"request timed out after {timeout}s")
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code
         # fallback to playwright on 403/401 (bot detection)
         if status in (401, 403) and PLAYWRIGHT_AVAILABLE:
             logger.info(f"HTTP {status} from {url}, retrying with Playwright...")
             return fetch_url_playwright(url, timeout, user_agent)
-        raise StruckdownFetchError(url, f"HTTP {status}")
+        raise FetchError(url, f"HTTP {status}")
     except requests.exceptions.RequestException as e:
-        raise StruckdownFetchError(url, str(e))
+        raise FetchError(url, str(e))
 
 
 def extract_readable(html: str) -> str:

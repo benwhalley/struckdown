@@ -148,17 +148,18 @@ def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
             folders.extend(Path(f) for f in evidence_folder)
         else:
             folders.append(Path(evidence_folder))
+    else:
+        # Only auto-discover when no explicit folder is provided
+        # Auto-discover relative to template
+        if template_path := context.get("_template_path"):
+            evidence_dir = Path(template_path).parent / "evidence"
+            if evidence_dir.exists():
+                folders.append(evidence_dir)
 
-    # Auto-discover relative to template
-    if template_path := context.get("_template_path"):
-        evidence_dir = Path(template_path).parent / "evidence"
-        if evidence_dir.exists():
-            folders.append(evidence_dir)
-
-    # Also check cwd/evidence
-    cwd_evidence = Path.cwd() / "evidence"
-    if cwd_evidence.exists():
-        folders.append(cwd_evidence)
+        # Also check cwd/evidence
+        cwd_evidence = Path.cwd() / "evidence"
+        if cwd_evidence.exists():
+            folders.append(cwd_evidence)
 
     if not folders:
         return ""

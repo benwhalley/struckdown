@@ -626,7 +626,7 @@ def create_app(
         import anyio
 
         from struckdown import LLMCredentials
-        from struckdown.errors import StruckdownLLMError
+        from struckdown.errors import LLMError
 
         data = get_json_safe()
         syntax = data.get("syntax", "")
@@ -718,7 +718,7 @@ def create_app(
             if result.get("error"):
                 result["error"] = sanitise_error_string(result["error"], remote_mode)
             return jsonify(result)
-        except StruckdownLLMError as e:
+        except LLMError as e:
             # Extract the underlying LLM exception for better error messages
             error_msg = safe_error_message(e.__cause__ or e, remote_mode)
             return jsonify({"error": error_msg, "outputs": {}, "cost": None})
@@ -1363,7 +1363,7 @@ def create_app(
         import anyio
 
         from struckdown import LLMCredentials
-        from struckdown.errors import StruckdownLLMError
+        from struckdown.errors import LLMError
 
         data = get_json_safe()
         syntax = data.get("syntax", "")
@@ -1469,7 +1469,7 @@ def create_app(
             if result.get("error"):
                 result["error"] = sanitise_error_string(result["error"], remote_mode)
             return jsonify(result)
-        except StruckdownLLMError as e:
+        except LLMError as e:
             error_msg = safe_error_message(e.__cause__ or e, remote_mode)
             return jsonify({"error": error_msg, "outputs": {}, "cost": None})
         except Exception as e:

@@ -20,13 +20,14 @@ from rich.progress import (BarColumn, Progress, SpinnerColumn,
                            TaskProgressColumn, TextColumn, TimeRemainingColumn)
 
 from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials,
-               StruckdownLLMError, StruckdownTemplateError, __version__,
+               LLMError, TemplateError, __version__,
                chatter, chatter_async, get_embedding, progress_tracking,
                structured_chat)
 from .actions import discover_actions, load_actions
 from .parsing import find_slots_with_positions
 from .output_formatters import render_template, write_output
 from .type_loader import discover_yaml_types, load_yaml_types
+from .url_fetch import is_url, read_input_url
 
 app = typer.Typer(help="struckdown: structured conversations with language models")
 
@@ -276,7 +277,7 @@ async def _run_chat_incremental(
             final_result = event.result
 
         elif isinstance(event, ProcessingError):
-            raise StruckdownLLMError(
+            raise LLMError(
                 Exception(event.error_message), prompt_str, model.model_name
             )
 
@@ -649,12 +650,12 @@ def chat(
             context["basename"] = source_path.stem
         elif is_url(source):
             # Fetch URL content
-            from struckdown.errors import StruckdownFetchError
+            from struckdown.errors import FetchError
 
             typer.echo(f"Fetching URL: {source}", err=True)
             try:
                 source_content = fetch_and_parse(source, raw=raw_source)
-            except StruckdownFetchError as e:
+            except FetchError as e:
                 typer.echo(f"Error: {e}", err=True)
                 raise typer.Exit(1)
             context["source"] = source_content
@@ -751,13 +752,13 @@ def chat(
                 verbose,
                 show_context,
             )
-    except StruckdownTemplateError as e:
+    except TemplateError as e:
         e.template_path = prompt_file
         typer.echo(str(e), err=True)
         if verbose:
             typer.echo("\n" + traceback.format_exc(), err=True)
         raise typer.Exit(1)
-    except StruckdownLLMError as e:
+    except LLMError as e:
         typer.echo(str(e), err=True)
         if verbose:
             typer.echo("\n" + traceback.format_exc(), err=True)
@@ -830,6 +831,31 @@ def chat(
     typer.echo(summary.format_summary(), err=True)
 
 
+def _format_batch_error(error: Exception, index: int, item: dict) -> str:
+    """Format a batch processing error with context from the input item."""
+    return f"Item {index+1}: {error}"
+
+
+def _create_error_output(error: Exception, item: dict, keep_inputs: bool) -> dict:
+    """Create an output row for a failed item with error columns."""
+    error_str = str(error).replace("\n", " ")
+    if len(error_str) > 500:
+        error_str = error_str[:500] + "..."
+
+    output = {
+        "_error": True,
+        "_error_class": type(error).__name__,
+        "_error_text": error_str,
+    }
+
+    if keep_inputs:
+        for key, value in item.items():
+            if not key.startswith("_"):
+                output[key] = value
+
+    return output
+
+
 def _merge_result_with_input(item: dict, result, keep_inputs: bool) -> dict:
     """
     Merge input data with completion results, handling column name clashes.
@@ -881,6 +907,12 @@ def _merge_result_with_input(item: dict, result, keep_inputs: bool) -> dict:
 
     # Store completion slots as metadata
     output_item["_completion_slots"] = completion_slots
+
+    # Add empty error columns for consistent output structure
+    output_item["_error"] = False
+    output_item["_error_class"] = ""
+    output_item["_error_text"] = ""
+    output_item["_error_filters"] = ""
 
     return output_item
 
@@ -1001,9 +1033,15 @@ async def batch_async(
                                     )
 
                             except Exception as e:
-                                error_msg = f"Error processing item {index+1}: {e}"
-                                logger.error(error_msg)
+                                error_msg = _format_batch_error(e, index, item)
+                                if verbose:
+                                    logger.error(f"Batch [{index}] error: {e}")
                                 errors.append(error_msg)
+
+                                # create error output row so errors appear in results
+                                error_output = _create_error_output(e, item, keep_inputs)
+                                results[index] = error_output
+
                                 if verbose:
                                     import traceback
 
@@ -1052,9 +1090,15 @@ async def batch_async(
                                 )
 
                         except Exception as e:
-                            error_msg = f"Error processing item {index+1}: {e}"
-                            logger.error(error_msg)
+                            error_msg = _format_batch_error(e, index, item)
+                            if verbose:
+                                logger.error(f"Batch [{index}] error: {e}")
                             errors.append(error_msg)
+
+                            # create error output row so errors appear in results
+                            error_output = _create_error_output(e, item, keep_inputs)
+                            results[index] = error_output
+
                             if verbose:
                                 import traceback
 
@@ -1266,6 +1310,11 @@ def batch(
         20, "-j", "--concurrency", help="Maximum number of concurrent API requests"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable debug logging"),
+    debug_api: bool = typer.Option(
+        False,
+        "--debug-api",
+        help="Log full API requests and error details",
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress progress output"),
     include_paths: Optional[List[Path]] = typer.Option(
         None,
@@ -1314,6 +1363,12 @@ def batch(
         "--tools",
         help="Python tools file or directory (can be repeated)",
     ),
+    column_map: Optional[List[str]] = typer.Option(
+        None,
+        "-M",
+        "--map",
+        help="Map column names for template variables. Use 'target=source' (e.g., -M input=content) or 'name' for same-name copy. Can be repeated.",
+    ),
 ):
     """
     Process multiple inputs in batch mode.
@@ -1324,6 +1379,10 @@ def batch(
         cat file.txt | sd batch "extract [[name]]"
         sd batch -i '*.txt' -p prompt.sd -o results.json -o report.html -t template.j2
         sd batch -i '*.txt' -p prompt.sd -I ./includes -o results.json
+        sd batch -i data.csv -p prompt.sd -M input=content -o results.json
+
+    Column mapping: Use -M to map CSV/JSON columns to template variables.
+    E.g., -M input=content makes {{input}} use the 'content' column.
 
     Multiple outputs: Use -t flag to apply a Jinja2 template to all non-JSON outputs.
     JSON outputs always use standard JSON format. Without -t, output format is inferred from extension.
@@ -1336,6 +1395,10 @@ def batch(
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)
+
+    if debug_api:
+        from struckdown.llm import enable_api_debug
+        enable_api_debug()
 
     # load custom types and tools
     if type_files:
@@ -1413,23 +1476,38 @@ def batch(
     input_data = []
 
     if input_files:
-        # Process file arguments (may include globs)
+        # Process file arguments (may include globs and URLs)
         file_paths = []
-        for pattern in input_files:
-            # Check if it's a glob pattern or regular file
-            matches = glob(pattern, recursive=True)
-            if matches:
-                file_paths.extend(matches)
-            elif Path(pattern).exists():
-                file_paths.append(pattern)
-            else:
-                logger.warning(f"No files matched pattern: {pattern}")
+        url_inputs = []
 
-        if not file_paths:
-            typer.echo("Error: No input files found", err=True)
+        for pattern in input_files:
+            if is_url(pattern):
+                # Handle URLs separately
+                url_inputs.append(pattern)
+            else:
+                # Check if it's a glob pattern or regular file
+                matches = glob(pattern, recursive=True)
+                if matches:
+                    file_paths.extend(matches)
+                elif Path(pattern).exists():
+                    file_paths.append(pattern)
+                else:
+                    logger.warning(f"No files matched pattern: {pattern}")
+
+        if not file_paths and not url_inputs:
+            typer.echo("Error: No input files or URLs found", err=True)
             raise typer.Exit(1)
 
-        # Process each file
+        # Process URLs
+        for url in url_inputs:
+            try:
+                input_data.extend(read_input_url(url))
+            except Exception as e:
+                logger.error(f"Error fetching URL {url}: {e}")
+                if verbose:
+                    raise
+
+        # Process local files
         for file_path in file_paths:
             path = Path(file_path)
             try:
@@ -1499,6 +1577,24 @@ def batch(
             "processed_size": sum(processed_sizes),
         }
         input_data = input_data[:head]
+
+    # Apply column mappings if specified
+    if column_map:
+        mappings = {}
+        for mapping in column_map:
+            if "=" in mapping:
+                target, source = mapping.split("=", 1)
+                mappings[target.strip()] = source.strip()
+            else:
+                # same-name mapping (just ensures the column exists)
+                mappings[mapping.strip()] = mapping.strip()
+
+        for item in input_data:
+            for target, source in mappings.items():
+                if source in item:
+                    item[target] = item[source]
+                elif verbose:
+                    logger.warning(f"Source column '{source}' not found in input item")
 
     # build extra_kwargs for API parameters
     extra_kwargs = {}

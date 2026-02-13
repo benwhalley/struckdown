@@ -57,12 +57,14 @@ def write_csv(data: List[Dict[str, Any]], output_path: Path) -> None:
         all_keys.discard("_original_columns")
         # only include original columns that actually exist in output
         existing_orig_cols = [col for col in original_columns if col in all_keys]
-        # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
-        new_columns = [
-            k
-            for k in flattened[0].keys()
-            if k not in original_columns and k != "_original_columns"
-        ]
+        # collect new columns from ALL records (not just first) to handle errors
+        new_columns_set = set()
+        for record in flattened:
+            for k in record.keys():
+                if k not in original_columns and k != "_original_columns":
+                    new_columns_set.add(k)
+        # sort for consistent ordering
+        new_columns = sorted(new_columns_set)
         fieldnames = existing_orig_cols + new_columns
     else:
         # default: alphabetical order
@@ -109,12 +111,14 @@ def write_xlsx(data: List[Dict[str, Any]], output_path: Path) -> None:
         all_keys.discard("_original_columns")
         # only include original columns that actually exist in output
         existing_orig_cols = [col for col in original_columns if col in all_keys]
-        # preserve order by using first record's keys (dicts maintain insertion order in Python 3.7+)
-        new_columns = [
-            k
-            for k in flattened[0].keys()
-            if k not in original_columns and k != "_original_columns"
-        ]
+        # collect new columns from ALL records (not just first) to handle errors
+        new_columns_set = set()
+        for record in flattened:
+            for k in record.keys():
+                if k not in original_columns and k != "_original_columns":
+                    new_columns_set.add(k)
+        # sort for consistent ordering
+        new_columns = sorted(new_columns_set)
         fieldnames = existing_orig_cols + new_columns
     else:
         # default: alphabetical order

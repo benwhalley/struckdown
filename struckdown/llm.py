@@ -4,14 +4,38 @@ import json
 import logging
 import os
 import traceback
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import instructor
 import litellm
 from instructor.core.hooks import HookName
+from instructor.core.exceptions import InstructorRetryException
+
+# Suppress instructor's hook error warnings (we intentionally raise to stop retries)
+warnings.filterwarnings(
+    "ignore",
+    message="Error in completion:error handler:",
+    category=UserWarning,
+    module="instructor.core.hooks"
+)
+
+# Suppress litellm's async cleanup warning -- their atexit handler doesn't properly handle
+# all client types (e.g. openai.AsyncOpenAI) and runs after asyncio.run() closes the loop.
+# The clients get cleaned up by GC at process exit anyway.
+warnings.filterwarnings(
+    "ignore",
+    message="coroutine 'close_litellm_async_clients' was never awaited",
+    category=RuntimeWarning,
+)
 
 # Configure litellm to drop unsupported params rather than error
 litellm.drop_params = True
+# Suppress litellm's verbose error messages (errors still saved in CSV output)
+litellm.set_verbose = False
+litellm.suppress_debug_info = True
+logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
+logging.getLogger("litellm").setLevel(logging.CRITICAL)
 
 # Module-level flag for API request logging
 _debug_api_requests = False
@@ -28,6 +52,24 @@ def disable_api_debug():
     _debug_api_requests = False
 
 
+def _log_error_details(error: Exception, model_name: str, context: str = ""):
+    """Log full error details when debug is enabled."""
+    if not _debug_api_requests:
+        return
+    import sys
+    print("\n" + "=" * 80, file=sys.stderr)
+    print(f"LLM ERROR DEBUG {context}", file=sys.stderr)
+    print(f"Model: {model_name}", file=sys.stderr)
+    print(f"Error type: {type(error).__name__}", file=sys.stderr)
+    print("-" * 80, file=sys.stderr)
+    print(f"Full error:\n{error}", file=sys.stderr)
+    if hasattr(error, "__cause__") and error.__cause__:
+        print("-" * 80, file=sys.stderr)
+        print(f"Caused by: {type(error.__cause__).__name__}", file=sys.stderr)
+        print(f"{error.__cause__}", file=sys.stderr)
+    print("=" * 80 + "\n", file=sys.stderr)
+
+
 import anyio
 from box import Box
 from decouple import config as env_config
@@ -42,6 +84,31 @@ from litellm.exceptions import (APIConnectionError, APIError,
                                 ServiceUnavailableError, Timeout,
                                 UnprocessableEntityError,
                                 UnsupportedParamsError)
+
+# Error categories for caching and retry behavior
+# Cacheable: deterministic errors - same input will always fail, safe to cache
+CACHEABLE_ERRORS = (
+    ContentPolicyViolationError,
+    ContextWindowExceededError,
+)
+
+# Transient: temporary errors - might succeed on retry, never cache
+TRANSIENT_ERRORS = (
+    RateLimitError,
+    Timeout,
+    APIConnectionError,
+    ServiceUnavailableError,
+    InternalServerError,
+)
+
+# Fatal: require config/credential changes, don't cache (user should fix and retry)
+FATAL_ERRORS = (
+    AuthenticationError,
+    PermissionDeniedError,
+    NotFoundError,
+    BudgetExceededError,
+)
+
 from more_itertools import chunked
 from pydantic import BaseModel, Field
 
@@ -53,7 +120,68 @@ from .embedding_cache import (
     store_embeddings,
     store_pair_scores,
 )
-from .errors import StruckdownLLMError
+from .errors import (
+    LLMError,
+    ContentFilterError,
+    RateLimitError as SDRateLimitError,
+    ContextWindowError,
+    AuthError,
+    BadRequestError as SDBadRequestError,
+    ConnectionError as SDConnectionError,
+)
+
+
+def _make_struckdown_error(litellm_error: Exception, prompt: str, model_name: str) -> LLMError:
+    """Map a litellm exception to the appropriate struckdown error subclass."""
+    error_type = type(litellm_error).__name__
+
+    # Content policy violations
+    if isinstance(litellm_error, ContentPolicyViolationError):
+        return ContentFilterError(litellm_error, prompt, model_name)
+
+    # Context window errors
+    if isinstance(litellm_error, ContextWindowExceededError):
+        return ContextWindowError(litellm_error, prompt, model_name)
+
+    # Rate limit errors
+    if isinstance(litellm_error, (RateLimitError, Timeout)):
+        return SDRateLimitError(litellm_error, prompt, model_name)
+
+    # Auth errors
+    if isinstance(litellm_error, (AuthenticationError, PermissionDeniedError)):
+        return AuthError(litellm_error, prompt, model_name)
+
+    # Connection errors
+    if isinstance(litellm_error, (APIConnectionError, ServiceUnavailableError, InternalServerError)):
+        return SDConnectionError(litellm_error, prompt, model_name)
+
+    # Bad request errors
+    if isinstance(litellm_error, (BadRequestError, UnsupportedParamsError, APIResponseValidationError)):
+        return SDBadRequestError(litellm_error, prompt, model_name)
+
+    # Default to base LLMError
+    return LLMError(litellm_error, prompt, model_name)
+
+
+def _make_cached_error(error_class: str, error_msg: str, prompt: str, model_name: str) -> LLMError:
+    """Create the appropriate error subclass for a cached error."""
+    wrapped_error = Exception(error_msg)
+
+    # Map cached error class name to struckdown error type
+    if error_class in ("ContentPolicyViolationError", "ContentFilterError"):
+        return ContentFilterError(wrapped_error, prompt, model_name)
+    if error_class in ("ContextWindowExceededError", "ContextWindowError"):
+        return ContextWindowError(wrapped_error, prompt, model_name)
+    if error_class in ("RateLimitError", "Timeout"):
+        return SDRateLimitError(wrapped_error, prompt, model_name)
+    if error_class in ("AuthenticationError", "PermissionDeniedError", "AuthError"):
+        return AuthError(wrapped_error, prompt, model_name)
+    if error_class in ("APIConnectionError", "ConnectionError"):
+        return SDConnectionError(wrapped_error, prompt, model_name)
+
+    # Default to base LLMError
+    return LLMError(wrapped_error, prompt, model_name)
+
 from .results import get_run_id
 
 logger = logging.getLogger(__name__)
@@ -125,8 +253,13 @@ class LLM(BaseModel):
         client.on(HookName.COMPLETION_KWARGS, truncate_validation_errors)
 
         # Log errors/retries so users see when calls fail and retry
+        # Re-raise non-retryable errors to stop retry loop
         def log_completion_error(error, **kwargs):
-            logger.warning(f"LLM error, retrying: {type(error).__name__}")
+            # don't retry content policy violations - they will always fail
+            if isinstance(error, ContentPolicyViolationError):
+                logger.debug("Content policy violation - not retrying")
+                raise error
+            logger.debug(f"LLM error, retrying: {type(error).__name__}")
 
         client.on(HookName.COMPLETION_ERROR, log_completion_error)
 
@@ -147,6 +280,20 @@ class LLM(BaseModel):
         return client
 
 
+# Marker for cached errors - stored in cache, re-raised on cache hit
+CACHED_ERROR_MARKER = "__struckdown_cached_error__"
+
+
+def _create_cached_error(error: Exception, model_name: str) -> dict:
+    """Create a cacheable error dict."""
+    return {
+        CACHED_ERROR_MARKER: True,
+        "error_class": type(error).__name__,
+        "error_message": str(error)[:2000],
+        "model_name": model_name,
+    }
+
+
 @memory.cache(ignore=["return_type", "llm", "credentials"])
 def _call_llm_cached(
     messages: List[Dict[str, str]],
@@ -165,6 +312,9 @@ def _call_llm_cached(
     This is the expensive API call we want to cache.
     Returns dicts (not Pydantic models) so they pickle safely.
 
+    Deterministic errors (content policy, context window) are cached to avoid
+    repeated failed API calls. Change seed to force retry.
+
     Args:
         messages: List of message dicts with 'role' and 'content' keys
         cache_version: Version string included in cache key (typically struckdown version)
@@ -181,44 +331,57 @@ def _call_llm_cached(
             max_retries=max_retries,
             **call_kwargs,
         )
-    except ContentPolicyViolationError as e:
-        logger.warning(f"Content policy violation for model {model_name}: {e}")
+    except CACHEABLE_ERRORS as e:
+        # deterministic errors - cache them to avoid repeated failures
+        logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+        _log_error_details(e, model_name, "(cacheable)")
+        return _create_cached_error(e, model_name), None
+    except FATAL_ERRORS as e:
+        # fatal errors - don't cache, user needs to fix config
+        logger.debug(f"Fatal API error for model {model_name}: {e}")
+        _log_error_details(e, model_name, "(fatal)")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
-    except ContextWindowExceededError as e:
-        logger.warning(f"Context window exceeded for model {model_name}: {e}")
+        raise _make_struckdown_error(e, prompt_repr, model_name) from e
+    except TRANSIENT_ERRORS as e:
+        # transient errors - don't cache, might succeed on retry
+        logger.debug(f"Transient API error for model {model_name}: {e}")
+        _log_error_details(e, model_name, "(transient)")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
-    except (AuthenticationError, PermissionDeniedError, NotFoundError) as e:
-        logger.error(f"Fatal API error for model {model_name}: {e}")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
+        raise _make_struckdown_error(e, prompt_repr, model_name) from e
     except (
         BadRequestError,
         UnsupportedParamsError,
         APIResponseValidationError,
-        BudgetExceededError,
-    ) as e:
-        logger.error(f"Bad request error for model {model_name}: {e}")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
-    except (
-        RateLimitError,
-        Timeout,
         UnprocessableEntityError,
-        APIConnectionError,
         APIError,
-        ServiceUnavailableError,
-        InternalServerError,
     ) as e:
-        logger.warning(f"Retryable API error for model {model_name}: {e}")
+        # these may wrap cacheable errors - check before deciding
+        _log_error_details(e, model_name, "(bad request / API error)")
+        if isinstance(e, CACHEABLE_ERRORS):
+            logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+            return _create_cached_error(e, model_name), None
+        logger.debug(f"Bad request error for model {model_name}: {e}")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
+        raise _make_struckdown_error(e, prompt_repr, model_name) from e
+    except InstructorRetryException as e:
+        # instructor wraps LLM errors after retries; check if cacheable
+        _log_error_details(e, model_name, "(instructor retry exhausted)")
+        if isinstance(e, CACHEABLE_ERRORS):
+            logger.debug(f"Cacheable error for model {model_name} (will be cached): wrapped")
+            return _create_cached_error(e, model_name), None
+        logger.debug(f"LLM call failed after retries for model {model_name}: {e}")
+        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+        raise _make_struckdown_error(e, prompt_repr, model_name) from e
     except Exception as e:
+        # catch-all: check if this is a cacheable error in disguise
+        _log_error_details(e, model_name, "(unknown)")
+        if isinstance(e, CACHEABLE_ERRORS):
+            logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+            return _create_cached_error(e, model_name), None
         full_traceback = traceback.format_exc()
-        logger.warning(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
+        logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise StruckdownLLMError(e, prompt_repr, model_name) from e
+        raise _make_struckdown_error(e, prompt_repr, model_name) from e
 
     logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
 
@@ -326,14 +489,25 @@ def structured_chat(
             credentials=credentials,
             cache_version=__version__,
         )
-    except StruckdownLLMError as e:
+    except LLMError as e:
         elapsed_ms = (time.monotonic() - start_time) * 1000
-        logger.warning(
+        logger.debug(
             f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}"
         )
         raise
     finally:
         cancel_event.set()  # stop the warning thread
+
+    # check for cached error response
+    if isinstance(res_dict, dict) and res_dict.get(CACHED_ERROR_MARKER):
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        error_class = res_dict.get("error_class", "CachedError")
+        error_msg = res_dict.get("error_message", "Unknown cached error")
+        logger.debug(
+            f"{LC.RED}LLM CALL FAILED (cached) [{elapsed_ms:.0f}ms]{call_hint}: {error_class}{LC.RESET}"
+        )
+        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+        raise _make_cached_error(error_class, error_msg, prompt_repr, llm.model_name)
 
     res = return_type.model_validate(res_dict)
     com = Box(com_dict)
@@ -654,7 +828,14 @@ def get_embedding(texts: List[str], **kwargs) -> List[List[float]]:
         if "no running event loop" not in str(e):
             raise
 
-    return asyncio.run(get_embedding_async(texts, **kwargs))
+    async def _run_with_cleanup():
+        try:
+            return await get_embedding_async(texts, **kwargs)
+        finally:
+            # clean up litellm's async clients before asyncio.run() closes the event loop
+            await litellm.close_litellm_async_clients()
+
+    return asyncio.run(_run_with_cleanup())
 
 
 # --- Cross-encoder similarity ---
