@@ -1,3 +1,10 @@
+---
+layout: default
+title: Custom Actions
+parent: How-To Guides
+nav_order: 1
+---
+
 # Custom Actions Guide
 
 Extend Struckdown with custom Python functions that bypass the LLM.
@@ -462,6 +469,6 @@ return_type = Actions.get_return_type('search_docs')
 
 ## See Also
 
-- **[Tutorial](TUTORIAL.md)** -- Learn Struckdown basics
-- **[Reference](REFERENCE.md)** -- Complete syntax reference
-- **[Examples](../examples/)** -- More examples
+- **[Getting Started](../tutorials/getting-started.md)** -- Learn Struckdown basics
+- **[Template Syntax](../explanation/template-syntax.md)** -- Complete syntax reference
+- **[Actions Reference](../reference/actions.md)** -- Actions API reference

@@ -1,3 +1,10 @@
+---
+layout: default
+title: RAG Retrieval
+parent: Tutorials
+nav_order: 2
+---
+
 # Tutorial: RAG with Custom Actions
 
 Learn the "Extract → Search → Generate" pattern for building RAG systems with Struckdown.
@@ -153,5 +160,5 @@ Both execute in the same segment, results available to next segment.
 
 ## See Also
 
-- **[Custom Actions Guide](CUSTOM_ACTIONS.md)** -- Complete Actions API
-- **[Examples](../examples/)** -- Working RAG examples
+- **[Custom Actions Guide](../how-to/custom-actions.md)** -- Complete Actions API
+- **[Actions Reference](../reference/actions.md)** -- Actions API reference

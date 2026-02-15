@@ -1,0 +1,10 @@
+title: struckdown
+description: Structured LLM prompting with template syntax
+plugins:
+- jekyll-remote-theme
+remote_theme: just-the-docs/just-the-docs
+color_scheme: struckdown
+mermaid:
+  version: "10.6.0"
+repository: benwhalley/struckdown
+footer_content: ""

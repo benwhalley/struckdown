@@ -1,3 +1,10 @@
+---
+layout: default
+title: Number Extraction
+parent: How-To Guides
+nav_order: 3
+---
+
 # Number Extraction in Struckdown
 
 Flexible numeric extraction supporting both integers and floats with optional min/max constraints.

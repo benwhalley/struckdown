@@ -109,10 +109,123 @@ FATAL_ERRORS = (
     BudgetExceededError,
 )
 
+import numpy as np
 from more_itertools import chunked
 from pydantic import BaseModel, Field
 
 from .cache import hash_return_type, memory
+
+
+class EmbeddingResult(np.ndarray):
+    """
+    Numpy array subclass that carries embedding cost metadata.
+
+    Behaves exactly like np.ndarray for all operations,
+    but also exposes .cost, .tokens, .model, .cached attributes.
+
+    Example:
+        embedding = get_embedding(["hello"])[0]
+        similarity = np.dot(embedding, other)  # works as normal
+        print(embedding.cost)   # 0.00002 or None if unknown
+        print(embedding.tokens) # 5
+        print(embedding.cached) # False
+    """
+
+    def __new__(
+        cls,
+        array,
+        cost: Optional[float] = None,
+        tokens: int = 0,
+        model: str = "",
+        cached: bool = False,
+    ):
+        obj = np.asarray(array).view(cls)
+        obj.cost = cost
+        obj.tokens = tokens
+        obj.model = model
+        obj.cached = cached
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self.cost = getattr(obj, "cost", None)
+        self.tokens = getattr(obj, "tokens", 0)
+        self.model = getattr(obj, "model", "")
+        self.cached = getattr(obj, "cached", False)
+
+    def __reduce__(self):
+        # support pickling by including metadata
+        pickled_state = super().__reduce__()
+        new_state = pickled_state[2] + (self.cost, self.tokens, self.model, self.cached)
+        return (pickled_state[0], pickled_state[1], new_state)
+
+    def __setstate__(self, state):
+        # restore metadata when unpickling
+        self.cost = state[-4]
+        self.tokens = state[-3]
+        self.model = state[-2]
+        self.cached = state[-1]
+        super().__setstate__(state[:-4])
+
+
+class EmbeddingResultList(list):
+    """
+    List of EmbeddingResult objects with aggregate cost information.
+
+    Behaves exactly like a list for iteration and indexing,
+    but also exposes .total_cost, .total_tokens, .model, .cached_count.
+
+    Example:
+        results = get_embedding(["hello", "world"])
+        for emb in results:        # iterate as normal
+            process(emb)
+        print(results.total_cost)  # 0.00004 or None if unknown
+        print(results[0].cost)     # individual cost
+    """
+
+    def __init__(self, embeddings: list, model: str = ""):
+        super().__init__(embeddings)
+        self._model = model
+
+    @property
+    def model(self) -> str:
+        """Model used for embeddings."""
+        return self._model
+
+    @property
+    def has_unknown_costs(self) -> bool:
+        """True if any embedding has unknown (None) cost."""
+        return any(getattr(e, "cost", None) is None for e in self if not getattr(e, "cached", False))
+
+    @property
+    def total_cost(self) -> Optional[float]:
+        """Total USD cost across all embeddings. None if any costs unknown."""
+        if self.has_unknown_costs:
+            return None
+        return sum(getattr(e, "cost", 0.0) or 0.0 for e in self)
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens across all embeddings."""
+        return sum(getattr(e, "tokens", 0) for e in self)
+
+    @property
+    def cached_count(self) -> int:
+        """Number of embeddings retrieved from cache."""
+        return sum(1 for e in self if getattr(e, "cached", False))
+
+    @property
+    def fresh_count(self) -> int:
+        """Number of embeddings from fresh API calls."""
+        return len(self) - self.cached_count
+
+    @property
+    def fresh_cost(self) -> Optional[float]:
+        """Cost from fresh API calls only (excludes cached). None if any unknown."""
+        if self.has_unknown_costs:
+            return None
+        return sum(getattr(e, "cost", 0.0) or 0.0 for e in self if not getattr(e, "cached", False))
 from .embedding_cache import (
     clear_embedding_cache,
     get_cached_embeddings,
@@ -596,8 +709,12 @@ async def _get_api_embedding_batch_async(
     api_key: str,
     base_url: Optional[str],
     timeout: int = 60,
-) -> List[List[float]]:
-    """Get embeddings for a single batch via async API call."""
+) -> Tuple[List[List[float]], int, Optional[float]]:
+    """Get embeddings for a single batch via async API call.
+
+    Returns:
+        Tuple of (embeddings, total_tokens, cost). cost is None if unknown.
+    """
     logger.debug(f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}")
     response = await litellm.aembedding(
         model=model_name,
@@ -608,7 +725,24 @@ async def _get_api_embedding_batch_async(
         timeout=timeout,
     )
     logger.debug(f"API embedding batch complete: {len(response['data'])} embeddings")
-    return [item["embedding"] for item in response["data"]]
+
+    # extract token count from response
+    usage = response.get("usage", {})
+    total_tokens = usage.get("total_tokens", 0) or usage.get("prompt_tokens", 0) or 0
+
+    # calculate cost using litellm's pricing
+    try:
+        cost = litellm.completion_cost(
+            completion_response=response,
+            model=model_name,
+            call_type="embedding",
+        )
+    except Exception as e:
+        logger.debug(f"Could not calculate embedding cost: {e}")
+        cost = None
+
+    embeddings = [item["embedding"] for item in response["data"]]
+    return embeddings, total_tokens, cost
 
 
 # Type alias for progress callback: receives count of items just completed
@@ -624,7 +758,7 @@ async def _compute_embeddings_async(
     batch_size: int,
     progress_callback: Optional[ProgressCallback] = None,
     base_progress: int = 0,
-) -> List[List[float]]:
+) -> Tuple[List[List[float]], int, Optional[float]]:
     """Compute embeddings for texts via concurrent async API calls with progress.
 
     Caches embeddings incrementally as each batch completes, so partial progress
@@ -639,44 +773,53 @@ async def _compute_embeddings_async(
         batch_size: Texts per batch
         progress_callback: Optional callback(n) called with cumulative count completed
         base_progress: Starting progress count (e.g., from cached items)
+
+    Returns:
+        Tuple of (embeddings, total_tokens, total_cost). total_cost is None if unknown.
     """
     import asyncio
 
     batches = list(chunked(texts, batch_size))
-    # track which texts are in each batch for incremental caching
-    batch_texts = list(chunked(texts, batch_size))
 
     if len(batches) == 1:
-        result = await _get_api_embedding_batch_async(
+        embeddings, tokens, cost = await _get_api_embedding_batch_async(
             batches[0], model_name, dimensions, api_key, base_url
         )
         # cache immediately
-        store_embeddings(batches[0], result, model_name, dimensions)
+        store_embeddings(batches[0], embeddings, model_name, dimensions)
         if progress_callback:
             progress_callback(base_progress + len(batches[0]))
-        return result
+        return embeddings, tokens, cost
 
     logger.debug(f"Computing {len(texts)} embeddings in {len(batches)} batches concurrently")
 
-    # track progress across concurrent batches
+    # track progress and costs across concurrent batches
     completed_count = 0
+    total_tokens = 0
+    total_cost: Optional[float] = 0.0
+    has_unknown_cost = False
     progress_lock = asyncio.Lock()
 
     sem = get_llm_semaphore()
 
     async def process_batch(batch_idx: int, batch: List[str]) -> tuple:
-        nonlocal completed_count
+        nonlocal completed_count, total_tokens, total_cost, has_unknown_cost
         async with sem:
-            result = await _get_api_embedding_batch_async(
+            embeddings, tokens, cost = await _get_api_embedding_batch_async(
                 batch, model_name, dimensions, api_key, base_url
             )
             # cache this batch immediately so partial progress is preserved
-            store_embeddings(batch, result, model_name, dimensions)
-            if progress_callback:
-                async with progress_lock:
-                    completed_count += len(batch)
+            store_embeddings(batch, embeddings, model_name, dimensions)
+            async with progress_lock:
+                completed_count += len(batch)
+                total_tokens += tokens
+                if cost is None:
+                    has_unknown_cost = True
+                elif total_cost is not None:
+                    total_cost += cost
+                if progress_callback:
                     progress_callback(base_progress + completed_count)
-            return batch_idx, result
+            return batch_idx, embeddings, tokens, cost
 
     # run all batches concurrently, semaphore limits concurrency
     results = await asyncio.gather(*[
@@ -686,10 +829,10 @@ async def _compute_embeddings_async(
     # reassemble in original order
     results_ordered = sorted(results, key=lambda x: x[0])
     all_embeddings = []
-    for _, batch_result in results_ordered:
-        all_embeddings.extend(batch_result)
+    for _, batch_embeddings, _, _ in results_ordered:
+        all_embeddings.extend(batch_embeddings)
 
-    return all_embeddings
+    return all_embeddings, total_tokens, None if has_unknown_cost else total_cost
 
 
 DEFAULT_EMBEDDING_BATCH_SIZE = env_config("SD_EMBEDDING_BATCH_SIZE", default=100, cast=int)
@@ -702,7 +845,7 @@ async def get_embedding_async(
     dimensions: Optional[int] = None,
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
     progress_callback: Optional[ProgressCallback] = None,
-) -> List[List[float]]:
+) -> EmbeddingResultList:
     """
     Async version of get_embedding. Use this when calling from an async context.
 
@@ -720,10 +863,12 @@ async def get_embedding_async(
         progress_callback: Optional callback(n) called after each batch with count of items completed
 
     Returns:
-        List of embedding vectors
+        EmbeddingResultList containing EmbeddingResult objects.
+        Each embedding has .cost, .tokens, .model, .cached attributes.
+        The list has .total_cost, .total_tokens, .cached_count properties.
     """
     if not texts:
-        return []
+        return EmbeddingResultList([], model="")
 
     # Handle tuple input for backward compatibility
     if isinstance(texts, tuple):
@@ -738,12 +883,20 @@ async def get_embedding_async(
     # Check cache first -- avoids loading local model if everything is cached
     cached, missing = get_cached_embeddings(texts, model, dimensions)
 
+    # Track which indices are cached vs fresh
+    cached_indices = set(cached.keys())
+
     # If all cached, return immediately (no model loading needed)
     if not missing:
         logger.debug(f"All {len(texts)} embeddings found in cache")
         if progress_callback:
             progress_callback(len(texts))
-        return [cached[i] for i in range(len(texts))]
+        # all cached = zero cost
+        results = [
+            EmbeddingResult(cached[i], cost=0.0, tokens=0, model=model, cached=True)
+            for i in range(len(texts))
+        ]
+        return EmbeddingResultList(results, model=model)
 
     # Report cached items as progress
     n_cached = len(texts) - len(missing)
@@ -754,6 +907,9 @@ async def get_embedding_async(
     missing_texts = [text for _, text in missing]
     logger.debug(f"Computing {len(missing_texts)} missing embeddings ({n_cached} cached)")
 
+    total_tokens = 0
+    total_cost: Optional[float] = None
+
     if is_local:
         local_model_name = model[6:]  # strip "local/"
         logger.debug(f"Using local embeddings: {local_model_name}")
@@ -762,6 +918,9 @@ async def get_embedding_async(
         store_embeddings(missing_texts, missing_embeddings, model, dimensions)
         if progress_callback:
             progress_callback(len(texts))
+        # local models have zero API cost
+        total_tokens = 0
+        total_cost = 0.0
     else:
         # API embeddings
         logger.debug(f"Using API embeddings: {model}")
@@ -770,7 +929,7 @@ async def get_embedding_async(
         if credentials is None:
             credentials = LLMCredentials()
 
-        missing_embeddings = await _compute_embeddings_async(
+        missing_embeddings, total_tokens, total_cost = await _compute_embeddings_async(
             missing_texts,
             model,
             dimensions,
@@ -786,10 +945,34 @@ async def get_embedding_async(
     for (idx, _), emb in zip(missing, missing_embeddings):
         cached[idx] = emb
 
-    return [cached[i] for i in range(len(texts))]
+    # Calculate per-embedding cost (distribute evenly among fresh embeddings)
+    n_fresh = len(missing)
+    if total_cost is None:
+        per_embedding_cost = None
+    elif n_fresh > 0:
+        per_embedding_cost = total_cost / n_fresh
+    else:
+        per_embedding_cost = 0.0
+    per_embedding_tokens = total_tokens // n_fresh if n_fresh > 0 else 0
+
+    # Build result list with cost metadata
+    results = []
+    for i in range(len(texts)):
+        is_cached = i in cached_indices
+        results.append(
+            EmbeddingResult(
+                cached[i],
+                cost=0.0 if is_cached else per_embedding_cost,
+                tokens=0 if is_cached else per_embedding_tokens,
+                model=model,
+                cached=is_cached,
+            )
+        )
+
+    return EmbeddingResultList(results, model=model)
 
 
-def get_embedding(texts: List[str], **kwargs) -> List[List[float]]:
+def get_embedding(texts: List[str], **kwargs) -> EmbeddingResultList:
     """
     Get embeddings for texts using local or API models (sync version).
 
@@ -800,17 +983,21 @@ def get_embedding(texts: List[str], **kwargs) -> List[List[float]]:
         **kwargs: Forwarded to get_embedding_async (model, credentials, dimensions, etc.)
 
     Returns:
-        List of embedding vectors
+        EmbeddingResultList containing EmbeddingResult objects.
+        Each embedding has .cost, .tokens, .model, .cached attributes.
+        The list has .total_cost, .total_tokens, .cached_count properties.
 
     Raises:
         RuntimeError: If called from within a running async event loop.
 
     Examples:
         # Local embeddings (fast, free)
-        get_embedding(texts, model="local/all-MiniLM-L6-v2")
+        results = get_embedding(texts, model="local/all-MiniLM-L6-v2")
 
         # API embeddings (better quality)
-        get_embedding(texts, model="text-embedding-3-large")
+        results = get_embedding(texts, model="text-embedding-3-large")
+        print(results.total_cost)  # total USD cost
+        print(results[0].tokens)   # tokens for first embedding
 
         # API embeddings with custom credentials
         get_embedding(texts, model="text-embedding-3-large", credentials=my_creds)

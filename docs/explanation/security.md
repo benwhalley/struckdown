@@ -1,3 +1,10 @@
+---
+layout: default
+title: Security
+parent: Explanation
+nav_order: 4
+---
+
 # Security: Prompt Injection Protection
 
 ## Overview

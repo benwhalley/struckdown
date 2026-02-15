@@ -1,3 +1,10 @@
+---
+layout: default
+title: Getting Started
+parent: Tutorials
+nav_order: 1
+---
+
 # QuickStart Guide
 
 Get started with Struckdown in minutes.
@@ -115,11 +122,10 @@ Everything before `<checkpoint>` is forgotten -- only the extracted variables (`
 
 ## Next Steps
 
-- **[Tutorial](TUTORIAL.md)** -- Learn Struckdown step-by-step
-- **[Reference](REFERENCE.md)** -- Complete syntax documentation
-- **[Custom Actions](CUSTOM_ACTIONS.md)** -- Extend Struckdown with plugins
-- **[Examples](../examples/)** -- Real-world examples
-- **[CLI Usage](CLI_USAGE.md)** -- Complete CLI reference
+- **[Template Syntax](../explanation/template-syntax.md)** -- Complete syntax documentation
+- **[Custom Actions](../how-to/custom-actions.md)** -- Extend Struckdown with plugins
+- **[CLI Reference](../reference/cli.md)** -- Complete CLI reference
+- **[API Reference](../reference/api.md)** -- Python API documentation
 
 ## Common Patterns
 

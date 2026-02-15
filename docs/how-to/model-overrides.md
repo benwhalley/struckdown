@@ -1,3 +1,10 @@
+---
+layout: default
+title: Model Overrides
+parent: How-To Guides
+nav_order: 2
+---
+
 # Temperature and Model Overrides in Struckdown
 
 ## Overview

@@ -1,3 +1,10 @@
+---
+layout: default
+title: Playground
+parent: Tutorials
+nav_order: 3
+---
+
 # Struckdown Playground
 
 The Struckdown Playground is a web-based editor for creating and testing struckdown prompts interactively. 

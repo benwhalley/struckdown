@@ -1,3 +1,10 @@
+---
+layout: default
+title: Deploy with Dokku
+parent: How-To Guides
+nav_order: 4
+---
+
 # Dokku Deployment Setup
 
 ## Initial Setup

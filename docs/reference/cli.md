@@ -1,3 +1,10 @@
+---
+layout: default
+title: CLI
+parent: Reference
+nav_order: 1
+---
+
 # Struckdown CLI Usage Guide
 
 Complete reference for the `sd` command-line interface.
@@ -456,11 +463,10 @@ sd batch failing-input.txt "[[x]]" --verbose
 
 ## Related Documentation
 
-- [README.md](../README.md) - Quick start and overview
-- [Syntax Guide](../README.md#detailed-syntax-guide) - Struckdown template syntax
-- [Temporal Types](TEMPORAL_TESTS_README.md) - Date/time extraction
-- [Number Extraction](NUMBER_EXTRACTION_README.md) - Numeric validation
-- [Temperature Overrides](TEMPERATURE_AND_MODEL_OVERRIDES.md) - Per-slot LLM configuration
+- [Getting Started](../tutorials/getting-started.md) - Quick start guide
+- [Template Syntax](../explanation/template-syntax.md) - Struckdown template syntax
+- [Model Overrides](../how-to/model-overrides.md) - Per-slot LLM configuration
+- [Number Extraction](../how-to/number-extraction.md) - Numeric validation
 
 ---
 

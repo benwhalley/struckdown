@@ -49,6 +49,11 @@ dependencies = [
 [project.optional-dependencies]
 playwright = ["playwright>=1.40.0"]
 local = ["sentence-transformers>=2.2.0"]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.0",
+    "pymdown-extensions>=10.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
