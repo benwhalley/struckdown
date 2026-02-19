@@ -647,11 +647,19 @@ _cross_encoder_models = {}
 
 
 def _get_best_device() -> str:
-    """Auto-detect the best available device for local models."""
+    """Auto-detect the best available device for local models.
+
+    Respects PYTORCH_MPS_DISABLE and CUDA_VISIBLE_DEVICES env vars.
+    """
+    import os
     import torch
+
+    # Check if MPS is explicitly disabled (for forked processes on macOS)
+    mps_disabled = os.environ.get("PYTORCH_MPS_DISABLE", "").lower() in ("1", "true", "yes")
+
     if torch.cuda.is_available():
         return "cuda"
-    elif torch.backends.mps.is_available():
+    elif not mps_disabled and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
 
