@@ -10,6 +10,7 @@ description = "struckdown: markdown-like syntax for structured conversations wit
 authors = [
   { name = "Ben Whalley", email = "benwhalley@gmail.com" }
 ]
+license = "MIT"
 
 readme = "README_PYPI.md"
 requires-python = ">=3.12"
