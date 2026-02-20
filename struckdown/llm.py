@@ -332,6 +332,10 @@ class LLMCredentials(BaseModel):
     base_url: Optional[str] = Field(
         default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
     )
+    instructor_mode: Optional[str] = Field(
+        default="json",
+        description="Instructor mode for structured outputs: 'json' or 'json_schema'"
+    )
 
 
 class LLM(BaseModel):
@@ -348,12 +352,14 @@ class LLM(BaseModel):
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
 
         # Create OpenAI-compatible instructor client (works with litellm proxies)
-        # Use JSON mode for broad compatibility (uses response_format: json_object)
         litellm.api_key = credentials.api_key
         litellm.api_base = credentials.base_url
         litellm.drop_params = True
-        
-        client = instructor.from_litellm(litellm.completion, mode=instructor.Mode.JSON)
+
+        # Use instructor_mode from credentials (default: JSON for broad compatibility)
+        mode_str = (credentials.instructor_mode or "json").upper()
+        mode = getattr(instructor.Mode, mode_str, instructor.Mode.JSON)
+        client = instructor.from_litellm(litellm.completion, mode=mode)
 
         # Truncate validation errors in retry messages to save tokens
         def truncate_validation_errors(**kwargs):
