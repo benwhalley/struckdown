@@ -279,6 +279,20 @@ class ChatterResult(BaseModel):
     def __getitem__(self, key):
         return self.results[key].output
 
+    def __getattr__(self, name):
+        """Proxy attribute access to outputs for cleaner template syntax.
+
+        Allows `result.themes` instead of `result["themes"]` or `result.outputs.themes`.
+        Only called when normal attribute lookup fails, so existing attributes are safe.
+        """
+        # Avoid infinite recursion during initialization
+        if name == "results":
+            raise AttributeError(name)
+        # Check if it's a slot name
+        if name in self.results:
+            return self.results[name].output
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
     def __setitem__(self, key: str, value: SegmentResult):
         """Set a result, enforcing SegmentResult type and ensuring name is set."""
         if not isinstance(value, SegmentResult):

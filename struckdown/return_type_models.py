@@ -38,7 +38,10 @@ class ResponseModel(BaseModel):
 
     # Class-level config for LLM parameters (not part of response schema)
     # Subclasses override this to set their own defaults
-    llm_config: LLMConfig = LLMConfig(model=None)
+    llm_config: LLMConfig = Field(
+        default_factory=lambda: LLMConfig(model=None),
+        json_schema_extra={"exclude_from_completion": True},
+    )
 
     # Class-level list of field names to auto-populate from context
     # Example: _capture_from_context = ["source_id", "item_index"]
@@ -51,6 +54,34 @@ class ResponseModel(BaseModel):
         Default implementation does nothing.
         """
         pass
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs) -> dict:
+        """Generate JSON schema, filtering out fields marked exclude_from_completion."""
+        schema = super().model_json_schema(*args, **kwargs)
+        return cls._filter_excluded_fields(schema)
+
+    @classmethod
+    def _filter_excluded_fields(cls, schema: dict) -> dict:
+        """Recursively filter out fields with exclude_from_completion=True."""
+        if "properties" not in schema:
+            return schema
+
+        filtered_props = {}
+        for name, prop in schema["properties"].items():
+            # Check for exclude_from_completion marker
+            if prop.get("exclude_from_completion"):
+                continue
+            filtered_props[name] = prop
+
+        schema = schema.copy()
+        schema["properties"] = filtered_props
+
+        # Also remove from required list
+        if "required" in schema:
+            schema["required"] = [r for r in schema["required"] if r in filtered_props]
+
+        return schema
 
     @classmethod
     def customize_schema_for_context(

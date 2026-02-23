@@ -1001,9 +1001,12 @@ class MindframeTransformer(Transformer):
         """Lookup return type, checking Actions registry first, then ResponseTypes.
 
         If the registered type is a factory function, calls it with options
-        to get the actual Pydantic model class.
+        to get the actual Pydantic model class. If it's a class and a quantifier
+        is specified, wraps it in a list model.
         """
         from types import FunctionType
+
+        from struckdown.model_utils import create_list_model
 
         action_model = Actions.create_action_model(
             key, options, quantifier, required_prefix
@@ -1016,6 +1019,9 @@ class MindframeTransformer(Transformer):
             # If it's a factory function, call it with options to get the model
             if isinstance(rt, FunctionType):
                 return rt(options, quantifier, required_prefix)
+            # It's a class - handle quantifiers by wrapping in list model
+            if quantifier:
+                return create_list_model(rt, key, quantifier)
             return rt
 
         # Fall back to default

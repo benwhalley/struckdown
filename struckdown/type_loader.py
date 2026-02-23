@@ -437,7 +437,13 @@ class YAMLTypeLoader:
 
             # handle quantifiers (multiple responses)
             if quantifier:
-                return self._wrap_in_list(model, type_name, quantifier, is_required)
+                from struckdown.model_utils import create_list_model
+
+                list_model = create_list_model(
+                    model, type_name, quantifier, module_name="struckdown.yaml_types"
+                )
+                _add_clean_repr_methods(list_model)
+                return list_model
 
             # handle required/optional
             if not is_required:
@@ -514,53 +520,6 @@ class YAMLTypeLoader:
             **new_field_defs,
         )
         return _add_clean_repr_methods(constrained_model)
-
-    def _wrap_in_list(
-        self,
-        model: type,
-        type_name: str,
-        quantifier: tuple,
-        is_required: bool,
-    ) -> type:
-        """Wrap a model in a list type for quantifiers."""
-        min_items, max_items = quantifier
-
-        field_kwargs = {}
-        if min_items is not None:
-            field_kwargs["min_length"] = min_items
-        if max_items is not None:
-            field_kwargs["max_length"] = max_items
-
-        # build description
-        if min_items == max_items:
-            desc = f"Exactly {min_items}"
-        elif max_items is None:
-            desc = f"At least {min_items}" if min_items > 0 else "Any number of"
-        elif min_items == 0:
-            desc = f"Up to {max_items}"
-        else:
-            desc = f"Between {min_items} and {max_items}"
-
-        description = f"{desc} {type_name} items."
-        capitalized_name = (
-            type_name[0].upper() + type_name[1:] if type_name else type_name
-        )
-
-        list_model = create_model(
-            f"Multi{capitalized_name}Response",
-            __base__=ResponseModel,
-            __module__="struckdown.yaml_types",
-            response=(list[model], Field(..., description=description, **field_kwargs)),
-        )
-
-        # add clean repr methods
-        _add_clean_repr_methods(list_model)
-
-        # copy LLM config
-        if hasattr(model, "llm_config"):
-            list_model.llm_config = model.llm_config
-
-        return list_model
 
     def _make_optional(self, model: type, type_name: str) -> type:
         """Make response fields optional, except those explicitly marked required."""
