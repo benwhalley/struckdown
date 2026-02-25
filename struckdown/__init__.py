@@ -62,9 +62,10 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
                           struckdown_finalize)
 # Re-export from llm module
 from .llm import (LC, LLM, MAX_LLM_CONCURRENCY, LLMCredentials,
-                  ProgressCallback, _call_llm_cached, disable_api_debug,
-                  enable_api_debug, get_embedding, get_embedding_async,
-                  get_cross_encoder_scores, get_llm_semaphore, structured_chat,
+                  ProgressCallback, EmbeddingCostCallback, _call_llm_cached,
+                  disable_api_debug, enable_api_debug, get_embedding,
+                  get_embedding_async, get_cross_encoder_scores,
+                  get_llm_semaphore, structured_chat,
                   EmbeddingResult, EmbeddingResultList)
 from .parsing import (_add_default_completion_if_needed,
                       extract_slot_variable_refs, parser, parser_with_state,
@@ -72,8 +73,7 @@ from .parsing import (_add_default_completion_if_needed,
 from .response_types import ResponseTypes
 # Re-export from results module
 from .results import (ChatterResult, CostSummary, SegmentResult,
-                      StruckdownEarlyTermination, get_run_id, new_run,
-                      progress_tracking)
+                      StruckdownEarlyTermination, progress_tracking)
 from .return_type_models import ACTION_LOOKUP, LLMConfig
 from .segment_processor import (process_segment_with_delta,
                                 process_segment_with_delta_incremental)
@@ -873,8 +873,6 @@ __all__ = [
     "escape_struckdown_syntax",
     "escape_context_dict",
     "extract_jinja_variables",
-    "get_run_id",
-    "new_run",
     "progress_tracking",
     "clear_cache",
     # Validation

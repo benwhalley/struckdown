@@ -223,7 +223,7 @@ async def _process_together_group(
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat
-    from .results import SegmentResult, get_progress_callback, get_run_id
+    from .results import SegmentResult, get_progress_callback
 
     # Find all unfilled slots in this together group
     group_slots = [
@@ -381,11 +381,10 @@ async def _process_together_group(
             response_schema=response_schema,
         )
 
-        # Determine if result was cached
-        current_run_id = get_run_id()
+        # Determine if result was cached (missing _cached flag = fresh)
         was_cached = False
         if completion_obj and hasattr(completion_obj, "get"):
-            was_cached = completion_obj.get("_run_id") != current_run_id
+            was_cached = completion_obj.get("_cached", False)
 
         # Yield the event
         yield SlotCompleted(
@@ -455,7 +454,7 @@ async def process_segment_with_delta_incremental(
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat
-    from .results import SegmentResult, get_progress_callback, get_run_id
+    from .results import SegmentResult, get_progress_callback
 
     # template_str is the body only (system already extracted by caller)
     body_template = template_str
@@ -658,11 +657,10 @@ async def process_segment_with_delta_incremental(
             response_schema=response_schema,
         )
 
-        # Determine if result was cached
-        current_run_id = get_run_id()
+        # Determine if result was cached (missing _cached flag = fresh)
         was_cached = False
         if completion_obj and hasattr(completion_obj, "get"):
-            was_cached = completion_obj.get("_run_id") != current_run_id
+            was_cached = completion_obj.get("_cached", False)
 
         # Yield the event
         yield SlotCompleted(

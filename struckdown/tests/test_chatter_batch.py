@@ -37,7 +37,7 @@ def _make_mock_chat(delay=0, fail_for_contexts=None):
         mock_res = MagicMock()
         mock_res.response = f"reply:{user_text.strip()}"
         mock_res.model_dump.return_value = {"response": mock_res.response}
-        mock_com = {"_run_id": "test", "usage": {}}
+        mock_com = {"_cached": False, "usage": {}}
         return mock_res, mock_com
 
     return mock_structured_chat, calls

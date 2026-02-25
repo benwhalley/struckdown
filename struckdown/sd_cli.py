@@ -329,7 +329,7 @@ async def _run_chat_interactive(
     History is saved to .struckdown-chat-history on exit and resumed
     automatically if no --history file is specified.
     """
-    from . import chatter_incremental_async, new_run
+    from . import chatter_incremental_async
     from .incremental import ProcessingComplete, ProcessingError, SlotCompleted
 
     # Determine which history file to use
@@ -345,8 +345,6 @@ async def _run_chat_interactive(
 
     try:
         while True:
-            new_run()  # Fresh run for cache detection
-
             # Run the prompt
             final_result = None
             break_result = None
@@ -565,11 +563,6 @@ def chat(
         sd chat -p prompt.sd --debug-api        # log full API requests
         sd chat -p prompt.sd --dump ./api_calls # save API call details to dir/
     """
-    # start new run for cache detection
-    from struckdown import new_run
-
-    new_run()
-
     setup_logging(verbose)
     logger = logging.getLogger(__name__)
 
@@ -1387,11 +1380,6 @@ def batch(
     Multiple outputs: Use -t flag to apply a Jinja2 template to all non-JSON outputs.
     JSON outputs always use standard JSON format. Without -t, output format is inferred from extension.
     """
-    # start new run for cache detection
-    from struckdown import new_run
-
-    new_run()
-
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("struckdown").setLevel(logging.DEBUG)

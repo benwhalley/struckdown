@@ -5,6 +5,7 @@ import logging
 import os
 import traceback
 import warnings
+from contextvars import ContextVar
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import instructor
@@ -295,9 +296,10 @@ def _make_cached_error(error_class: str, error_msg: str, prompt: str, model_name
     # Default to base LLMError
     return LLMError(wrapped_error, prompt, model_name)
 
-from .results import get_run_id
-
 logger = logging.getLogger(__name__)
+
+# Marker to detect cache misses - set to True inside _call_llm_cached (only runs on miss)
+_cache_miss_marker: ContextVar[bool] = ContextVar("cache_miss", default=False)
 
 # Shared concurrency control for all LLM calls
 # This limits concurrent API calls across templates AND within together blocks
@@ -515,8 +517,8 @@ def _call_llm_cached(
     else:
         logger.debug("No _hidden_params attribute on completion object")
 
-    # mark with current run ID for cache detection
-    com_dict["_run_id"] = get_run_id()
+    # mark that we made a fresh API call (this code only runs on cache miss)
+    _cache_miss_marker.set(True)
     # store the actual messages sent to the API
     com_dict["_request_messages"] = messages
     return res.model_dump(), com_dict
@@ -595,6 +597,9 @@ def structured_chat(
     )
     warning_thread.start()
 
+    # Reset cache miss marker before call
+    _cache_miss_marker.set(False)
+
     try:
         res_dict, com_dict = _call_llm_cached(
             messages=messages,
@@ -629,10 +634,14 @@ def structured_chat(
         raise _make_cached_error(error_class, error_msg, prompt_repr, llm.model_name)
 
     res = return_type.model_validate(res_dict)
+
+    # Determine if this was a cache hit or fresh call using the marker
+    # _cache_miss_marker is set to True inside _call_llm_cached (only runs on cache miss)
+    was_cached = not _cache_miss_marker.get()
+    com_dict["_cached"] = was_cached
     com = Box(com_dict)
 
     elapsed_ms = (time.monotonic() - start_time) * 1000
-    was_cached = com.get("_run_id") != get_run_id()
     cache_status = " (cached)" if was_cached else ""
     logger.debug(was_cached and "Cache hit" or "")
     logger.debug(
@@ -762,6 +771,10 @@ async def _get_api_embedding_batch_async(
 # Type alias for progress callback: receives count of items just completed
 ProgressCallback = Callable[[int], None]
 
+# Type alias for embedding cost callback: receives (fresh_cost, fresh_tokens, fresh_count)
+# Called after embeddings complete with cost incurred from fresh API calls
+EmbeddingCostCallback = Callable[[float, int, int], None]
+
 
 async def _compute_embeddings_async(
     texts: List[str],
@@ -859,6 +872,7 @@ async def get_embedding_async(
     dimensions: Optional[int] = None,
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
     progress_callback: Optional[ProgressCallback] = None,
+    cost_callback: Optional[EmbeddingCostCallback] = None,
 ) -> EmbeddingResultList:
     """
     Async version of get_embedding. Use this when calling from an async context.
@@ -875,6 +889,9 @@ async def get_embedding_async(
         dimensions: Embedding dimensions (API models only, model-specific)
         batch_size: Texts per batch (default: 100)
         progress_callback: Optional callback(n) called after each batch with count of items completed
+        cost_callback: Optional callback(fresh_cost, fresh_tokens, fresh_count) called after
+                      embeddings complete with cost info from fresh (non-cached) API calls.
+                      Use this to track budget incrementally.
 
     Returns:
         EmbeddingResultList containing EmbeddingResult objects.
@@ -982,6 +999,10 @@ async def get_embedding_async(
                 cached=is_cached,
             )
         )
+
+    # Notify cost callback with fresh API costs (excludes cached)
+    if cost_callback and n_fresh > 0 and total_cost is not None:
+        cost_callback(total_cost, total_tokens, n_fresh)
 
     return EmbeddingResultList(results, model=model)
 

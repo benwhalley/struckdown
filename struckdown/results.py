@@ -1,7 +1,6 @@
 """Result classes and run tracking for struckdown."""
 
 import logging
-import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Callable, Dict, List, Optional
@@ -10,47 +9,6 @@ from box import Box
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 logger = logging.getLogger(__name__)
-
-
-# Run ID for cache detection - uses contextvars for thread/async safety
-# Works correctly in long-running processes (Django, Jupyter) by scoping to logical runs
-# Fresh API calls will have current run ID, cached calls will have old/missing IDs
-_run_id_var: ContextVar[Optional[str]] = ContextVar("run_id", default=None)
-
-
-def get_run_id() -> str:
-    """Get current run ID, auto-initializing if needed.
-
-    Returns:
-        Current run ID (auto-generated if not set)
-    """
-    run_id = _run_id_var.get()
-    if run_id is None:
-        run_id = str(uuid.uuid4())
-        _run_id_var.set(run_id)
-    return run_id
-
-
-def new_run() -> str:
-    """Start a new logical run with a fresh ID.
-
-    Call this at the start of CLI commands or Django views to ensure
-    cache detection works correctly in long-running processes.
-
-    Returns:
-        New run ID
-
-    Example:
-        # In Django view:
-        from struckdown import new_run
-        def my_view(request):
-            new_run()  # Fresh run ID for this request
-            result = chatter(...)
-            ...
-    """
-    run_id = str(uuid.uuid4())
-    _run_id_var.set(run_id)
-    return run_id
 
 
 # Progress callback for per-API-call updates
@@ -399,34 +357,31 @@ class ChatterResult(BaseModel):
     @property
     def fresh_call_count(self) -> int:
         """Count of segments from fresh API calls (not cached)"""
-        current_run_id = get_run_id()
         return sum(
             1
             for seg in self.results.values()
-            if seg.completion and seg.completion.get("_run_id") == current_run_id
+            if seg.completion and not seg.completion.get("_cached", False)
         )
 
     @property
     def cached_call_count(self) -> int:
         """Count of segments from cache"""
-        current_run_id = get_run_id()
         return sum(
             1
             for seg in self.results.values()
-            if seg.completion and seg.completion.get("_run_id") != current_run_id
+            if seg.completion and seg.completion.get("_cached", False)
         )
 
     @property
     def fresh_cost(self) -> float:
         """Total USD cost from fresh API calls only (excludes cached)"""
-        current_run_id = get_run_id()
         return sum(
             (seg.completion._hidden_params.get("response_cost", 0.0) or 0.0)
             for seg in self.results.values()
             if (
                 seg.completion
                 and hasattr(seg.completion, "_hidden_params")
-                and seg.completion.get("_run_id") == current_run_id
+                and not seg.completion.get("_cached", False)
             )
         )
 

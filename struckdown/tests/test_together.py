@@ -367,7 +367,7 @@ class TestTogetherConversationHistory:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         template = """
@@ -406,7 +406,7 @@ class TestTogetherConversationHistory:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         template = """
@@ -466,7 +466,7 @@ class TestParallelSegmentGlobals:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         # Segment 0 has system + header, segment 1 has only body
@@ -531,7 +531,7 @@ class TestParallelExecutionTiming:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         template = """
@@ -584,7 +584,7 @@ class TestParallelExecutionTiming:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         # Three independent segments (no variable references between them)
@@ -631,7 +631,7 @@ class TestParallelExecutionTiming:
             mock_res = MagicMock()
             mock_res.response = "mock response"
             mock_res.model_dump.return_value = {"response": "mock response"}
-            mock_com = {"_run_id": "test", "usage": {}}
+            mock_com = {"_cached": False, "usage": {}}
             return mock_res, mock_com
 
         # Second segment depends on first (references {{a}})
