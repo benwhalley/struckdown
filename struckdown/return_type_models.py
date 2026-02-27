@@ -1,6 +1,17 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -21,12 +32,12 @@ class LLMConfig(BaseModel):
     model: Optional[str] = None
     max_tokens: Optional[int] = Field(default=None, gt=0)
     seed: Optional[int] = Field(default=None, ge=0)  # For reproducible outputs
-    # top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    # top_k: Optional[int] = Field(default=None, gt=0)
-    # frequency_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
-    # presence_penalty: Optional[float] = Field(default=None, ge=-2.0, le=2.0)
 
     model_config = ConfigDict(extra="forbid")  # Reject unknown parameters
+
+
+# Cache for schema classes to avoid recreating them
+_schema_class_cache: Dict[Type, Type[BaseModel]] = {}
 
 
 class ResponseModel(BaseModel):
@@ -34,6 +45,9 @@ class ResponseModel(BaseModel):
 
     Subclasses should set llm_config to customize LLM call parameters.
     Subclasses can set _capture_from_context to auto-inject context values.
+
+    Fields marked with json_schema_extra={"exclude_from_completion": True}
+    are excluded from the schema sent to the LLM.
     """
 
     # Class-level config for LLM parameters (not part of response schema)
@@ -56,50 +70,91 @@ class ResponseModel(BaseModel):
         pass
 
     @classmethod
-    def model_json_schema(cls, *args, **kwargs) -> dict:
-        """Generate JSON schema, filtering out fields marked exclude_from_completion."""
-        schema = super().model_json_schema(*args, **kwargs)
-        return cls._filter_excluded_fields(schema)
+    def schema_class(cls) -> Type[BaseModel]:
+        """Create a simplified model class for LLM schema generation.
 
-    @classmethod
-    def _filter_excluded_fields(cls, schema: dict) -> dict:
-        """Recursively filter out fields with exclude_from_completion=True."""
-        if "properties" not in schema:
-            return schema
+        Returns a dynamically created Pydantic model containing only fields
+        meant for LLM completion (excluding fields marked with
+        exclude_from_completion=True).
 
-        filtered_props = {}
-        for name, prop in schema["properties"].items():
-            # Check for exclude_from_completion marker
-            if prop.get("exclude_from_completion"):
-                continue
-            filtered_props[name] = prop
-
-        schema = schema.copy()
-        schema["properties"] = filtered_props
-
-        # Also remove from required list
-        if "required" in schema:
-            schema["required"] = [r for r in schema["required"] if r in filtered_props]
-
-        return schema
-
-    @classmethod
-    def customize_schema_for_context(
-        cls, schema: dict, context: Dict[str, Any]
-    ) -> dict:
-        """Override to customize schema based on context.
-
-        Called by struckdown before passing schema to LLM.
-        Subclasses can inspect context and modify schema accordingly.
-
-        Args:
-            schema: Base JSON schema for this model
-            context: Accumulated template context
-
-        Returns:
-            Modified schema (or original if no changes needed)
+        The schema class is cached per model class for performance.
         """
-        return schema
+        # Check cache first
+        if cls in _schema_class_cache:
+            return _schema_class_cache[cls]
+
+        # Build field definitions for the schema class
+        field_defs = {}
+
+        for name, field_info in cls.model_fields.items():
+            # Skip fields marked for exclusion
+            extra = field_info.json_schema_extra or {}
+            if extra.get("exclude_from_completion"):
+                continue
+
+            # Get the type annotation
+            annotation = cls.__annotations__.get(name)
+            if annotation is None:
+                continue
+
+            # Transform nested ResponseModel types to their schema classes
+            transformed_annotation = cls._transform_annotation_for_schema(annotation)
+
+            # Copy field info but remove the exclude marker from the copy
+            # (it's not needed in the schema class)
+            field_defs[name] = (transformed_annotation, field_info)
+
+        # Create the schema class dynamically
+        schema_cls = create_model(
+            f"{cls.__name__}Schema",
+            **field_defs,
+        )
+
+        # Cache it
+        _schema_class_cache[cls] = schema_cls
+        return schema_cls
+
+    @classmethod
+    def _transform_annotation_for_schema(cls, annotation) -> Any:
+        """Transform type annotations to use schema classes for nested ResponseModels.
+
+        Recursively converts ResponseModel subclasses to their schema_class()
+        equivalents, handling List, Optional, Union, and other generic types.
+        """
+        origin = get_origin(annotation)
+
+        # Handle List[SomeResponseModel]
+        if origin is list:
+            args = get_args(annotation)
+            if args:
+                inner = args[0]
+                transformed_inner = cls._transform_annotation_for_schema(inner)
+                return List[transformed_inner]
+            return annotation
+
+        # Handle Optional[SomeResponseModel] (which is Union[SomeResponseModel, None])
+        if origin is Union:
+            args = get_args(annotation)
+            transformed_args = tuple(
+                cls._transform_annotation_for_schema(arg) for arg in args
+            )
+            return Union[transformed_args]
+
+        # Handle direct ResponseModel subclass
+        if isinstance(annotation, type) and issubclass(annotation, ResponseModel):
+            return annotation.schema_class()
+
+        # Return unchanged for other types
+        return annotation
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs) -> dict:
+        """Generate JSON schema using the simplified schema class.
+
+        This ensures fields marked with exclude_from_completion=True
+        are not included in the schema sent to the LLM.
+        """
+        return cls.schema_class().model_json_schema(*args, **kwargs)
 
 
 @ResponseTypes.register("poem")
@@ -391,7 +446,9 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
         # For list mode with pattern, use Annotated type
         if string_field_kwargs:
             from typing import Annotated
+
             from pydantic import StringConstraints
+
             ConstrainedStr = Annotated[str, StringConstraints(**string_field_kwargs)]
             response_type = List[ConstrainedStr]
         else:

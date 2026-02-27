@@ -109,12 +109,12 @@ _AT: "@"
 _COLON: ":"
 _WHITESPACE: /\s+/
 
-quantifier: "*"                           -> zero_or_more
-          | "+"                           -> one_or_more
-          | "?"                           -> zero_or_one
-          | "{" NUMBER "}"                -> exact
-          | "{" NUMBER "," "}"            -> at_least
-          | "{" NUMBER "," NUMBER "}"     -> between
+quantifier: "*"                                               -> zero_or_more
+          | "+"                                                   -> one_or_more
+          | "?"                                                   -> zero_or_one
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "}"              -> exact
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "," _WHITESPACE? "}"            -> at_least
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "," _WHITESPACE? NUMBER _WHITESPACE? "}"  -> between
 
 option_list: option ("," option)*
 option: CNAME "=" option_value -> keyed_option

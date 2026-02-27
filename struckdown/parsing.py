@@ -62,12 +62,12 @@ _AT: "@"
 _COLON: ":"
 _WHITESPACE: /\\s+/
 
-quantifier: "*"                           -> zero_or_more
-          | "+"                           -> one_or_more
-          | "?"                           -> zero_or_one
-          | "{" NUMBER "}"                -> exact
-          | "{" NUMBER "," "}"            -> at_least
-          | "{" NUMBER "," NUMBER "}"     -> between
+quantifier: "*"                                               -> zero_or_more
+          | "+"                                                   -> one_or_more
+          | "?"                                                   -> zero_or_one
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "}"              -> exact
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "," _WHITESPACE? "}"            -> at_least
+          | "{" _WHITESPACE? NUMBER _WHITESPACE? "," _WHITESPACE? NUMBER _WHITESPACE? "}"  -> between
 
 option_list: option ("," option)*
 option: CNAME "=" option_value -> keyed_option
@@ -314,8 +314,24 @@ def extract_slot_key(inner_text: str) -> str:
     Returns:
         Variable key string, or the type name if no explicit key
     """
-    result = parse_slot_body(inner_text)
-    return result["key"] if result["key"] else result["type"]
+    try:
+        result = parse_slot_body(inner_text)
+        return result["key"] if result["key"] else result["type"]
+    except Exception:
+        # Fallback for pre-Jinja templates with unrendered variables in quantifiers
+        # e.g., "theme{ {{min}},{{max}} }:themes" -> extract "themes"
+        # Strip options first (everything after |)
+        body = inner_text.split("|")[0].strip()
+        # Look for :varname pattern (the key is after the last colon)
+        if ":" in body:
+            key = body.rsplit(":", 1)[1].strip()
+            # Strip any trailing quantifier/brace chars
+            key = re.sub(r"[{}\[\]\s]+$", "", key)
+            if key and key.replace("_", "").isalnum():
+                return key
+        # No colon found, extract the type name (first identifier)
+        match = re.match(r"@?(\w+)", body)
+        return match.group(1) if match else inner_text
 
 
 def extract_option_variable_refs(options: list) -> set:

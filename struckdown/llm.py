@@ -335,8 +335,8 @@ class LLMCredentials(BaseModel):
         default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
     )
     instructor_mode: Optional[str] = Field(
-        default="json",
-        description="Instructor mode for structured outputs: 'json' or 'json_schema'"
+        default_factory=lambda: env_config("INSTRUCTOR_MODE", "json_schema"),
+        description="Instructor mode for structured outputs: 'json' or 'json_schema'. Set via INSTRUCTOR_MODE env var."
     )
 
 
