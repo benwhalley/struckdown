@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.4.6"
+version = "0.4.7"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
