@@ -2493,5 +2493,136 @@ def install_skill(
         raise typer.Exit(1)
 
 
+@app.command(name="install-vscode")
+def install_vscode(
+    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing installation"),
+):
+    """Install the Struckdown VS Code extension.
+
+    Copies the extension to ~/.vscode/extensions/ for syntax highlighting
+    and themes for .sd and .soak files.
+
+    Examples:
+        sd install-vscode           # Install the extension
+        sd install-vscode --force   # Overwrite existing
+    """
+    import shutil
+    from importlib.resources import files
+
+    console = Console()
+
+    # Source: bundled with package
+    try:
+        vscode_source = files("struckdown").joinpath("vscode-extension")
+        if not vscode_source.is_dir():
+            console.print("[red]Error:[/red] Could not find bundled VS Code extension")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Could not find bundled VS Code extension: {e}")
+        raise typer.Exit(1)
+
+    # Get version from package.json
+    try:
+        import json
+        package_json = vscode_source.joinpath("package.json").read_text()
+        version = json.loads(package_json).get("version", "0.0.0")
+    except Exception:
+        version = "0.0.0"
+
+    # Destination: ~/.vscode/extensions/struckdown-{version}
+    vscode_extensions_dir = Path.home() / ".vscode" / "extensions"
+    extension_name = f"struckdown-{version}"
+    extension_dest = vscode_extensions_dir / extension_name
+
+    # Check if current version already installed
+    if extension_dest.exists() and not force:
+        console.print(f"[yellow]VS Code extension already installed:[/yellow] {extension_dest}")
+        console.print("Use --force to overwrite.")
+        raise typer.Exit(0)
+
+    # Remove ALL old versions (including current if force)
+    if vscode_extensions_dir.exists():
+        for old in vscode_extensions_dir.glob("struckdown-*"):
+            if old.is_dir():
+                console.print(f"Removing old version: {old.name}")
+                shutil.rmtree(old)
+
+    # Create extensions directory if needed
+    vscode_extensions_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy extension files
+    try:
+        # Use traversable API to copy files
+        def copy_traversable(src, dest):
+            dest.mkdir(parents=True, exist_ok=True)
+            for item in src.iterdir():
+                item_dest = dest / item.name
+                if item.is_dir():
+                    copy_traversable(item, item_dest)
+                else:
+                    # Skip install.sh and test files
+                    if item.name in ("install.sh", "test-syntax.sd"):
+                        continue
+                    item_dest.write_bytes(item.read_bytes())
+
+        copy_traversable(vscode_source, extension_dest)
+
+        console.print(f"[green]✓[/green] Installed VS Code extension to: {extension_dest}")
+        console.print()
+        console.print("Restart VS Code or run 'Developer: Reload Window' to activate.")
+        console.print("Open any .sd file to see syntax highlighting.")
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Could not install VS Code extension: {e}")
+        raise typer.Exit(1)
+
+
+@app.command(name="setup")
+def setup(
+    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing installations"),
+    skip_skill: bool = typer.Option(False, "--skip-skill", help="Skip Claude skill installation"),
+    skip_vscode: bool = typer.Option(False, "--skip-vscode", help="Skip VS Code extension installation"),
+):
+    """Set up Struckdown development environment.
+
+    Installs:
+    - Claude Code skill (/struckdown command) to ~/.claude/commands/
+    - VS Code extension for .sd/.soak syntax highlighting
+
+    Examples:
+        sd setup                  # Install everything
+        sd setup --force          # Overwrite existing
+        sd setup --skip-vscode    # Only install Claude skill
+        sd setup --skip-skill     # Only install VS Code extension
+    """
+    console = Console()
+    console.print("[bold]Struckdown Setup[/bold]")
+    console.print()
+
+    success = True
+
+    if not skip_skill:
+        console.print("[bold]Installing Claude Code skill...[/bold]")
+        try:
+            install_skill(force=force)
+        except typer.Exit as e:
+            if e.exit_code != 0:
+                success = False
+        console.print()
+
+    if not skip_vscode:
+        console.print("[bold]Installing VS Code extension...[/bold]")
+        try:
+            install_vscode(force=force)
+        except typer.Exit as e:
+            if e.exit_code != 0:
+                success = False
+        console.print()
+
+    if success:
+        console.print("[green]✓ Setup complete![/green]")
+    else:
+        console.print("[yellow]Setup completed with some issues.[/yellow]")
+
+
 if __name__ == "__main__":
     app()

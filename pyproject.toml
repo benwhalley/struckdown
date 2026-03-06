@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.4.7"
+version = "0.4.8"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -61,7 +61,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"

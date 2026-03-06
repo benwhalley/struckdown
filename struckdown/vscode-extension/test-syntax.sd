@@ -1,0 +1,121 @@
+# Struckdown Syntax Test File
+
+
+
+This file demonstrates all the syntax highlighting features.
+
+## Comments
+
+<!-- This is a block comment -->
+
+<!--
+Multi-line comment
+can span multiple lines
+-->
+
+## System Messages
+
+<system>
+You are a helpful assistant.
+</system>
+
+This is the beginning of the template.
+
+## Placeholders (Square Brackets)
+
+Basic placeholder: [[response]]
+
+Typed placeholders:
+- Integer: [[int:count]]
+- Boolean: [[bool:is_valid]]
+- JSON: [[json:data]]
+- Number: [[number:price]]
+
+Response styles:
+- Think: [[think:analysis]]
+- Speak: [[speak:greeting]]
+
+Pick syntax:
+- Inline: [[pick:color|red,green,blue,yellow]]
+- With variable: [[pick:choice|option1,option2,option3]]
+
+List quantifiers (in type):
+- Fixed count: [[default{3}:item]]
+- Range: [[default{2,4}:question]]
+- Unlimited: [[default*:bullet_point]]
+
+## Template Variables (Double Curly Braces)
+
+Use previous values: {{response}}
+Interpolate data: {{count}} items found
+Complex: The color is {{color}} and choice is {{choice}}
+
+## Jinja Tags (Optional)
+
+{% if condition %}
+{% endif %}
+
+## Memory Boundary
+
+Here's some context that will be forgotten...
+
+<checkpoint>
+
+Now we're in a new context, using previous results like {{response}}.
+
+## Markdown Features
+
+All markdown works normally:
+
+- **Bold text**
+- *Italic text*
+- `inline code`
+- [links](https://example.com)
+
+```python
+# Code blocks work too
+def example():
+    return "Hello"
+```
+
+### Lists and more
+
+1. Numbered list
+2. Second item
+   - Nested bullet
+   - Another one
+
+> Blockquotes work
+> Multiple lines
+
+---
+
+## Action Calls
+
+Actions use `@` prefix and call Python functions directly:
+
+- Variable reference: [[@search:results|query=topic,n=5]]
+- Literal string: [[@search:results|query="climate change",n=3]]
+- Mixed: [[@fetch:content|url=page_url,timeout=30]]
+- Positional variable: [[@evidence|topic]]
+
+## Complete Workflow Example
+
+<system>
+You are an AI assistant.
+</system>
+
+Analyze this data: {{input_data}}
+
+Key findings: [[default{3}:finding]]
+
+<checkpoint>
+
+Based on these findings:
+{{findings}}
+
+Is the data valid? [[bool:is_valid]]
+
+<checkpoint>
+
+Final summary: {{is_valid}} - [[speak:summary]]
