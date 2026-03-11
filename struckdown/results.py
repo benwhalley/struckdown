@@ -325,6 +325,30 @@ class ChatterResult(BaseModel):
         return self.prompt_tokens + self.completion_tokens
 
     @property
+    def cached_prompt_tokens(self) -> int:
+        """Prompt tokens served from provider cache (discounted)."""
+        total = 0
+        for seg in self.results.values():
+            if not seg.completion:
+                continue
+            usage = seg.completion.get("usage", {})
+            details = usage.get("prompt_tokens_details") or {}
+            total += details.get("cached_tokens", 0) or 0
+        return total
+
+    @property
+    def cache_creation_tokens(self) -> int:
+        """Tokens used to create new cache entries."""
+        total = 0
+        for seg in self.results.values():
+            if not seg.completion:
+                continue
+            usage = seg.completion.get("usage", {})
+            details = usage.get("prompt_tokens_details") or {}
+            total += details.get("cache_creation_tokens", 0) or 0
+        return total
+
+    @property
     def has_unknown_costs(self) -> bool:
         """True if ANY segment has unknown/missing cost data"""
         for seg in self.results.values():
@@ -405,6 +429,8 @@ class CostSummary(BaseModel):
     fresh_cost: float = 0.0
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    cached_prompt_tokens: int = 0
+    cache_creation_tokens: int = 0
     fresh_count: int = 0
     cached_count: int = 0
     has_unknown_costs: bool = False
@@ -424,6 +450,8 @@ class CostSummary(BaseModel):
         fresh_cost = 0.0
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        cached_prompt_tokens = 0
+        cache_creation_tokens = 0
         fresh_count = 0
         cached_count = 0
         has_unknown_costs = False
@@ -437,6 +465,8 @@ class CostSummary(BaseModel):
             fresh_cost += result.fresh_cost
             total_prompt_tokens += result.prompt_tokens
             total_completion_tokens += result.completion_tokens
+            cached_prompt_tokens += result.cached_prompt_tokens
+            cache_creation_tokens += result.cache_creation_tokens
             fresh_count += result.fresh_call_count
             cached_count += result.cached_call_count
 
@@ -450,6 +480,8 @@ class CostSummary(BaseModel):
             fresh_cost=fresh_cost,
             total_prompt_tokens=total_prompt_tokens,
             total_completion_tokens=total_completion_tokens,
+            cached_prompt_tokens=cached_prompt_tokens,
+            cache_creation_tokens=cache_creation_tokens,
             fresh_count=fresh_count,
             cached_count=cached_count,
             has_unknown_costs=has_unknown_costs,
@@ -490,6 +522,15 @@ class CostSummary(BaseModel):
                     f"  This run: ${self.fresh_cost:.4f} "
                     f"({self.fresh_count} fresh, {self.cached_count} cached)"
                 )
+
+        # provider prompt caching stats (if any)
+        if include_breakdown and self.cached_prompt_tokens > 0:
+            cache_pct = (self.cached_prompt_tokens / self.total_prompt_tokens * 100
+                         if self.total_prompt_tokens > 0 else 0)
+            lines.append(
+                f"  Provider cache: {self.cached_prompt_tokens:,} tokens "
+                f"({cache_pct:.0f}% of prompt)"
+            )
 
         return "\n".join(lines)
 
