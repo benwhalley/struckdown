@@ -1699,18 +1699,42 @@ def create_app(
             return jsonify({"error": "Task not complete"}), 400
 
         # Build dataframe from results
+        from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+        def sanitize_for_excel(value):
+            """Remove characters illegal in Excel worksheets."""
+            if isinstance(value, str):
+                return ILLEGAL_CHARACTERS_RE.sub("", value)
+            return value
+
         rows_data = []
         for result in sorted(task.get("results", []), key=lambda r: r["index"]):
-            row = {**result["inputs"], **result["outputs"]}
+            row = {k: sanitize_for_excel(v) for k, v in {**result["inputs"], **result["outputs"]}.items()}
             if result.get("error"):
-                row["_error"] = result["error"]
+                row["_error"] = sanitize_for_excel(result["error"])
             rows_data.append(row)
 
         df = pd.DataFrame(rows_data)
 
-        # Write to bytes
+        # Reorder columns to put "filename" first if present
+        if "filename" in df.columns:
+            cols = ["filename"] + [c for c in df.columns if c != "filename"]
+            df = df[cols]
+
+        # Write to bytes with formatting
+        from openpyxl.styles import Alignment
+
         output = BytesIO()
-        df.to_excel(output, index=False)
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Results")
+            ws = writer.sheets["Results"]
+            # Freeze first column
+            ws.freeze_panes = "B1"
+            # Set column width and text wrap for all columns
+            for col_idx, col in enumerate(ws.columns, start=1):
+                ws.column_dimensions[col[0].column_letter].width = 30
+                for cell in col:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
         output.seek(0)
 
         return Response(

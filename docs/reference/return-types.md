@@ -12,21 +12,38 @@ Slots can specify return types to control how the LLM's response is parsed and v
 ## Syntax
 
 ```
-[[name]]              # Default: string
-[[name:type]]         # Built-in type
-[[name:type|opts]]    # With constraints
-[[name:CustomModel]]  # Pydantic model from context
+[[name]]                # Default: string
+[[type:name]]           # Built-in type
+[[type:name|opts]]      # With constraints
+[[CustomModel:name]]    # Pydantic model from context
 ```
 
 ## Built-in Types
 
-### str (default)
+### str / respond (default)
 
 String output. This is the default if no type is specified.
 
 ```
 [[response]]
-[[response:str]]
+[[respond:answer]]
+```
+
+### extract
+
+Verbatim text extraction -- captures exact text from the input.
+
+```
+[[extract:quote]]
+[[extract:name]]
+```
+
+### think
+
+Internal reasoning -- for chain-of-thought before final answers.
+
+```
+[[think:analysis]]
 ```
 
 ### int
@@ -34,84 +51,112 @@ String output. This is the default if no type is specified.
 Integer output.
 
 ```
-[[count:int]]
-[[age:int|min=0,max=150]]
+[[int:count]]
+[[int:age|min=0,max=150]]
 ```
 
-### float
+### number / float
 
-Decimal number.
+Decimal or integer number.
 
 ```
-[[price:float]]
-[[score:float|min=0.0,max=1.0]]
+[[number:price]]
+[[number:score|min=0.0,max=1.0]]
 ```
 
 ### bool
 
-Boolean value.
+Boolean value. The LLM returns `true` or `false`.
 
 ```
-[[is_valid:bool]]
-[[should_continue:bool]]
+[[bool:is_valid]]
+[[bool:should_continue]]
 ```
 
-The LLM will return `true` or `false`.
+### pick
 
-### list
-
-List of strings.
+Choose from predefined options.
 
 ```
-[[items:list]]
-[[keywords:list|max_items=10]]
+[[pick:sentiment|positive,negative,neutral]]
+[[pick:priority|low,medium,high,critical]]
+```
+
+### date / datetime / time
+
+Temporal extraction.
+
+```
+[[date:deadline]]
+[[datetime:appointment]]
+[[time:start_time]]
 ```
 
 ### json
 
-Arbitrary JSON object.
+Arbitrary JSON value.
 
 ```
-[[data:json]]
-[[metadata:json]]
+[[json:data]]
+[[json:metadata]]
 ```
 
-Returns a Python dict.
+Returns a Python dict or list.
 
+### record
+
+JSON object with string keys.
+
+```
+[[record:person]]
+[[record:info]]
+```
 
 ## Type Constraints
 
 Add constraints after the type with `|`:
 
-### String Constraints
-
-```
-[[summary:str|max_length=100]]
-[[title:str|min_length=5,max_length=50]]
-```
-
 ### Numeric Constraints
 
 ```
-[[score:int|min=1,max=10]]
-[[rating:float|min=0.0,max=5.0]]
-[[count:int|min=0]]
+[[int:score|min=1,max=10]]
+[[number:rating|min=0.0,max=5.0]]
+[[int:count|min=0]]
 ```
 
-### List Constraints
+### Required Fields
 
 ```
-[[items:list|max_items=5]]
-[[tags:list|min_items=1,max_items=10]]
+[[!number:price]]           # ! prefix = required
+[[number:price|required]]   # Explicit required option
 ```
 
-### Enum Constraints
+### Pattern Constraints
 
 ```
-[[sentiment:str|enum=positive,negative,neutral]]
-[[priority:str|enum=low,medium,high,critical]]
+[[extract:code|pattern="\w{4}\d+"]]
+[[extract:postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]
 ```
 
+## Quantifiers (Lists)
+
+Extract multiple items:
+
+```
+[[type*:var]]           # Zero or more items
+[[type+:var]]           # One or more items
+[[type?:var]]           # Zero or one item
+[[type{3}:var]]         # Exactly 3 items
+[[type{2,5}:var]]       # Between 2 and 5 items
+```
+
+Examples:
+
+```
+[[extract+:points]]         # At least one point
+[[pick{3}:colours|red,blue,green,yellow]]  # Exactly 3 picks
+[[date*:holidays]]          # Zero or more dates
+```
 
 ## Custom Pydantic Models
 
@@ -136,7 +181,7 @@ Extract the team information:
 
 {{text}}
 
-[[team:Team]]
+[[Team:team]]
 """, context={
     "text": "The Alpha team has John (30, engineer) and Jane (25, designer)",
     "Team": Team,
@@ -165,7 +210,7 @@ class Company(BaseModel):
 
 result = chatter("""
 Extract company info: {{text}}
-[[company:Company]]
+[[Company:company]]
 """, context={
     "text": "Acme Inc at 123 Main St, NYC, USA has 500 employees",
     "Company": Company,
@@ -197,7 +242,6 @@ class Review(BaseModel):
     verified: bool = False
 ```
 
-
 ## Special Return Types
 
 ### theme / themes
@@ -205,8 +249,8 @@ class Review(BaseModel):
 For qualitative analysis, extract themes:
 
 ```
-[[main_theme:theme]]
-[[all_themes:themes]]
+[[theme:main_theme]]
+[[themes:all_themes]]
 ```
 
 Returns structured theme objects with name, description, and supporting quotes.
@@ -216,12 +260,11 @@ Returns structured theme objects with name, description, and supporting quotes.
 Extract qualitative codes:
 
 ```
-[[primary_code:code]]
-[[codes:codes]]
+[[code:primary_code]]
+[[codes:all_codes]]
 ```
 
 Returns code objects with name, description, and evidence.
-
 
 ## Error Handling
 
@@ -234,7 +277,7 @@ If the LLM response cannot be parsed into the requested type:
 from struckdown import chatter
 
 try:
-    result = chatter("Give me a number [[num:int]]")
+    result = chatter("Give me a number [[int:num]]")
 except Exception as e:
     print(f"Failed to parse: {e}")
 ```
@@ -249,7 +292,6 @@ Please provide a valid integer.
 ```
 
 This allows the model to self-correct.
-
 
 ## Type Coercion
 

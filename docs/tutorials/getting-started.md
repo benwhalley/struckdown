@@ -5,9 +5,9 @@ parent: Tutorials
 nav_order: 1
 ---
 
-# QuickStart Guide
+# Getting Started with Struckdown
 
-Get started with Struckdown in minutes.
+Struckdown lets you extract structured data from text using LLMs. Instead of parsing free-form responses, you define exactly what you want and get validated, typed results.
 
 ## Installation
 
@@ -24,145 +24,221 @@ uv tool install git+https://github.com/benwhalley/struckdown
 Set your LLM credentials:
 
 ```bash
-export LLM_API_KEY="sk-..."  # Your API key
+export LLM_API_KEY="sk-..."
 export LLM_API_BASE="https://api.openai.com/v1"
 export DEFAULT_LLM="gpt-4o-mini"
 ```
 
-## Your First Prompt
+## Your First Extraction
 
-Test the CLI:
+The core idea: use `[[slot]]` to mark where the LLM should respond, and get back structured data.
 
 ```bash
-sd chat "Tell me a joke: [[joke]]"
+sd chat "The sky is blue. Is this true? [[bool:is_true]]"
 ```
 
-This simple prompt asks the LLM to tell a joke and stores it in a variable called `joke`.
-
-## Basic Syntax
-
-### Completions (Slots)
-
-Struckdown uses `[[slot]]` syntax to tell the LLM where to generate responses:
-
-```bash
-sd chat "Explain quantum physics: [[explanation]]"
+Output:
+```json
+{"is_true": true}
 ```
 
-The final slot can be omitted in simple prompts:
+Compare this to a raw LLM call -- you'd get "Yes, that's correct!" and have to parse it yourself.
+
+## Why Struckdown?
+
+### 1. Typed Extractions
+
+Get exactly the data type you need:
 
 ```bash
-sd chat "Tell me a joke"  # Automatically becomes [[response]]
-```
+# Boolean
+sd chat "Is Python a programming language? [[bool:answer]]"
+# {"answer": true}
 
-### Typed Completions
-
-Specify the type of response you want:
-
-```bash
-# Boolean (true/false)
-sd chat "Is the sky blue? [[bool:answer]]"
+# Number with constraints
+sd chat "Rate this product (1-10): 'Amazing quality!' [[int:rating|min=1,max=10]]"
+# {"rating": 9}
 
 # Pick from options
-sd chat "Choose a color [[pick:color|red,green,blue]]"
+sd chat "Classify: 'I hate waiting' [[pick:sentiment|positive,negative,neutral]]"
+# {"sentiment": "negative"}
 
-# Number extraction
-sd chat "Price: $19.99 [[number:price]]"
-
-# Integer
-sd chat "Count the words: 'hello world' [[int:count]]"
-
-# Pattern matching (regex)
-sd chat 'Module code: [[code|pattern="\w{4}\d+"]]'
+# Date extraction
+sd chat "Meeting scheduled for next Tuesday [[date:when]]"
+# {"when": "2024-01-16"}
 ```
 
-### Template Variables
+### 2. Batch Processing
 
-Use `{{variable}}` to reference previous results:
+Process hundreds of files with one command:
 
 ```bash
-sd chat "Name a fruit: [[fruit]]
+# Summarise all text files
+sd batch *.txt "Summarise in 5 words: [[summary]]" -o summaries.json
+
+# Extract structured data from documents
+sd batch documents/*.txt "
+Name: [[extract:name]]
+Email: [[extract:email]]
+Phone: [[extract:phone]]
+" -o contacts.csv
+
+# Classify with multiple fields
+sd batch reviews/*.txt "
+Sentiment: [[pick:sentiment|positive,negative,neutral]]
+Urgent: [[bool:urgent]]
+Topic: [[pick:topic|billing,support,sales,other]]
+" -o classified.xlsx
+```
+
+### 3. Multi-Step Reasoning
+
+Use `<checkpoint>` to break complex tasks into stages, saving tokens:
+
+```bash
+sd chat "
+Read this article and identify the main argument:
+{{input}}
+
+Main argument: [[extract:argument]]
 
 <checkpoint>
 
-Tell me a joke about {{fruit}}: [[joke]]"
+Now critique this argument: {{argument}}
+
+Critique: [[critique]]
+" -s article.txt
 ```
 
-## Batch Processing
+Everything before `<checkpoint>` is forgotten -- only `{{argument}}` carries forward. This saves tokens on long documents.
 
-Process multiple files at once:
+### 4. Required Fields and Validation
+
+Ensure you always get what you need:
 
 ```bash
-# Process text files
-sd batch *.txt "Summarize in 5 words: [[summary]]" -o results.json
+# ! prefix makes the field required
+sd chat "Extract the price: 'Contact us for pricing' [[!number:price]]"
+# Will indicate no valid price found rather than guessing
 
-# Extract structured data
-sd batch reviews/*.txt "Sentiment [[pick:sentiment|positive,negative,neutral]]" -o sentiment.csv
-
-# Chain multiple operations
-sd batch *.txt "Extract name: [[name]]" | \
-  sd batch "Generate email for {{name}}: [[email]]" -k
+# Pattern matching
+sd chat 'Find the module code: "PSYC2001 is great" [[extract:code|pattern="\w{4}\d+"]]'
+# {"code": "PSYC2001"}
 ```
-
-## Memory Management with Checkpoints
-
-Use `<checkpoint>` to create memory boundaries and save tokens:
-
-```bash
-sd chat "Long context...
-
-Generate summary: [[summary]]
-
-<checkpoint>
-
-Translate {{summary}} to Spanish: [[translation]]"
-```
-
-Everything before `<checkpoint>` is forgotten -- only the extracted variables (`{{summary}}`) are available in the next section.
-
-## Next Steps
-
-- **[Template Syntax](../explanation/template-syntax.md)** -- Complete syntax documentation
-- **[Custom Actions](../how-to/custom-actions.md)** -- Extend Struckdown with plugins
-- **[CLI Reference](../reference/cli.md)** -- Complete CLI reference
-- **[API Reference](../reference/api.md)** -- Python API documentation
 
 ## Common Patterns
 
-### Extract structured data from files
+### Extract Structured Data from Files
 
 ```bash
-sd batch documents/*.txt "
-Name: [[name]]
-Email: [[email]]
-Phone: [[number:phone]]
-" -o contacts.csv
+sd batch invoices/*.pdf "
+Invoice number: [[extract:invoice_no]]
+Date: [[date:date]]
+Total: [[number:total]]
+Paid: [[bool:paid]]
+" -o invoices.csv
 ```
 
-### Multi-step analysis
-
-```bash
-sd chat "Analyze this code:
-
-\`\`\`python
-def hello(): print('hi')
-\`\`\`
-
-Issues: [[issues]]
-
-<checkpoint>
-
-Issues found: {{issues}}
-
-Suggested fixes: [[fixes]]"
-```
-
-### Classification pipeline
+### Classify and Route
 
 ```bash
 sd batch emails/*.txt "
-Sentiment: [[pick:sentiment|positive,negative,neutral]]
-Urgent: [[bool:urgent]]
-Category: [[pick:category|sales,support,billing,other]]
-" -o classified.json
+Priority: [[pick:priority|high,medium,low]]
+Department: [[pick:dept|sales,support,billing,hr]]
+Requires response: [[bool:needs_reply]]
+" -o routing.json
 ```
+
+### Chain Operations
+
+Pipe JSON output through multiple processing steps:
+
+```bash
+sd batch *.txt "Extract company name: [[extract:company]]" | \
+  sd batch "Find {{company}} stock ticker: [[extract:ticker]]" -k
+```
+
+The `-k` flag keeps input fields, so you get both `company` and `ticker` in the output.
+
+### Web Research
+
+Fetch and process web content:
+
+```bash
+# Fetch a URL and extract data
+sd chat "{{source}} Extract the main product and price [[extract:product]] [[number:price]]" \
+  -s https://example.com/product
+
+# Or use the @search action for web search
+sd chat "[[@search:results|query='best python testing frameworks']] Summarise the top 3: [[summary]]"
+```
+
+## Using Prompt Files
+
+For complex prompts, save them as `.sd` files:
+
+```
+{# feedback_classifier.sd #}
+<system>
+You are a customer feedback analyst.
+Be objective and precise.
+</system>
+
+Customer feedback:
+{{input}}
+
+Analysis:
+- Sentiment: [[pick:sentiment|positive,negative,neutral,mixed]]
+- Topics: [[pick+:topics|product,service,price,delivery,quality]]
+- Urgency: [[int:urgency|min=1,max=5]]
+- Summary: [[extract:summary]]
+```
+
+Run with:
+
+```bash
+sd batch feedback/*.txt -p feedback_classifier.sd -o analysis.xlsx
+```
+
+## Python API
+
+Use struckdown programmatically:
+
+```python
+from struckdown import chatter
+
+result = chatter("""
+Analyse this customer review:
+{{review}}
+
+Sentiment: [[pick:sentiment|positive,negative,neutral]]
+Rating: [[int:rating|min=1,max=5]]
+Key points: [[extract+:points]]
+""", context={"review": "Great product but shipping was slow"})
+
+print(result["sentiment"])  # "positive"
+print(result["rating"])     # 4
+print(result["points"])     # ["Good product quality", "Slow shipping"]
+print(result.total_cost)    # 0.0001 (USD)
+```
+
+For async processing:
+
+```python
+from struckdown import chatter_async
+import asyncio
+
+async def process_many(reviews):
+    tasks = [
+        chatter_async("Sentiment: [[pick:sentiment|pos,neg]] {{r}}", context={"r": r})
+        for r in reviews
+    ]
+    return await asyncio.gather(*tasks)
+```
+
+## Next Steps
+
+- **[Template Syntax](../explanation/template-syntax.md)** -- Complete syntax reference
+- **[CLI Reference](../reference/cli.md)** -- All CLI commands and options
+- **[Custom Actions](../how-to/custom-actions.md)** -- Extend with Python plugins
+- **[Caching](../explanation/caching.md)** -- How caching works
