@@ -74,10 +74,11 @@ def _log_error_details(error: Exception, model_name: str, context: str = ""):
 import anyio
 from box import Box
 from decouple import config as env_config
+import tenacity
 from litellm.exceptions import (APIConnectionError, APIError,
                                 APIResponseValidationError,
-                                AuthenticationError, BadRequestError,
-                                BudgetExceededError,
+                                AuthenticationError, BadGatewayError,
+                                BadRequestError, BudgetExceededError,
                                 ContentPolicyViolationError,
                                 ContextWindowExceededError,
                                 InternalServerError, NotFoundError,
@@ -100,6 +101,7 @@ TRANSIENT_ERRORS = (
     APIConnectionError,
     ServiceUnavailableError,
     InternalServerError,
+    BadGatewayError,
 )
 
 # Fatal: require config/credential changes, don't cache (user should fix and retry)
@@ -725,6 +727,21 @@ def _get_local_embedding(
     return embeddings.tolist()
 
 
+def _is_transient_error(exception: BaseException) -> bool:
+    """Check if an exception is transient and should be retried."""
+    return isinstance(exception, TRANSIENT_ERRORS)
+
+
+@tenacity.retry(
+    retry=tenacity.retry_if_exception(_is_transient_error),
+    wait=tenacity.wait_exponential(multiplier=1, min=1, max=60),
+    stop=tenacity.stop_after_attempt(5),
+    before_sleep=lambda retry_state: logger.info(
+        f"Embedding API error ({type(retry_state.outcome.exception()).__name__}), "
+        f"retrying in {retry_state.next_action.sleep:.1f}s (attempt {retry_state.attempt_number}/5)"
+    ),
+    reraise=True,
+)
 async def _get_api_embedding_batch_async(
     batch: List[str],
     model_name: str,
@@ -734,6 +751,8 @@ async def _get_api_embedding_batch_async(
     timeout: int = 60,
 ) -> Tuple[List[List[float]], int, Optional[float]]:
     """Get embeddings for a single batch via async API call.
+
+    Retries transient errors (rate limits, timeouts, 5xx) with exponential backoff.
 
     Returns:
         Tuple of (embeddings, total_tokens, cost). cost is None if unknown.

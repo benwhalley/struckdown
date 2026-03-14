@@ -18,6 +18,7 @@ dependencies = [
     "certifi>=2023.0.0",
     "asgiref>=3.7.0",
     "instructor[litellm]>=1.11.0",
+    "tenacity>=8.2.0",
     "jinja2>=3.1.6",
     "lark>=1.2.2",
     "pydantic>=2.11.7",
