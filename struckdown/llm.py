@@ -308,6 +308,10 @@ _cache_miss_marker: ContextVar[bool] = ContextVar("cache_miss", default=False)
 MAX_LLM_CONCURRENCY = env_config("SD_MAX_CONCURRENCY", default=20, cast=int)
 _llm_semaphore = None
 
+# Separate concurrency limit for embedding requests (typically lower to avoid overwhelming servers)
+MAX_EMBEDDING_CONCURRENCY = env_config("SD_EMBEDDING_CONCURRENCY", default=3, cast=int)
+_embedding_semaphore = None
+
 
 def get_llm_semaphore() -> anyio.Semaphore:
     """Get the shared LLM concurrency semaphore (lazy initialization)."""
@@ -315,6 +319,19 @@ def get_llm_semaphore() -> anyio.Semaphore:
     if _llm_semaphore is None:
         _llm_semaphore = anyio.Semaphore(MAX_LLM_CONCURRENCY)
     return _llm_semaphore
+
+
+def get_embedding_semaphore() -> anyio.Semaphore:
+    """Get the embedding concurrency semaphore (lazy initialization).
+
+    Embeddings use a separate, lower concurrency limit because embedding
+    endpoints (especially self-hosted ones like LiteLLM) can be overwhelmed
+    by many concurrent batch requests.
+    """
+    global _embedding_semaphore
+    if _embedding_semaphore is None:
+        _embedding_semaphore = anyio.Semaphore(MAX_EMBEDDING_CONCURRENCY)
+    return _embedding_semaphore
 
 
 # ANSI colour codes for terminal output
@@ -804,6 +821,7 @@ async def _compute_embeddings_async(
     batch_size: int,
     progress_callback: Optional[ProgressCallback] = None,
     base_progress: int = 0,
+    max_tokens_per_batch: Optional[int] = None,
 ) -> Tuple[List[List[float]], int, Optional[float]]:
     """Compute embeddings for texts via concurrent async API calls with progress.
 
@@ -816,16 +834,24 @@ async def _compute_embeddings_async(
         dimensions: Embedding dimensions
         api_key: API key
         base_url: API base URL
-        batch_size: Texts per batch
+        batch_size: Texts per batch (max)
         progress_callback: Optional callback(n) called with cumulative count completed
         base_progress: Starting progress count (e.g., from cached items)
+        max_tokens_per_batch: Maximum tokens per batch (prevents context window errors)
 
     Returns:
         Tuple of (embeddings, total_tokens, total_cost). total_cost is None if unknown.
     """
     import asyncio
 
-    batches = list(chunked(texts, batch_size))
+    # Use token-aware batching to prevent context window errors
+    if max_tokens_per_batch is None:
+        max_tokens_per_batch = MAX_EMBEDDING_TOKENS_PER_BATCH
+    batches = _create_token_aware_batches(texts, batch_size, max_tokens_per_batch)
+    logger.debug(
+        f"Created {len(batches)} embedding batches "
+        f"(max {batch_size} texts, max ~{max_tokens_per_batch} tokens per batch)"
+    )
 
     if len(batches) == 1:
         embeddings, tokens, cost = await _get_api_embedding_batch_async(
@@ -846,7 +872,8 @@ async def _compute_embeddings_async(
     has_unknown_cost = False
     progress_lock = asyncio.Lock()
 
-    sem = get_llm_semaphore()
+    # Use dedicated embedding semaphore (lower concurrency than LLM calls)
+    sem = get_embedding_semaphore()
 
     async def process_batch(batch_idx: int, batch: List[str]) -> tuple:
         nonlocal completed_count, total_tokens, total_cost, has_unknown_cost
@@ -882,6 +909,64 @@ async def _compute_embeddings_async(
 
 
 DEFAULT_EMBEDDING_BATCH_SIZE = env_config("SD_EMBEDDING_BATCH_SIZE", default=100, cast=int)
+# Maximum tokens per embedding batch (leave margin below 8192 for safety)
+MAX_EMBEDDING_TOKENS_PER_BATCH = env_config("SD_EMBEDDING_MAX_TOKENS", default=7000, cast=int)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count for a text (rough approximation: ~4 chars per token)."""
+    return len(text) // 4 + 1
+
+
+def _create_token_aware_batches(
+    texts: List[str],
+    max_texts_per_batch: int,
+    max_tokens_per_batch: int,
+) -> List[List[str]]:
+    """Create batches respecting both text count and token limits.
+
+    Args:
+        texts: List of texts to batch
+        max_texts_per_batch: Maximum texts per batch
+        max_tokens_per_batch: Maximum estimated tokens per batch
+
+    Returns:
+        List of batches, each containing texts that fit within limits
+    """
+    batches = []
+    current_batch = []
+    current_tokens = 0
+
+    for text in texts:
+        text_tokens = _estimate_tokens(text)
+
+        # If this single text exceeds the limit, it gets its own batch
+        # (the API will handle truncation or error)
+        if text_tokens > max_tokens_per_batch:
+            if current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+            batches.append([text])
+            continue
+
+        # Check if adding this text would exceed limits
+        would_exceed_tokens = current_tokens + text_tokens > max_tokens_per_batch
+        would_exceed_count = len(current_batch) >= max_texts_per_batch
+
+        if would_exceed_tokens or would_exceed_count:
+            if current_batch:
+                batches.append(current_batch)
+            current_batch = [text]
+            current_tokens = text_tokens
+        else:
+            current_batch.append(text)
+            current_tokens += text_tokens
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
 
 
 async def get_embedding_async(
@@ -890,6 +975,7 @@ async def get_embedding_async(
     credentials: Optional[LLMCredentials] = None,
     dimensions: Optional[int] = None,
     batch_size: int = DEFAULT_EMBEDDING_BATCH_SIZE,
+    max_tokens_per_batch: Optional[int] = None,
     progress_callback: Optional[ProgressCallback] = None,
     cost_callback: Optional[EmbeddingCostCallback] = None,
 ) -> EmbeddingResultList:
@@ -907,6 +993,8 @@ async def get_embedding_async(
         credentials: Optional LLMCredentials for API calls.
         dimensions: Embedding dimensions (API models only, model-specific)
         batch_size: Texts per batch (default: 100)
+        max_tokens_per_batch: Maximum tokens per batch to avoid context window errors
+                             (default: SD_EMBEDDING_MAX_TOKENS env var or 7000)
         progress_callback: Optional callback(n) called after each batch with count of items completed
         cost_callback: Optional callback(fresh_cost, fresh_tokens, fresh_count) called after
                       embeddings complete with cost info from fresh (non-cached) API calls.
@@ -988,6 +1076,7 @@ async def get_embedding_async(
             batch_size,
             progress_callback,
             base_progress=n_cached,
+            max_tokens_per_batch=max_tokens_per_batch,
         )
         # Note: API embeddings are cached incrementally in _compute_embeddings_async
 
