@@ -1,14 +1,14 @@
 import json
 import logging
 import os
+import random
+import string
 import sys
 import traceback
 from glob import glob
 from pathlib import Path
 from typing import List, Optional
-import random
-import string
-    
+
 import anyio
 import typer
 from decouple import config as env_config
@@ -19,13 +19,12 @@ from rich.console import Console
 from rich.progress import (BarColumn, Progress, SpinnerColumn,
                            TaskProgressColumn, TextColumn, TimeRemainingColumn)
 
-from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials,
-               LLMError, TemplateError, __version__,
-               chatter, chatter_async, get_embedding, progress_tracking,
-               structured_chat)
+from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, LLMError,
+               TemplateError, __version__, chatter, chatter_async,
+               get_embedding, progress_tracking, structured_chat)
 from .actions import discover_actions, load_actions
-from .parsing import find_slots_with_positions
 from .output_formatters import render_template, write_output
+from .parsing import find_slots_with_positions
 from .type_loader import discover_yaml_types, load_yaml_types
 from .url_fetch import is_url, read_input_url
 
@@ -277,9 +276,7 @@ async def _run_chat_incremental(
             final_result = event.result
 
         elif isinstance(event, ProcessingError):
-            raise LLMError(
-                Exception(event.error_message), prompt_str, model.model_name
-            )
+            raise LLMError(Exception(event.error_message), prompt_str, model.model_name)
 
     return final_result, break_result
 
@@ -1032,7 +1029,9 @@ async def batch_async(
                                 errors.append(error_msg)
 
                                 # create error output row so errors appear in results
-                                error_output = _create_error_output(e, item, keep_inputs)
+                                error_output = _create_error_output(
+                                    e, item, keep_inputs
+                                )
                                 results[index] = error_output
 
                                 if verbose:
@@ -1386,6 +1385,7 @@ def batch(
 
     if debug_api:
         from struckdown.llm import enable_api_debug
+
         enable_api_debug()
 
     # load custom types and tools
@@ -2005,9 +2005,7 @@ def flat(
 
         if output:
             output.write_text(flattened)
-            console.print(
-                f"[green]✓[/green] Wrote flattened template to {output}"
-            )
+            console.print(f"[green]✓[/green] Wrote flattened template to {output}")
         else:
             # Use print() instead of console.print() to avoid Rich markup interpretation
             # which would strip out [[...]] struckdown completion slots
@@ -2288,19 +2286,27 @@ def check_and_prompt_credentials(cwd: Path) -> tuple:
 
         if not api_key:
             api_key = typer.prompt("Enter LLM_API_KEY", err=True)
-            api_key = api_key.strip().strip('"').strip("'")  # strip quotes from user input
+            api_key = (
+                api_key.strip().strip('"').strip("'")
+            )  # strip quotes from user input
             env_vars["LLM_API_KEY"] = api_key
 
         if not base_url:
             default_url = "https://api.openai.com/v1"
             base_url = typer.prompt("Enter LLM_API_BASE", default=default_url, err=True)
-            base_url = base_url.strip().strip('"').strip("'")  # strip quotes from user input
+            base_url = (
+                base_url.strip().strip('"').strip("'")
+            )  # strip quotes from user input
             env_vars["LLM_API_BASE"] = base_url
 
         if not model_name:
             default_model = "gpt-4.1-mini"
-            model_name = typer.prompt("Enter DEFAULT_LLM (model name)", default=default_model, err=True)
-            model_name = model_name.strip().strip('"').strip("'")  # strip quotes from user input
+            model_name = typer.prompt(
+                "Enter DEFAULT_LLM (model name)", default=default_model, err=True
+            )
+            model_name = (
+                model_name.strip().strip('"').strip("'")
+            )  # strip quotes from user input
             env_vars["DEFAULT_LLM"] = model_name
 
         # Save to .env file
@@ -2357,6 +2363,7 @@ def test(
     # Test 1: LLM completion
     console.print("Testing LLM completion...")
     try:
+
         class SimpleResponse(BaseModel):
             answer: str = Field(description="A simple answer")
 
@@ -2372,34 +2379,51 @@ def test(
         if verbose:
             console.print(f"    Response: {result.answer}")
             if hasattr(completion, "usage"):
-                console.print(f"    Tokens: {completion.usage.prompt_tokens} in / {completion.usage.completion_tokens} out")
+                console.print(
+                    f"    Tokens: {completion.usage.prompt_tokens} in / {completion.usage.completion_tokens} out"
+                )
 
     except Exception as e:
         console.print(f"  [red]✗[/red] LLM call failed: {e}")
         if verbose:
             import traceback
+
             console.print(f"    {traceback.format_exc()}")
 
         # Provide helpful error messages
         error_str = str(e).lower()
-        if "authentication" in error_str or "api key" in error_str or "401" in error_str:
+        if (
+            "authentication" in error_str
+            or "api key" in error_str
+            or "401" in error_str
+        ):
             console.print("\n[yellow]Hint:[/yellow] Check that LLM_API_KEY is correct")
         elif "not found" in error_str or "404" in error_str:
-            console.print("\n[yellow]Hint:[/yellow] Check that LLM_API_BASE URL is correct")
+            console.print(
+                "\n[yellow]Hint:[/yellow] Check that LLM_API_BASE URL is correct"
+            )
         elif "model" in error_str:
-            console.print(f"\n[yellow]Hint:[/yellow] Check that model '{model_name}' is available at your API endpoint")
+            console.print(
+                f"\n[yellow]Hint:[/yellow] Check that model '{model_name}' is available at your API endpoint"
+            )
         elif "connection" in error_str or "timeout" in error_str:
-            console.print(f"\n[yellow]Hint:[/yellow] Check network connectivity to {base_url}")
+            console.print(
+                f"\n[yellow]Hint:[/yellow] Check network connectivity to {base_url}"
+            )
 
         raise typer.Exit(1)
 
     # Test 2: Embedding (optional -- some endpoints don't support embeddings)
     console.print("Testing embeddings...")
     embedding_ok = False
-    
+
     try:
         embeddings = get_embedding(
-            ["hello", "world", "".join(random.choices(string.ascii_letters + " ", k=64))],
+            [
+                "hello",
+                "world",
+                "".join(random.choices(string.ascii_letters + " ", k=64)),
+            ],
             credentials=credentials,
         )
 
@@ -2409,33 +2433,46 @@ def test(
                 console.print(f"    Embedding dimensions: {len(embeddings[0])}")
             embedding_ok = True
         else:
-            console.print(f"  [yellow]⚠[/yellow] Embedding returned empty result (embeddings may not be supported)")
+            console.print(
+                f"  [yellow]⚠[/yellow] Embedding returned empty result (embeddings may not be supported)"
+            )
 
     except Exception as e:
         console.print(f"  [yellow]⚠[/yellow] Embedding call failed: {e}")
         if verbose:
             import traceback
+
             console.print(f"    {traceback.format_exc()}")
 
         # Provide helpful error messages
         error_str = str(e).lower()
         if "connection" in error_str:
-            console.print("    [dim]Hint: Your API endpoint may not support the text-embedding-3-large model[/dim]")
+            console.print(
+                "    [dim]Hint: Your API endpoint may not support the text-embedding-3-large model[/dim]"
+            )
         elif "authentication" in error_str or "api key" in error_str:
-            console.print("    [dim]Hint: Check that your API key has embedding permissions[/dim]")
+            console.print(
+                "    [dim]Hint: Check that your API key has embedding permissions[/dim]"
+            )
         elif "model" in error_str:
-            console.print("    [dim]Hint: Check that your API endpoint supports the embedding model[/dim]")
+            console.print(
+                "    [dim]Hint: Check that your API endpoint supports the embedding model[/dim]"
+            )
 
     if embedding_ok:
         console.print("\n[green bold]All tests passed![/green bold]")
     else:
-        console.print("\n[green]✓ LLM test passed![/green] (Embeddings not available -- some features may be limited)")
+        console.print(
+            "\n[green]✓ LLM test passed![/green] (Embeddings not available -- some features may be limited)"
+        )
     console.print(f"Configuration saved in: {cwd / '.env'}")
 
 
 @app.command(name="install-skill")
 def install_skill(
-    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing skill file"),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Overwrite existing skill file"
+    ),
 ):
     """Install the Struckdown prompt-writing skill for Claude Code.
 
@@ -2483,7 +2520,9 @@ def install_skill(
         skill_dest.write_text(skill_content)
         console.print(f"[green]✓[/green] Installed Struckdown skill to: {skill_dest}")
         console.print()
-        console.print("You can now use [bold]/struckdown[/bold] in Claude Code to write prompts.")
+        console.print(
+            "You can now use [bold]/struckdown[/bold] in Claude Code to write prompts."
+        )
         console.print()
         console.print("Example usage:")
         console.print("  /struckdown extract contact details from business cards")
@@ -2495,7 +2534,9 @@ def install_skill(
 
 @app.command(name="install-vscode")
 def install_vscode(
-    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing installation"),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Overwrite existing installation"
+    ),
 ):
     """Install the Struckdown VS Code extension.
 
@@ -2518,12 +2559,15 @@ def install_vscode(
             console.print("[red]Error:[/red] Could not find bundled VS Code extension")
             raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]Error:[/red] Could not find bundled VS Code extension: {e}")
+        console.print(
+            f"[red]Error:[/red] Could not find bundled VS Code extension: {e}"
+        )
         raise typer.Exit(1)
 
     # Get version from package.json
     try:
         import json
+
         package_json = vscode_source.joinpath("package.json").read_text()
         version = json.loads(package_json).get("version", "0.0.0")
     except Exception:
@@ -2536,7 +2580,9 @@ def install_vscode(
 
     # Check if current version already installed
     if extension_dest.exists() and not force:
-        console.print(f"[yellow]VS Code extension already installed:[/yellow] {extension_dest}")
+        console.print(
+            f"[yellow]VS Code extension already installed:[/yellow] {extension_dest}"
+        )
         console.print("Use --force to overwrite.")
         raise typer.Exit(0)
 
@@ -2567,7 +2613,9 @@ def install_vscode(
 
         copy_traversable(vscode_source, extension_dest)
 
-        console.print(f"[green]✓[/green] Installed VS Code extension to: {extension_dest}")
+        console.print(
+            f"[green]✓[/green] Installed VS Code extension to: {extension_dest}"
+        )
         console.print()
         console.print("Restart VS Code or run 'Developer: Reload Window' to activate.")
         console.print("Open any .sd file to see syntax highlighting.")
@@ -2578,9 +2626,15 @@ def install_vscode(
 
 @app.command(name="setup")
 def setup(
-    force: bool = typer.Option(False, "-f", "--force", help="Overwrite existing installations"),
-    skip_skill: bool = typer.Option(False, "--skip-skill", help="Skip Claude skill installation"),
-    skip_vscode: bool = typer.Option(False, "--skip-vscode", help="Skip VS Code extension installation"),
+    force: bool = typer.Option(
+        False, "-f", "--force", help="Overwrite existing installations"
+    ),
+    skip_skill: bool = typer.Option(
+        False, "--skip-skill", help="Skip Claude skill installation"
+    ),
+    skip_vscode: bool = typer.Option(
+        False, "--skip-vscode", help="Skip VS Code extension installation"
+    ),
 ):
     """Set up Struckdown development environment.
 

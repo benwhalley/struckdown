@@ -1709,7 +1709,10 @@ def create_app(
 
         rows_data = []
         for result in sorted(task.get("results", []), key=lambda r: r["index"]):
-            row = {k: sanitize_for_excel(v) for k, v in {**result["inputs"], **result["outputs"]}.items()}
+            row = {
+                k: sanitize_for_excel(v)
+                for k, v in {**result["inputs"], **result["outputs"]}.items()
+            }
             if result.get("error"):
                 row["_error"] = sanitize_for_excel(result["error"])
             rows_data.append(row)

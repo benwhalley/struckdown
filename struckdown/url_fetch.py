@@ -120,18 +120,24 @@ def read_input_url(url: str) -> List[dict]:
         rows = df.where(pd.notnull(df), None).to_dict(orient="records")
         result = []
         for row_data in rows:
-            result.append({
-                "_original_columns": original_columns,
-                **row_data,
-            })
-        logger.info(f"Loaded {len(rows)} rows from URL with columns: {original_columns}")
+            result.append(
+                {
+                    "_original_columns": original_columns,
+                    **row_data,
+                }
+            )
+        logger.info(
+            f"Loaded {len(rows)} rows from URL with columns: {original_columns}"
+        )
         return result
 
     else:
         # treat as plain text
-        return [{
-            "input": content,
-            "content": content,
-            "source": content,
-            "filename": url,
-        }]
+        return [
+            {
+                "input": content,
+                "content": content,
+                "source": content,
+                "filename": url,
+            }
+        ]

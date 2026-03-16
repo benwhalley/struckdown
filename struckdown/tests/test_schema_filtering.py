@@ -10,7 +10,8 @@ from typing import List, Optional
 
 from pydantic import Field
 
-from struckdown.return_type_models import LLMConfig, ResponseModel, _schema_class_cache
+from struckdown.return_type_models import (LLMConfig, ResponseModel,
+                                           _schema_class_cache)
 
 
 def PostProcessedField(**kwargs):

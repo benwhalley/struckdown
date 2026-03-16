@@ -7,11 +7,10 @@ Data governance and additional metadata belong in the application layer.
 """
 
 import logging
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, SecretStr
+from typing import Any, Dict, List, Optional
 
 import litellm
-
+from pydantic import BaseModel, Field, SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +71,9 @@ class LLMSpec(BaseModel):
     # Optional display name (defaults to model_id)
     name: Optional[str] = None
 
-    def get_litellm_model_name(self, credential: Optional[ModelCredential] = None) -> str:
+    def get_litellm_model_name(
+        self, credential: Optional[ModelCredential] = None
+    ) -> str:
         """Get the model name for litellm routing."""
         if self.provider_id == "azure" and credential and credential.azure_deployment:
             return f"azure/{credential.azure_deployment}"
@@ -111,7 +112,9 @@ class EmbeddingModelSpec(BaseModel):
     # Optional display name
     name: Optional[str] = None
 
-    def get_litellm_model_name(self, credential: Optional[ModelCredential] = None) -> str:
+    def get_litellm_model_name(
+        self, credential: Optional[ModelCredential] = None
+    ) -> str:
         """Get the model name for litellm routing."""
         if self.provider_id == "local":
             return f"local/{self.model_id}"

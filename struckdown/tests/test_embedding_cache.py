@@ -8,12 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from struckdown.embedding_cache import (
-    _make_cache_key,
-    clear_embedding_cache,
-    get_cached_embeddings,
-    store_embeddings,
-)
+from struckdown.embedding_cache import (_make_cache_key, clear_embedding_cache,
+                                        get_cached_embeddings,
+                                        store_embeddings)
 
 
 class TestCacheKeyDeterminism:

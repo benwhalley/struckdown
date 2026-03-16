@@ -6,17 +6,11 @@ which models to include by default.
 """
 
 import os
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import SecretStr
 
-from .types import (
-    ModelCredential,
-    LLMSpec,
-    EmbeddingModelSpec,
-    ModelSet,
-)
-
+from .types import EmbeddingModelSpec, LLMSpec, ModelCredential, ModelSet
 
 # Provider IDs
 PROVIDER_OPENAI = "openai"
@@ -25,12 +19,16 @@ PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_LOCAL = "local"
 
 
-def llm(model_id: str, provider_id: str = "openai", name: Optional[str] = None) -> LLMSpec:
+def llm(
+    model_id: str, provider_id: str = "openai", name: Optional[str] = None
+) -> LLMSpec:
     """Helper to create an LLMSpec."""
     return LLMSpec(model_id=model_id, provider_id=provider_id, name=name)
 
 
-def emb(model_id: str, provider_id: str = "openai", name: Optional[str] = None) -> EmbeddingModelSpec:
+def emb(
+    model_id: str, provider_id: str = "openai", name: Optional[str] = None
+) -> EmbeddingModelSpec:
     """Helper to create an EmbeddingModelSpec."""
     return EmbeddingModelSpec(model_id=model_id, provider_id=provider_id, name=name)
 
@@ -79,7 +77,8 @@ def create_openai_model_set(
         id="openai-default",
         name="OpenAI Models",
         llms=llms or OPENAI_LLMS,
-        embedding_models=embedding_models or [em for em in EMBEDDING_MODELS if em.provider_id == "openai"],
+        embedding_models=embedding_models
+        or [em for em in EMBEDDING_MODELS if em.provider_id == "openai"],
         default_llm_id="gpt-4o-mini",
         default_embedding_id="text-embedding-3-small",
         credentials={"openai": credential},

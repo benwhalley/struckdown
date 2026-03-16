@@ -525,8 +525,11 @@ class CostSummary(BaseModel):
 
         # provider prompt caching stats (if any)
         if include_breakdown and self.cached_prompt_tokens > 0:
-            cache_pct = (self.cached_prompt_tokens / self.total_prompt_tokens * 100
-                         if self.total_prompt_tokens > 0 else 0)
+            cache_pct = (
+                self.cached_prompt_tokens / self.total_prompt_tokens * 100
+                if self.total_prompt_tokens > 0
+                else 0
+            )
             lines.append(
                 f"  Provider cache: {self.cached_prompt_tokens:,} tokens "
                 f"({cache_pct:.0f}% of prompt)"

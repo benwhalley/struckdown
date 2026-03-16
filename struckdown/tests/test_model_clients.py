@@ -5,42 +5,37 @@ Tests instructor integration, structured outputs, and embedding calls.
 """
 
 import os
-import pytest
 from decimal import Decimal
 from typing import List
-from pydantic import BaseModel, Field
 
-from struckdown.models import (
-    ModelCredential,
-    LLMSpec,
-    EmbeddingModelSpec,
-    ModelSet,
-    LLMClient,
-    EmbeddingClient,
-    ModelClient,
-    create_openai_model_set,
-    create_model_set_from_env,
-    OPENAI_LLMS,
-    EMBEDDING_MODELS,
-)
-from pydantic import SecretStr
+import pytest
+from pydantic import BaseModel, Field, SecretStr
+
+from struckdown.models import (EMBEDDING_MODELS, OPENAI_LLMS, EmbeddingClient,
+                               EmbeddingModelSpec, LLMClient, LLMSpec,
+                               ModelClient, ModelCredential, ModelSet,
+                               create_model_set_from_env,
+                               create_openai_model_set)
 
 
 # Test response models for structured output
 class SimpleResponse(BaseModel):
     """Simple response for testing."""
+
     answer: str
     confidence: float = Field(ge=0, le=1)
 
 
 class ListResponse(BaseModel):
     """List response for testing."""
+
     items: List[str]
     count: int
 
 
 class AnalysisResponse(BaseModel):
     """More complex response for testing."""
+
     summary: str
     key_points: List[str]
     sentiment: str = Field(description="positive, negative, or neutral")
@@ -166,7 +161,9 @@ class TestModelTypes:
             name="Claude 3.5 Sonnet",
         )
         cred = ModelCredential(provider_id="anthropic", api_key=SecretStr("key"))
-        assert spec.get_litellm_model_name(cred) == "anthropic/claude-3-5-sonnet-20241022"
+        assert (
+            spec.get_litellm_model_name(cred) == "anthropic/claude-3-5-sonnet-20241022"
+        )
 
     def test_llm_spec_litellm_name_azure(self):
         """Test LLM spec generates correct litellm model name for Azure."""
@@ -193,7 +190,9 @@ class TestModelTypes:
             llms=[llm1, llm2],
             default_llm_id="model1",
             credentials={
-                "openai": ModelCredential(provider_id="openai", api_key=SecretStr("key"))
+                "openai": ModelCredential(
+                    provider_id="openai", api_key=SecretStr("key")
+                )
             },
         )
 
@@ -208,13 +207,19 @@ class TestModelTypes:
             id="test",
             name="Test Set",
             credentials={
-                "openai": ModelCredential(provider_id="openai", api_key=SecretStr("key1")),
-                "anthropic": ModelCredential(provider_id="anthropic", api_key=SecretStr("key2")),
+                "openai": ModelCredential(
+                    provider_id="openai", api_key=SecretStr("key1")
+                ),
+                "anthropic": ModelCredential(
+                    provider_id="anthropic", api_key=SecretStr("key2")
+                ),
             },
         )
 
         assert model_set.get_credential("openai").api_key.get_secret_value() == "key1"
-        assert model_set.get_credential("anthropic").api_key.get_secret_value() == "key2"
+        assert (
+            model_set.get_credential("anthropic").api_key.get_secret_value() == "key2"
+        )
 
     def test_create_openai_model_set(self):
         """Test creating OpenAI model set."""
@@ -248,24 +253,23 @@ class TestLLMClientIntegration:
     def test_structured_output_simple(self, llm_client):
         """Test structured output with simple model."""
         result = llm_client.completion(
-            messages=[
-                {"role": "user", "content": "What is 2+2? Be confident."}
-            ],
+            messages=[{"role": "user", "content": "What is 2+2? Be confident."}],
             response_model=SimpleResponse,
             max_tokens=100,
         )
 
         assert isinstance(result["response"], SimpleResponse)
-        assert "4" in result["response"].answer or "four" in result["response"].answer.lower()
+        assert (
+            "4" in result["response"].answer
+            or "four" in result["response"].answer.lower()
+        )
         assert 0 <= result["response"].confidence <= 1
         assert result["cost"] > 0
 
     def test_structured_output_list(self, llm_client):
         """Test structured output with list response."""
         result = llm_client.completion(
-            messages=[
-                {"role": "user", "content": "List exactly 3 primary colors."}
-            ],
+            messages=[{"role": "user", "content": "List exactly 3 primary colors."}],
             response_model=ListResponse,
             max_tokens=100,
         )

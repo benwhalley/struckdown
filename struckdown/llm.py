@@ -10,15 +10,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import instructor
 import litellm
-from instructor.core.hooks import HookName
 from instructor.core.exceptions import InstructorRetryException
+from instructor.core.hooks import HookName
 
 # Suppress instructor's hook error warnings (we intentionally raise to stop retries)
 warnings.filterwarnings(
     "ignore",
     message="Error in completion:error handler:",
     category=UserWarning,
-    module="instructor.core.hooks"
+    module="instructor.core.hooks",
 )
 
 # Suppress litellm's async cleanup warning -- their atexit handler doesn't properly handle
@@ -41,6 +41,7 @@ logging.getLogger("litellm").setLevel(logging.CRITICAL)
 # Module-level flag for API request logging
 _debug_api_requests = False
 
+
 def enable_api_debug():
     """Enable logging of full API requests (messages + tools schema)."""
     global _debug_api_requests
@@ -58,6 +59,7 @@ def _log_error_details(error: Exception, model_name: str, context: str = ""):
     if not _debug_api_requests:
         return
     import sys
+
     print("\n" + "=" * 80, file=sys.stderr)
     print(f"LLM ERROR DEBUG {context}", file=sys.stderr)
     print(f"Model: {model_name}", file=sys.stderr)
@@ -72,9 +74,9 @@ def _log_error_details(error: Exception, model_name: str, context: str = ""):
 
 
 import anyio
+import tenacity
 from box import Box
 from decouple import config as env_config
-import tenacity
 from litellm.exceptions import (APIConnectionError, APIError,
                                 APIResponseValidationError,
                                 AuthenticationError, BadGatewayError,
@@ -199,7 +201,11 @@ class EmbeddingResultList(list):
     @property
     def has_unknown_costs(self) -> bool:
         """True if any embedding has unknown (None) cost."""
-        return any(getattr(e, "cost", None) is None for e in self if not getattr(e, "cached", False))
+        return any(
+            getattr(e, "cost", None) is None
+            for e in self
+            if not getattr(e, "cached", False)
+        )
 
     @property
     def total_cost(self) -> Optional[float]:
@@ -228,26 +234,26 @@ class EmbeddingResultList(list):
         """Cost from fresh API calls only (excludes cached). None if any unknown."""
         if self.has_unknown_costs:
             return None
-        return sum(getattr(e, "cost", 0.0) or 0.0 for e in self if not getattr(e, "cached", False))
-from .embedding_cache import (
-    clear_embedding_cache,
-    get_cached_embeddings,
-    get_cached_pair_scores,
-    store_embeddings,
-    store_pair_scores,
-)
-from .errors import (
-    LLMError,
-    ContentFilterError,
-    RateLimitError as SDRateLimitError,
-    ContextWindowError,
-    AuthError,
-    BadRequestError as SDBadRequestError,
-    ConnectionError as SDConnectionError,
-)
+        return sum(
+            getattr(e, "cost", 0.0) or 0.0
+            for e in self
+            if not getattr(e, "cached", False)
+        )
 
 
-def _make_struckdown_error(litellm_error: Exception, prompt: str, model_name: str) -> LLMError:
+from .embedding_cache import (clear_embedding_cache, get_cached_embeddings,
+                              get_cached_pair_scores, store_embeddings,
+                              store_pair_scores)
+from .errors import AuthError
+from .errors import BadRequestError as SDBadRequestError
+from .errors import ConnectionError as SDConnectionError
+from .errors import ContentFilterError, ContextWindowError, LLMError
+from .errors import RateLimitError as SDRateLimitError
+
+
+def _make_struckdown_error(
+    litellm_error: Exception, prompt: str, model_name: str
+) -> LLMError:
     """Map a litellm exception to the appropriate struckdown error subclass."""
     error_type = type(litellm_error).__name__
 
@@ -268,18 +274,26 @@ def _make_struckdown_error(litellm_error: Exception, prompt: str, model_name: st
         return AuthError(litellm_error, prompt, model_name)
 
     # Connection errors
-    if isinstance(litellm_error, (APIConnectionError, ServiceUnavailableError, InternalServerError)):
+    if isinstance(
+        litellm_error,
+        (APIConnectionError, ServiceUnavailableError, InternalServerError),
+    ):
         return SDConnectionError(litellm_error, prompt, model_name)
 
     # Bad request errors
-    if isinstance(litellm_error, (BadRequestError, UnsupportedParamsError, APIResponseValidationError)):
+    if isinstance(
+        litellm_error,
+        (BadRequestError, UnsupportedParamsError, APIResponseValidationError),
+    ):
         return SDBadRequestError(litellm_error, prompt, model_name)
 
     # Default to base LLMError
     return LLMError(litellm_error, prompt, model_name)
 
 
-def _make_cached_error(error_class: str, error_msg: str, prompt: str, model_name: str) -> LLMError:
+def _make_cached_error(
+    error_class: str, error_msg: str, prompt: str, model_name: str
+) -> LLMError:
     """Create the appropriate error subclass for a cached error."""
     wrapped_error = Exception(error_msg)
 
@@ -297,6 +311,7 @@ def _make_cached_error(error_class: str, error_msg: str, prompt: str, model_name
 
     # Default to base LLMError
     return LLMError(wrapped_error, prompt, model_name)
+
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +370,7 @@ class LLMCredentials(BaseModel):
     )
     instructor_mode: Optional[str] = Field(
         default_factory=lambda: env_config("INSTRUCTOR_MODE", "json_schema"),
-        description="Instructor mode for structured outputs: 'json' or 'json_schema'. Set via INSTRUCTOR_MODE env var."
+        description="Instructor mode for structured outputs: 'json' or 'json_schema'. Set via INSTRUCTOR_MODE env var.",
     )
 
 
@@ -405,6 +420,7 @@ class LLM(BaseModel):
 
         # Attach debug hook if enabled
         if _debug_api_requests:
+
             def log_api_request(**kwargs):
                 """Log the full API request as JSON."""
                 import sys
@@ -473,7 +489,9 @@ def _call_llm_cached(
         )
     except CACHEABLE_ERRORS as e:
         # deterministic errors - cache them to avoid repeated failures
-        logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+        logger.debug(
+            f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
+        )
         _log_error_details(e, model_name, "(cacheable)")
         return _create_cached_error(e, model_name), None
     except FATAL_ERRORS as e:
@@ -498,7 +516,9 @@ def _call_llm_cached(
         # these may wrap cacheable errors - check before deciding
         _log_error_details(e, model_name, "(bad request / API error)")
         if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+            logger.debug(
+                f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
+            )
             return _create_cached_error(e, model_name), None
         logger.debug(f"Bad request error for model {model_name}: {e}")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
@@ -507,7 +527,9 @@ def _call_llm_cached(
         # instructor wraps LLM errors after retries; check if cacheable
         _log_error_details(e, model_name, "(instructor retry exhausted)")
         if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(f"Cacheable error for model {model_name} (will be cached): wrapped")
+            logger.debug(
+                f"Cacheable error for model {model_name} (will be cached): wrapped"
+            )
             return _create_cached_error(e, model_name), None
         logger.debug(f"LLM call failed after retries for model {model_name}: {e}")
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
@@ -516,7 +538,9 @@ def _call_llm_cached(
         # catch-all: check if this is a cacheable error in disguise
         _log_error_details(e, model_name, "(unknown)")
         if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}")
+            logger.debug(
+                f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
+            )
             return _create_cached_error(e, model_name), None
         full_traceback = traceback.format_exc()
         logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
@@ -608,7 +632,9 @@ def structured_chat(
     def _slow_call_warning(hint, cancel_event):
         if cancel_event.wait(SLOW_CALL_THRESHOLD):
             return  # call completed before threshold
-        logger.warning(f"LLM call still in progress after {SLOW_CALL_THRESHOLD}s...{hint}")
+        logger.warning(
+            f"LLM call still in progress after {SLOW_CALL_THRESHOLD}s...{hint}"
+        )
 
     cancel_event = threading.Event()
     warning_thread = threading.Thread(
@@ -686,10 +712,15 @@ def _get_best_device() -> str:
     Respects PYTORCH_MPS_DISABLE and CUDA_VISIBLE_DEVICES env vars.
     """
     import os
+
     import torch
 
     # Check if MPS is explicitly disabled (for forked processes on macOS)
-    mps_disabled = os.environ.get("PYTORCH_MPS_DISABLE", "").lower() in ("1", "true", "yes")
+    mps_disabled = os.environ.get("PYTORCH_MPS_DISABLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     if torch.cuda.is_available():
         return "cuda"
@@ -732,7 +763,9 @@ def _get_local_embedding(
     cache_key = (model_name, device)
     if cache_key not in _local_embedding_models:
         logger.info(f"Loading local embedding model: {model_name} on {device}")
-        _local_embedding_models[cache_key] = SentenceTransformer(model_name, device=device)
+        _local_embedding_models[cache_key] = SentenceTransformer(
+            model_name, device=device
+        )
 
     model = _local_embedding_models[cache_key]
     embeddings = model.encode(
@@ -774,7 +807,9 @@ async def _get_api_embedding_batch_async(
     Returns:
         Tuple of (embeddings, total_tokens, cost). cost is None if unknown.
     """
-    logger.debug(f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}")
+    logger.debug(
+        f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}"
+    )
     response = await litellm.aembedding(
         model=model_name,
         input=list(map(str, batch)),
@@ -863,7 +898,9 @@ async def _compute_embeddings_async(
             progress_callback(base_progress + len(batches[0]))
         return embeddings, tokens, cost
 
-    logger.debug(f"Computing {len(texts)} embeddings in {len(batches)} batches concurrently")
+    logger.debug(
+        f"Computing {len(texts)} embeddings in {len(batches)} batches concurrently"
+    )
 
     # track progress and costs across concurrent batches
     completed_count = 0
@@ -895,9 +932,9 @@ async def _compute_embeddings_async(
             return batch_idx, embeddings, tokens, cost
 
     # run all batches concurrently, semaphore limits concurrency
-    results = await asyncio.gather(*[
-        process_batch(idx, batch) for idx, batch in enumerate(batches)
-    ])
+    results = await asyncio.gather(
+        *[process_batch(idx, batch) for idx, batch in enumerate(batches)]
+    )
 
     # reassemble in original order
     results_ordered = sorted(results, key=lambda x: x[0])
@@ -908,9 +945,13 @@ async def _compute_embeddings_async(
     return all_embeddings, total_tokens, None if has_unknown_cost else total_cost
 
 
-DEFAULT_EMBEDDING_BATCH_SIZE = env_config("SD_EMBEDDING_BATCH_SIZE", default=100, cast=int)
+DEFAULT_EMBEDDING_BATCH_SIZE = env_config(
+    "SD_EMBEDDING_BATCH_SIZE", default=100, cast=int
+)
 # Maximum tokens per embedding batch (leave margin below 8192 for safety)
-MAX_EMBEDDING_TOKENS_PER_BATCH = env_config("SD_EMBEDDING_MAX_TOKENS", default=7000, cast=int)
+MAX_EMBEDDING_TOKENS_PER_BATCH = env_config(
+    "SD_EMBEDDING_MAX_TOKENS", default=7000, cast=int
+)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -1043,7 +1084,9 @@ async def get_embedding_async(
 
     # Compute missing embeddings
     missing_texts = [text for _, text in missing]
-    logger.debug(f"Computing {len(missing_texts)} missing embeddings ({n_cached} cached)")
+    logger.debug(
+        f"Computing {len(missing_texts)} missing embeddings ({n_cached} cached)"
+    )
 
     total_tokens = 0
     total_cost: Optional[float] = None
@@ -1051,7 +1094,9 @@ async def get_embedding_async(
     if is_local:
         local_model_name = model[6:]  # strip "local/"
         logger.debug(f"Using local embeddings: {local_model_name}")
-        missing_embeddings = _get_local_embedding(missing_texts, local_model_name, batch_size=batch_size)
+        missing_embeddings = _get_local_embedding(
+            missing_texts, local_model_name, batch_size=batch_size
+        )
         # Cache the computed local embeddings
         store_embeddings(missing_texts, missing_embeddings, model, dimensions)
         if progress_callback:
@@ -1248,7 +1293,9 @@ def get_cross_encoder_scores(
     # Score only missing pairs
     missing_pairs = [pair for _, pair in missing]
     n_cached = len(pairs) - len(missing)
-    logger.debug(f"Computing {len(missing_pairs)} missing pair scores ({n_cached} cached)")
+    logger.debug(
+        f"Computing {len(missing_pairs)} missing pair scores ({n_cached} cached)"
+    )
 
     missing_scores = encoder.predict(
         missing_pairs,

@@ -4,13 +4,8 @@ import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
-from struckdown import (
-    LLM,
-    ChatterResult,
-    SegmentResult,
-    chatter,
-    chatter_async,
-)
+from struckdown import (LLM, ChatterResult, SegmentResult, chatter,
+                        chatter_async)
 
 
 def _make_mock_chat(delay=0, fail_for_contexts=None):
@@ -208,7 +203,11 @@ def test_max_concurrent_limits_parallelism():
         await asyncio.sleep(0.05)
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
             result = await _chatter_single_async(
-                multipart_prompt, model=model, credentials=credentials, context=context, **kw
+                multipart_prompt,
+                model=model,
+                credentials=credentials,
+                context=context,
+                **kw,
             )
         timestamps[name]["end"] = time.monotonic()
         return result
@@ -216,7 +215,9 @@ def test_max_concurrent_limits_parallelism():
     contexts = [{"name": "first"}, {"name": "second"}, {"name": "third"}]
 
     async def run():
-        with patch("struckdown._chatter_single_async", side_effect=recording_chatter_async):
+        with patch(
+            "struckdown._chatter_single_async", side_effect=recording_chatter_async
+        ):
             return await chatter_async(
                 "greet {{name}} [[reply]]",
                 contexts,
@@ -256,7 +257,12 @@ def test_kwargs_forwarded_to_internal_processor():
     received_kwargs = {}
 
     async def spy_chatter_async(
-        multipart_prompt, context, model=None, credentials=None, extra_kwargs=None, **kwargs
+        multipart_prompt,
+        context,
+        model=None,
+        credentials=None,
+        extra_kwargs=None,
+        **kwargs,
     ):
         received_kwargs["multipart_prompt"] = multipart_prompt
         received_kwargs["context"] = context

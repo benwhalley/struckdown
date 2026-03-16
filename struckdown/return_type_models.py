@@ -1,17 +1,7 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
-from typing import (
-    Any,
-    ClassVar,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Type,
-    Union,
-    get_args,
-    get_origin,
-)
+from typing import (Any, ClassVar, Dict, List, Literal, Optional, Type, Union,
+                    get_args, get_origin)
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -469,7 +459,9 @@ def default_response_model(options=None, quantifier=None, required_prefix=False)
         return model
     else:
         # Single item mode
-        base_desc = "An intelligent completion that responds to the context in a concise manner"
+        base_desc = (
+            "An intelligent completion that responds to the context in a concise manner"
+        )
 
         if is_required:
             if string_field_kwargs:
@@ -582,14 +574,18 @@ def _build_numeric_response_model(
         else:
             quant_desc = f"between {min_items} and {max_items}"
 
-        description = list_desc.format(quant_desc=quant_desc, constraint_desc=constraint_desc)
+        description = list_desc.format(
+            quant_desc=quant_desc, constraint_desc=constraint_desc
+        )
 
         model = create_model(
             f"Multi{model_name}",
             __base__=ResponseModel,
             response=(
                 List[value_type],
-                Field(default_factory=list, description=description, **list_field_kwargs),
+                Field(
+                    default_factory=list, description=description, **list_field_kwargs
+                ),
             ),
             __module__=__name__,
         )
@@ -608,7 +604,10 @@ def _build_numeric_response_model(
         model = create_model(
             model_name,
             __base__=ResponseModel,
-            response=(response_type, Field(default, description=description, **field_kwargs)),
+            response=(
+                response_type,
+                Field(default, description=description, **field_kwargs),
+            ),
             __module__=__name__,
         )
         model.llm_config = LLMConfig(temperature=temperature, model=None)

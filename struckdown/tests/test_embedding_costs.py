@@ -2,8 +2,9 @@
 Tests for embedding cost tracking functionality.
 """
 
-import numpy as np
 import pickle
+
+import numpy as np
 import pytest
 
 from struckdown.llm import EmbeddingResult, EmbeddingResultList
@@ -14,7 +15,9 @@ class TestEmbeddingResult:
 
     def test_creates_array_with_metadata(self):
         """EmbeddingResult should store cost metadata."""
-        emb = EmbeddingResult([0.1, 0.2, 0.3], cost=0.001, tokens=5, model="test-model", cached=False)
+        emb = EmbeddingResult(
+            [0.1, 0.2, 0.3], cost=0.001, tokens=5, model="test-model", cached=False
+        )
 
         assert emb.cost == 0.001
         assert emb.tokens == 5
@@ -23,8 +26,12 @@ class TestEmbeddingResult:
 
     def test_behaves_like_ndarray(self):
         """EmbeddingResult should support numpy operations."""
-        emb1 = EmbeddingResult([1.0, 0.0, 0.0], cost=0.001, tokens=3, model="test", cached=False)
-        emb2 = EmbeddingResult([0.0, 1.0, 0.0], cost=0.001, tokens=3, model="test", cached=False)
+        emb1 = EmbeddingResult(
+            [1.0, 0.0, 0.0], cost=0.001, tokens=3, model="test", cached=False
+        )
+        emb2 = EmbeddingResult(
+            [0.0, 1.0, 0.0], cost=0.001, tokens=3, model="test", cached=False
+        )
 
         # dot product
         dot = np.dot(emb1, emb2)
@@ -38,7 +45,9 @@ class TestEmbeddingResult:
 
     def test_array_operations_preserve_type(self):
         """Operations should preserve EmbeddingResult type where sensible."""
-        emb = EmbeddingResult([1.0, 2.0, 3.0], cost=0.001, tokens=3, model="test", cached=False)
+        emb = EmbeddingResult(
+            [1.0, 2.0, 3.0], cost=0.001, tokens=3, model="test", cached=False
+        )
 
         # slicing preserves type
         sliced = emb[:2]
@@ -55,7 +64,9 @@ class TestEmbeddingResult:
 
     def test_none_cost_for_unknown(self):
         """Cost should be None when unknown, not 0."""
-        emb = EmbeddingResult([0.1, 0.2], cost=None, tokens=5, model="test", cached=False)
+        emb = EmbeddingResult(
+            [0.1, 0.2], cost=None, tokens=5, model="test", cached=False
+        )
         assert emb.cost is None
 
     def test_cached_embedding_has_zero_cost(self):
@@ -67,7 +78,9 @@ class TestEmbeddingResult:
 
     def test_pickle_roundtrip(self):
         """EmbeddingResult should pickle correctly with metadata."""
-        emb = EmbeddingResult([0.1, 0.2, 0.3], cost=0.002, tokens=10, model="test-model", cached=True)
+        emb = EmbeddingResult(
+            [0.1, 0.2, 0.3], cost=0.002, tokens=10, model="test-model", cached=True
+        )
 
         pickled = pickle.dumps(emb)
         restored = pickle.loads(pickled)
@@ -165,8 +178,12 @@ class TestBackwardsCompatibility:
 
     def test_iteration_still_works(self):
         """Iterating over results should still yield arrays."""
-        emb1 = EmbeddingResult([0.1, 0.2], cost=0.001, tokens=5, model="test", cached=False)
-        emb2 = EmbeddingResult([0.3, 0.4], cost=0.001, tokens=5, model="test", cached=False)
+        emb1 = EmbeddingResult(
+            [0.1, 0.2], cost=0.001, tokens=5, model="test", cached=False
+        )
+        emb2 = EmbeddingResult(
+            [0.3, 0.4], cost=0.001, tokens=5, model="test", cached=False
+        )
         results = EmbeddingResultList([emb1, emb2], model="test")
 
         # this pattern should still work
@@ -176,7 +193,9 @@ class TestBackwardsCompatibility:
 
     def test_indexing_returns_array(self):
         """Indexing should return usable arrays."""
-        emb = EmbeddingResult([0.1, 0.2, 0.3], cost=0.001, tokens=5, model="test", cached=False)
+        emb = EmbeddingResult(
+            [0.1, 0.2, 0.3], cost=0.001, tokens=5, model="test", cached=False
+        )
         results = EmbeddingResultList([emb], model="test")
 
         # direct use as array
@@ -185,8 +204,12 @@ class TestBackwardsCompatibility:
 
     def test_numpy_operations_on_list_items(self):
         """Items should work with numpy functions."""
-        emb1 = EmbeddingResult([1.0, 0.0], cost=0.001, tokens=5, model="test", cached=False)
-        emb2 = EmbeddingResult([0.0, 1.0], cost=0.001, tokens=5, model="test", cached=False)
+        emb1 = EmbeddingResult(
+            [1.0, 0.0], cost=0.001, tokens=5, model="test", cached=False
+        )
+        emb2 = EmbeddingResult(
+            [0.0, 1.0], cost=0.001, tokens=5, model="test", cached=False
+        )
         results = EmbeddingResultList([emb1, emb2], model="test")
 
         # stack into matrix

@@ -6,16 +6,15 @@ LLMClient integrates with instructor for structured outputs.
 """
 
 import logging
-from typing import List, Dict, Optional, Any, Type, TypeVar
 from decimal import Decimal
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
-import litellm
 import instructor
+import litellm
 from instructor.core.hooks import HookName
 from pydantic import BaseModel
 
-from .types import LLMSpec, EmbeddingModelSpec, ModelCredential, ModelSet
-
+from .types import EmbeddingModelSpec, LLMSpec, ModelCredential, ModelSet
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +79,15 @@ class LLMClient:
                 max_chars = 2000
                 for msg in kwargs.get("messages", []):
                     content = msg.get("content", "")
-                    if "validation error" in content.lower() and len(content) > max_chars:
+                    if (
+                        "validation error" in content.lower()
+                        and len(content) > max_chars
+                    ):
                         msg["content"] = content[:max_chars] + "\n\n... (truncated)"
 
-            self._instructor_client.on(HookName.COMPLETION_KWARGS, truncate_validation_errors)
+            self._instructor_client.on(
+                HookName.COMPLETION_KWARGS, truncate_validation_errors
+            )
 
         return self._instructor_client
 
@@ -167,7 +171,9 @@ class LLMClient:
         if response_model:
             # Use instructor for structured output
             # Note: instructor's from_litellm with async needs acompletion
-            client = instructor.from_litellm(litellm.acompletion, mode=instructor.Mode.JSON)
+            client = instructor.from_litellm(
+                litellm.acompletion, mode=instructor.Mode.JSON
+            )
             response, completion = await client.chat.completions.create_with_completion(
                 messages=messages,
                 response_model=response_model,
@@ -202,8 +208,12 @@ class LLMClient:
         """Fallback cost estimation using spec pricing."""
         try:
             usage = completion.usage
-            input_cost = (usage.prompt_tokens / 1000) * float(self.spec.input_cost_per_1k)
-            output_cost = (usage.completion_tokens / 1000) * float(self.spec.output_cost_per_1k)
+            input_cost = (usage.prompt_tokens / 1000) * float(
+                self.spec.input_cost_per_1k
+            )
+            output_cost = (usage.completion_tokens / 1000) * float(
+                self.spec.output_cost_per_1k
+            )
             return input_cost + output_cost
         except Exception:
             return 0.0

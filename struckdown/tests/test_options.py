@@ -125,7 +125,6 @@ class TestParseOptions:
         opts = parse_options(["", "  ", "valid"])
         assert opts.positional == ["valid"]
 
-
     def test_pattern_option(self):
         """Test pattern/regex option parsing."""
         opts = parse_options(["pattern=\\d{3}-\\d{4}"])

@@ -59,7 +59,9 @@ class TestPatternValidation:
 
     def test_pattern_combined_with_length(self):
         """Test pattern combined with length constraints."""
-        model = default_response_model(["pattern=\\w+", "min_length=3", "max_length=10"])
+        model = default_response_model(
+            ["pattern=\\w+", "min_length=3", "max_length=10"]
+        )
 
         # Valid: matches pattern and length
         instance = model(response="hello")

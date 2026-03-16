@@ -2,7 +2,6 @@
 
 from typing import Any, Dict, List, Optional
 
-
 # --- Marker classes ---
 
 
@@ -40,7 +39,6 @@ class Safe:
             return hash(self.content)
         except TypeError:
             return hash(id(self))
-
 
 
 class TemplateError(Exception):
@@ -154,7 +152,6 @@ class ConnectionError(LLMError):
     """Network or API connection errors."""
 
     pass
-
 
 
 class FetchError(Exception):
