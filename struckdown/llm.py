@@ -48,6 +48,24 @@ def enable_api_debug():
     _debug_api_requests = True
 
 
+def _strip_null_bytes(obj):
+    """Recursively strip null bytes from LLM responses.
+
+    PostgreSQL cannot store \\x00 in text/JSON columns, and LLMs occasionally
+    produce these in their output.
+    """
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    elif isinstance(obj, dict):
+        return {_strip_null_bytes(k): _strip_null_bytes(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_strip_null_bytes(i) for i in obj]
+    elif isinstance(obj, tuple):
+        return tuple(_strip_null_bytes(i) for i in obj)
+    else:
+        return obj
+
+
 def disable_api_debug():
     """Disable API request logging."""
     global _debug_api_requests
@@ -567,7 +585,7 @@ def _call_llm_cached(
     _cache_miss_marker.set(True)
     # store the actual messages sent to the API
     com_dict["_request_messages"] = messages
-    return res.model_dump(), com_dict
+    return _strip_null_bytes(res.model_dump()), com_dict
 
 
 def structured_chat(
