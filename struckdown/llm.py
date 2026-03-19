@@ -327,6 +327,9 @@ _llm_semaphore = None
 MAX_EMBEDDING_CONCURRENCY = env_config("SD_EMBEDDING_CONCURRENCY", default=3, cast=int)
 _embedding_semaphore = None
 
+# Embedding API timeout - increased from 60s to handle large batches under load
+EMBEDDING_TIMEOUT = env_config("SD_EMBEDDING_TIMEOUT", default=120, cast=int)
+
 
 def get_llm_semaphore() -> anyio.Semaphore:
     """Get the shared LLM concurrency semaphore (lazy initialization)."""
@@ -784,11 +787,11 @@ def _is_transient_error(exception: BaseException) -> bool:
 
 @tenacity.retry(
     retry=tenacity.retry_if_exception(_is_transient_error),
-    wait=tenacity.wait_exponential(multiplier=1, min=1, max=60),
-    stop=tenacity.stop_after_attempt(5),
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=120),
+    stop=tenacity.stop_after_attempt(7),
     before_sleep=lambda retry_state: logger.info(
         f"Embedding API error ({type(retry_state.outcome.exception()).__name__}), "
-        f"retrying in {retry_state.next_action.sleep:.1f}s (attempt {retry_state.attempt_number}/5)"
+        f"retrying in {retry_state.next_action.sleep:.1f}s (attempt {retry_state.attempt_number}/7)"
     ),
     reraise=True,
 )
@@ -798,7 +801,7 @@ async def _get_api_embedding_batch_async(
     dimensions: Optional[int],
     api_key: str,
     base_url: Optional[str],
-    timeout: int = 60,
+    timeout: int = EMBEDDING_TIMEOUT,
 ) -> Tuple[List[List[float]], int, Optional[float]]:
     """Get embeddings for a single batch via async API call.
 
