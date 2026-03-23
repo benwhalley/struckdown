@@ -258,10 +258,50 @@ class EmbeddingResultList(list):
             if not getattr(e, "cached", False)
         )
 
+    @property
+    def cached_tokens(self) -> int:
+        """Total tokens from cached embeddings (what they cost when originally computed)."""
+        return sum(
+            getattr(e, "tokens", 0)
+            for e in self
+            if getattr(e, "cached", False)
+        )
 
-from .embedding_cache import (clear_embedding_cache, get_cached_embeddings,
-                              get_cached_pair_scores, store_embeddings,
-                              store_pair_scores)
+    @property
+    def cached_cost_estimate(self) -> float:
+        """Estimated cost for cached embeddings (what they would have cost if not cached)."""
+        return sum(
+            getattr(e, "cost", 0.0) or 0.0
+            for e in self
+            if getattr(e, "cached", False)
+        )
+
+    @property
+    def total_cost_estimate(self) -> Optional[float]:
+        """Total estimated cost (fresh + cached estimates).
+
+        Returns None if fresh costs are unknown, otherwise returns
+        fresh_cost + cached_cost_estimate.
+        """
+        fresh = self.fresh_cost
+        if fresh is None:
+            return None
+        return fresh + self.cached_cost_estimate
+
+    def __repr__(self) -> str:
+        fresh = self.fresh_cost
+        cached = self.cached_cost_estimate
+        return (
+            f"EmbeddingResultList({len(self)} embeddings, "
+            f"fresh=${fresh or 0:.4f}, "
+            f"cached_estimate=${cached:.4f}, "
+            f"cache_hits={self.cached_count})"
+        )
+
+
+from .embedding_cache import (CachedEmbedding, clear_embedding_cache,
+                              get_cached_embeddings, get_cached_pair_scores,
+                              store_embeddings, store_pair_scores)
 from .errors import AuthError
 from .errors import BadRequestError as SDBadRequestError
 from .errors import ConnectionError as SDConnectionError
@@ -913,8 +953,15 @@ async def _compute_embeddings_async(
         embeddings, tokens, cost = await _get_api_embedding_batch_async(
             batches[0], model_name, dimensions, api_key, base_url
         )
-        # cache immediately
-        store_embeddings(batches[0], embeddings, model_name, dimensions)
+        # cache with per-embedding cost metadata
+        n_emb = len(embeddings)
+        per_emb_tokens = [tokens // n_emb] * n_emb if n_emb > 0 else []
+        per_emb_cost = [cost / n_emb] * n_emb if cost is not None and n_emb > 0 else None
+        store_embeddings(
+            batches[0], embeddings, model_name, dimensions,
+            tokens_per_embedding=per_emb_tokens,
+            costs_per_embedding=per_emb_cost,
+        )
         if progress_callback:
             progress_callback(base_progress + len(batches[0]))
         return embeddings, tokens, cost
@@ -939,8 +986,17 @@ async def _compute_embeddings_async(
             embeddings, tokens, cost = await _get_api_embedding_batch_async(
                 batch, model_name, dimensions, api_key, base_url
             )
-            # cache this batch immediately so partial progress is preserved
-            store_embeddings(batch, embeddings, model_name, dimensions)
+            # cache this batch immediately with per-embedding cost metadata
+            n_emb = len(embeddings)
+            per_emb_tokens = [tokens // n_emb] * n_emb if n_emb > 0 else []
+            per_emb_cost = (
+                [cost / n_emb] * n_emb if cost is not None and n_emb > 0 else None
+            )
+            store_embeddings(
+                batch, embeddings, model_name, dimensions,
+                tokens_per_embedding=per_emb_tokens,
+                costs_per_embedding=per_emb_cost,
+            )
             async with progress_lock:
                 completed_count += len(batch)
                 total_tokens += tokens
@@ -1091,9 +1147,15 @@ async def get_embedding_async(
         logger.debug(f"All {len(texts)} embeddings found in cache")
         if progress_callback:
             progress_callback(len(texts))
-        # all cached = zero cost
+        # use stored cost metadata from cache (what it would have cost)
         results = [
-            EmbeddingResult(cached[i], cost=0.0, tokens=0, model=model, cached=True)
+            EmbeddingResult(
+                cached[i].embedding,
+                cost=cached[i].cost,
+                tokens=cached[i].tokens,
+                model=model,
+                cached=True,
+            )
             for i in range(len(texts))
         ]
         return EmbeddingResultList(results, model=model)
@@ -1146,29 +1208,34 @@ async def get_embedding_async(
         )
         # Note: API embeddings are cached incrementally in _compute_embeddings_async
 
-    # Merge cached and computed embeddings in original order
-    for (idx, _), emb in zip(missing, missing_embeddings):
-        cached[idx] = emb
-
     # Calculate per-embedding cost (distribute evenly among fresh embeddings)
     n_fresh = len(missing)
     if total_cost is None:
-        per_embedding_cost = None
+        per_embedding_cost = 0.0
     elif n_fresh > 0:
         per_embedding_cost = total_cost / n_fresh
     else:
         per_embedding_cost = 0.0
     per_embedding_tokens = total_tokens // n_fresh if n_fresh > 0 else 0
 
+    # Merge fresh embeddings into cached dict as CachedEmbedding objects
+    for (idx, _), emb in zip(missing, missing_embeddings):
+        cached[idx] = CachedEmbedding(
+            embedding=emb,
+            tokens=per_embedding_tokens,
+            cost=per_embedding_cost,
+        )
+
     # Build result list with cost metadata
     results = []
     for i in range(len(texts)):
         is_cached = i in cached_indices
+        entry = cached[i]
         results.append(
             EmbeddingResult(
-                cached[i],
-                cost=0.0 if is_cached else per_embedding_cost,
-                tokens=0 if is_cached else per_embedding_tokens,
+                entry.embedding,
+                cost=entry.cost,
+                tokens=entry.tokens,
                 model=model,
                 cached=is_cached,
             )

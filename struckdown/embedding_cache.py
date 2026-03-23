@@ -67,11 +67,24 @@ def _make_cache_key(text: str, model: str, dimensions: Optional[int]) -> str:
     return f"{model}:{dims_str}:{text_hash}"
 
 
+class CachedEmbedding:
+    """Embedding data retrieved from cache with cost metadata."""
+
+    __slots__ = ("embedding", "tokens", "cost")
+
+    def __init__(
+        self, embedding: List[float], tokens: int = 0, cost: float = 0.0
+    ) -> None:
+        self.embedding = embedding
+        self.tokens = tokens
+        self.cost = cost
+
+
 def get_cached_embeddings(
     texts: List[str],
     model: str,
     dimensions: Optional[int],
-) -> Tuple[Dict[int, List[float]], List[Tuple[int, str]]]:
+) -> Tuple[Dict[int, CachedEmbedding], List[Tuple[int, str]]]:
     """
     Check cache for existing embeddings.
 
@@ -82,12 +95,12 @@ def get_cached_embeddings(
 
     Returns:
         Tuple of:
-        - cached: Dict mapping index -> embedding for texts found in cache
+        - cached: Dict mapping index -> CachedEmbedding (with embedding, tokens, cost)
         - missing: List of (index, text) tuples for texts not in cache
     """
     cache = _get_embedding_cache()
 
-    cached: Dict[int, List[float]] = {}
+    cached: Dict[int, CachedEmbedding] = {}
     missing: List[Tuple[int, str]] = []
 
     if cache is None:
@@ -96,10 +109,19 @@ def get_cached_embeddings(
 
     for idx, text in enumerate(texts):
         key = _make_cache_key(text, model, dimensions)
-        embedding = cache.get(key)
+        entry = cache.get(key)
 
-        if embedding is not None:
-            cached[idx] = embedding
+        if entry is not None:
+            # handle both old format (just embedding) and new format (dict with metadata)
+            if isinstance(entry, dict) and "embedding" in entry:
+                cached[idx] = CachedEmbedding(
+                    embedding=entry["embedding"],
+                    tokens=entry.get("tokens", 0),
+                    cost=entry.get("cost", 0.0),
+                )
+            else:
+                # backwards compat: old cache format was just the embedding vector
+                cached[idx] = CachedEmbedding(embedding=entry, tokens=0, cost=0.0)
         else:
             missing.append((idx, text))
 
@@ -114,24 +136,36 @@ def store_embeddings(
     embeddings: List[List[float]],
     model: str,
     dimensions: Optional[int],
+    tokens_per_embedding: Optional[List[int]] = None,
+    costs_per_embedding: Optional[List[float]] = None,
 ) -> None:
     """
-    Store embeddings in cache.
+    Store embeddings in cache with cost metadata.
 
     Args:
         texts: List of texts that were embedded
         embeddings: Corresponding embedding vectors
         model: Model name used
         dimensions: Embedding dimensions (or None)
+        tokens_per_embedding: Token count for each embedding (for cost estimation)
+        costs_per_embedding: Cost for each embedding (for cost estimation)
     """
     cache = _get_embedding_cache()
 
     if cache is None:
         return
 
-    for text, embedding in zip(texts, embeddings):
+    # default to zeros if not provided
+    if tokens_per_embedding is None:
+        tokens_per_embedding = [0] * len(texts)
+    if costs_per_embedding is None:
+        costs_per_embedding = [0.0] * len(texts)
+
+    for text, embedding, tokens, cost in zip(
+        texts, embeddings, tokens_per_embedding, costs_per_embedding
+    ):
         key = _make_cache_key(text, model, dimensions)
-        cache.set(key, embedding)
+        cache.set(key, {"embedding": embedding, "tokens": tokens, "cost": cost})
 
     logger.debug(f"Stored {len(texts)} embeddings in cache")
 

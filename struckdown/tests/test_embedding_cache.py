@@ -83,7 +83,7 @@ class TestCacheStoreRetrieve:
 
         assert len(cached) == 1
         assert len(missing) == 0
-        assert cached[0] == embeddings[0]
+        assert cached[0].embedding == embeddings[0]
 
     def test_store_and_retrieve_multiple(self, temp_cache_dir):
         """Store and retrieve multiple embeddings."""
@@ -96,7 +96,7 @@ class TestCacheStoreRetrieve:
         assert len(cached) == 3
         assert len(missing) == 0
         for i in range(3):
-            assert cached[i] == embeddings[i]
+            assert cached[i].embedding == embeddings[i]
 
     def test_partial_cache_hit(self, temp_cache_dir):
         """Test that partial cache hits work correctly."""
@@ -111,7 +111,7 @@ class TestCacheStoreRetrieve:
 
         assert len(cached) == 1  # "world" is cached
         assert 0 in cached  # "world" is at index 0 in texts2
-        assert cached[0] == [0.3, 0.4]
+        assert cached[0].embedding == [0.3, 0.4]
         assert len(missing) == 1
         assert missing[0] == (1, "new")  # "new" is missing
 
@@ -125,6 +125,43 @@ class TestCacheStoreRetrieve:
 
         assert len(cached) == 0
         assert len(missing) == 1
+
+    def test_store_and_retrieve_with_cost_metadata(self, temp_cache_dir):
+        """Store and retrieve embeddings with cost metadata."""
+        texts = ["hello", "world"]
+        embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        tokens = [10, 15]
+        costs = [0.001, 0.0015]
+
+        store_embeddings(
+            texts, embeddings, "test-model", 2,
+            tokens_per_embedding=tokens,
+            costs_per_embedding=costs,
+        )
+        cached, missing = get_cached_embeddings(texts, "test-model", 2)
+
+        assert len(cached) == 2
+        assert len(missing) == 0
+        assert cached[0].embedding == embeddings[0]
+        assert cached[0].tokens == 10
+        assert cached[0].cost == 0.001
+        assert cached[1].embedding == embeddings[1]
+        assert cached[1].tokens == 15
+        assert cached[1].cost == 0.0015
+
+    def test_backwards_compat_old_cache_format(self, temp_cache_dir):
+        """Old cache format (just embedding) should work with defaults."""
+        # simulate old cache by storing without metadata
+        texts = ["hello"]
+        embeddings = [[0.1, 0.2]]
+
+        store_embeddings(texts, embeddings, "test-model", 2)
+        cached, _ = get_cached_embeddings(texts, "test-model", 2)
+
+        # should have embedding but zero tokens/cost (no metadata stored)
+        assert cached[0].embedding == embeddings[0]
+        assert cached[0].tokens == 0
+        assert cached[0].cost == 0.0
 
 
 class TestCacheDisabled:
