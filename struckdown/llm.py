@@ -410,6 +410,12 @@ def get_embedding_semaphore() -> anyio.Semaphore:
     return _embedding_semaphore
 
 
+def set_llm_concurrency(n: int) -> None:
+    """Set the maximum concurrency for LLM calls. Replaces the semaphore."""
+    global _llm_semaphore
+    _llm_semaphore = anyio.Semaphore(n)
+
+
 # ANSI colour codes for terminal output
 class LC:
     RED = "\033[91m"

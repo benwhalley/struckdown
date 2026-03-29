@@ -60,7 +60,8 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   LLMCredentials, ProgressCallback, _call_llm_cached,
                   disable_api_debug, enable_api_debug,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
-                  get_embedding_semaphore, get_llm_semaphore, structured_chat)
+                  get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
+                  structured_chat)
 from .parsing import (_add_default_completion_if_needed,
                       extract_slot_variable_refs, parser, parser_with_state,
                       resolve_includes, split_by_checkpoint)
