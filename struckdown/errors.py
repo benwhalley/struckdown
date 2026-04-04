@@ -79,6 +79,8 @@ class LLMError(Exception):
     to help consumers make informed decisions about error handling.
     """
 
+    is_retryable: bool = False
+
     def __init__(self, original_error: Exception, prompt: str, model_name: str):
         self.original_error = original_error
         self.prompt = prompt
@@ -94,6 +96,8 @@ class LLMError(Exception):
 
 class ContentFilterError(LLMError):
     """Content policy violation (Azure, OpenAI safety filters)."""
+
+    is_retryable = False
 
     def _get_filter_result(self) -> Optional[Dict]:
         """Extract content_filter_result from original error (Azure/OpenAI format)."""
@@ -127,31 +131,31 @@ class ContentFilterError(LLMError):
 class RateLimitError(LLMError):
     """Rate limit exceeded."""
 
-    pass
+    is_retryable = True
 
 
 class ContextWindowError(LLMError):
     """Context window exceeded."""
 
-    pass
+    is_retryable = False
 
 
 class AuthError(LLMError):
     """Authentication or permission errors."""
 
-    pass
+    is_retryable = False
 
 
 class BadRequestError(LLMError):
     """Invalid request parameters."""
 
-    pass
+    is_retryable = False
 
 
 class ConnectionError(LLMError):
     """Network or API connection errors."""
 
-    pass
+    is_retryable = True
 
 
 class FetchError(Exception):

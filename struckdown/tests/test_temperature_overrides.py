@@ -167,5 +167,77 @@ class BackwardCompatibilityTestCase(unittest.TestCase):
         self.assertEqual(option_values, ["a", "b", "c"])
 
 
+class ThinkingParameterTestCase(unittest.TestCase):
+    """Test thinking parameter parsing and validation."""
+
+    def test_thinking_high(self):
+        """[[think:x|thinking=high]] parses thinking into llm_kwargs"""
+        template = "Reason: [[think:x|thinking=high]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "high"})
+
+    def test_thinking_low(self):
+        template = "Reason: [[think:x|thinking=low]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "low"})
+
+    def test_thinking_off(self):
+        template = "Quick: [[respond:x|thinking=off]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "off"})
+
+    def test_thinking_xhigh(self):
+        template = "Deep: [[think:x|thinking=xhigh]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "xhigh"})
+
+    def test_thinking_minimal(self):
+        template = "Light: [[think:x|thinking=minimal]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "minimal"})
+
+    def test_thinking_medium(self):
+        template = "Mid: [[think:x|thinking=medium]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "medium"})
+
+    def test_thinking_invalid_raises(self):
+        """Invalid thinking level should raise ValueError"""
+        template = "Bad: [[think:x|thinking=turbo]]"
+        with self.assertRaises(ValueError) as ctx:
+            parse_syntax(template)
+        self.assertIn("thinking must be one of", str(ctx.exception))
+
+    def test_thinking_with_temperature(self):
+        """thinking and temperature can be combined"""
+        template = "Combo: [[think:x|thinking=high,temperature=0.3]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(prompt_part.llm_kwargs, {"thinking": "high", "temperature": 0.3})
+
+    def test_thinking_with_model_and_seed(self):
+        """thinking, model, and seed can all be combined"""
+        template = 'Full: [[think:x|thinking=high,model="gpt-5",seed=42]]'
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertEqual(
+            prompt_part.llm_kwargs,
+            {"thinking": "high", "model": "gpt-5", "seed": 42},
+        )
+
+    def test_no_thinking_means_empty_kwargs(self):
+        """Omitting thinking should not add it to llm_kwargs"""
+        template = "Plain: [[think:x]]"
+        sections = parse_syntax(template)
+        prompt_part = list(sections[0].values())[0]
+        self.assertNotIn("thinking", prompt_part.llm_kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()

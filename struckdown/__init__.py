@@ -45,7 +45,8 @@ from .errors import (AuthError, BadRequestError, ConnectionError,
 from .execution import SegmentDependencyGraph, merge_contexts
 # Re-export from incremental module
 from .incremental import (CheckpointReached, IncrementalEvent,
-                          ProcessingComplete, ProcessingError, SlotCompleted)
+                          ProcessingComplete, ProcessingError, SlotCompleted,
+                          SlotStreamStart, TokenDelta)
 # Import internal modules for chatter implementation
 from .jinja_analysis import TemplateAnalysis, analyze_template
 # Re-export from jinja_utils module
@@ -61,7 +62,7 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   disable_api_debug, enable_api_debug,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
                   get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
-                  structured_chat)
+                  structured_chat, structured_chat_async)
 from .parsing import (_add_default_completion_if_needed,
                       extract_slot_variable_refs, parser, parser_with_state,
                       resolve_includes, split_by_checkpoint)
@@ -69,7 +70,8 @@ from .response_types import ResponseTypes
 # Re-export from results module
 from .results import (ChatterResult, CostSummary, SegmentResult,
                       StruckdownEarlyTermination, progress_tracking)
-from .return_type_models import ACTION_LOOKUP, LLMConfig
+from .return_type_models import (ACTION_LOOKUP, LLMConfig, SlotCategory,
+                                THINKING_LEVELS, classify_slot)
 from .segment_processor import (process_segment_with_delta,
                                 process_segment_with_delta_incremental)
 from .validation import (ParsedOptions, parse_options,
@@ -85,6 +87,7 @@ async def _chatter_single_async(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
+    strict_params: bool = False,
 ) -> ChatterResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
@@ -236,6 +239,7 @@ async def _chatter_single_async(
             global_system_messages=local_globals,
             global_header_messages=local_header_globals,
             strict_undefined=strict_undefined,
+            strict_params=strict_params,
             **(extra_kwargs or {}),
         )
         return seg_idx, result, data["system_template"], data["header_template"]
@@ -351,6 +355,7 @@ async def chatter_async(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
+    strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
 ) -> Union[ChatterResult, List[ChatterResult]]:
@@ -405,6 +410,7 @@ async def chatter_async(
                                 template_path=template_path,
                                 include_paths=include_paths,
                                 strict_undefined=strict_undefined,
+                                strict_params=strict_params,
                             )
                             results[index] = result
                             if on_complete:
@@ -429,6 +435,7 @@ async def chatter_async(
             template_path=template_path,
             include_paths=include_paths,
             strict_undefined=strict_undefined,
+            strict_params=strict_params,
         )
 
 
@@ -442,6 +449,7 @@ def chatter(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
+    strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
 ) -> Union[ChatterResult, List[ChatterResult]]:
@@ -457,6 +465,7 @@ def chatter(
             template_path=template_path,
             include_paths=include_paths,
             strict_undefined=strict_undefined,
+            strict_params=strict_params,
             max_concurrent=max_concurrent,
             on_complete=on_complete,
         )
@@ -472,6 +481,8 @@ async def chatter_incremental_async(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
+    stream: bool = True,
+    strict_params: bool = False,
 ) -> AsyncGenerator[IncrementalEvent, None]:
     """
     Process a struckdown template, yielding events as slots complete.
@@ -666,6 +677,7 @@ async def chatter_incremental_async(
             global_header_messages=local_header_globals,
             segment_index=seg_idx,
             strict_undefined=strict_undefined,
+            strict_params=strict_params,
             **(extra_kwargs or {}),
         ):
             events.append(event)
@@ -708,27 +720,83 @@ async def chatter_incremental_async(
                     )
                     batch_header_globals.append(rendered)
 
-            # Launch all segment tasks in parallel with batch-accumulated globals
-            tasks = [
-                process_segment_collect_events(
-                    seg_idx,
-                    accumulated_context,
-                    batch_globals,
-                    batch_header_globals,
-                )
-                for seg_idx in batch
-            ]
+            if len(batch) == 1 and stream:
+                # single-segment batch: yield events directly for real-time
+                # streaming (don't buffer into a list)
+                seg_idx = batch[0]
+                data = segment_data[seg_idx]
+                local_globals = batch_globals.copy()
+                local_header_globals = batch_header_globals.copy()
+                if data["system_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined,
+                        finalize=struckdown_finalize,
+                    )
+                    rendered = env.from_string(
+                        data["system_template"]
+                    ).render(**accumulated_context)
+                    local_globals.append(rendered)
+                if data["header_template"]:
+                    env = ImmutableSandboxedEnvironment(
+                        undefined=SilentUndefined,
+                        finalize=struckdown_finalize,
+                    )
+                    rendered = env.from_string(
+                        data["header_template"]
+                    ).render(**accumulated_context)
+                    local_header_globals.append(rendered)
 
-            # Wait for all tasks to complete
-            results = await asyncio.gather(*tasks)
+                slot_events = []
+                async for event in process_segment_with_delta_incremental(
+                    data["body_template"],
+                    accumulated_context.copy(),
+                    model,
+                    credentials,
+                    analysis=data["analysis"],
+                    global_system_messages=local_globals,
+                    global_header_messages=local_header_globals,
+                    segment_index=seg_idx,
+                    strict_undefined=strict_undefined,
+                    stream=stream,
+                    strict_params=strict_params,
+                    **(extra_kwargs or {}),
+                ):
+                    yield event
+                    if isinstance(event, SlotCompleted):
+                        all_results[event.slot_key] = event.result
+                        slot_events.append(event)
+
+                # synthesise a results list for checkpoint/context update below
+                results = [(
+                    seg_idx,
+                    slot_events,
+                    data["system_template"],
+                    data["header_template"],
+                    data["name"],
+                )]
+            else:
+                # multi-segment batch: collect all events then yield in order
+                tasks = [
+                    process_segment_collect_events(
+                        seg_idx,
+                        accumulated_context,
+                        batch_globals,
+                        batch_header_globals,
+                    )
+                    for seg_idx in batch
+                ]
+                results = await asyncio.gather(*tasks)
 
             # Yield events in segment order for determinism
+            # (for streaming single-segment case, events were already yielded above)
             for seg_idx, events, sys_tpl, hdr_tpl, seg_name in sorted(
                 results, key=lambda x: x[0]
             ):
-                for event in events:
-                    all_results[event.slot_key] = event.result
-                    yield event
+                if not (len(batch) == 1 and stream):
+                    # only yield events here for non-streaming batches
+                    for event in events:
+                        all_results[event.slot_key] = event.result
+                        yield event
 
                 # Yield checkpoint event
                 yield CheckpointReached(
@@ -787,12 +855,15 @@ def chatter_incremental(
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
+    stream: bool = False,
+    strict_params: bool = False,
 ) -> Generator[IncrementalEvent, None, None]:
-    """
-    Synchronous wrapper for chatter_incremental_async.
+    """Synchronous wrapper for chatter_incremental_async.
 
     Note: This collects all events then yields them. For true incremental
     processing, use chatter_incremental_async() in an async context.
+    Streaming is disabled by default since it provides no benefit
+    when events are collected synchronously.
     """
     if model is None:
         model = LLM()
@@ -809,6 +880,8 @@ def chatter_incremental(
                 template_path,
                 include_paths,
                 strict_undefined,
+                stream=stream,
+                strict_params=strict_params,
             )
         ]
 

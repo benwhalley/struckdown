@@ -39,14 +39,17 @@ def temp_cache_dir():
             # Cleanup happens automatically with tempfile
 
 
-class MockCompletion:
-    """Picklable mock completion object"""
+class MockModelResponse:
+    """Picklable mock model response with usage info."""
 
     def __init__(self):
-        self.usage = type("Usage", (), {"total_tokens": 10})()
+        self.usage = type("Usage", (), {
+            "input_tokens": 5, "output_tokens": 5,
+            "cache_read_tokens": 0, "cache_write_tokens": 0,
+        })()
 
-    def model_dump(self):
-        return {"usage": {"total_tokens": 10}}
+    def cost(self):
+        return type("PriceCalc", (), {"total": 0.001})()
 
 
 @pytest.fixture(autouse=True)
@@ -59,32 +62,26 @@ def clear_test_cache():
 
 @pytest.fixture
 def mock_llm():
-    """Create a mock LLM with tracking for cache testing"""
-    mock_client = Mock()
+    """Create a mock LLM with tracking for cache testing.
 
-    # Track number of times the LLM is actually called
+    Patches _run_agent_sync to intercept pydantic-ai calls.
+    """
     call_count = {"count": 0}
 
-    def create_with_completion(*args, **kwargs):
+    def mock_run_agent_sync(agent, user_prompt, settings):
         call_count["count"] += 1
-        # Create a picklable response based on messages
-        messages = kwargs.get("messages", [])
-        content = messages[-1].get("content", "") if messages else ""
-
-        # Use actual Pydantic model instead of Mock for picklability
-        response_text = f"Mock response to: {content[:50]}"
+        content = user_prompt[:50] if user_prompt else ""
+        response_text = f"Mock response to: {content}"
         mock_response = SimpleResponse(response=response_text)
+        return mock_response, MockModelResponse()
 
-        # Use picklable completion object
-        mock_completion = MockCompletion()
-
-        return mock_response, mock_completion
-
-    mock_client.chat.completions.create_with_completion = create_with_completion
     mock_llm_obj = Mock()
-    mock_llm_obj.client = Mock(return_value=mock_client)
+    mock_llm_obj.model_name = "test-model"
+    mock_llm_obj.get_pydantic_model = Mock(return_value=Mock())
 
-    return mock_llm_obj, call_count
+    with patch("struckdown.llm._run_agent_sync", side_effect=mock_run_agent_sync), \
+         patch("struckdown.llm._build_pydantic_ai_agent", return_value=Mock()):
+        yield mock_llm_obj, call_count
 
 
 class TestCacheIntegration:

@@ -251,6 +251,20 @@ class ChatterResult(BaseModel):
             return self.results[name].output
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
+    def strip_debug_data(self) -> "ChatterResult":
+        """Return a copy with prompts and completions removed for compact storage."""
+        stripped = {}
+        for name, seg in self.results.items():
+            stripped[name] = SegmentResult(
+                name=seg.name,
+                prompt="",
+                output=seg.output,
+                completion=None,
+                action=seg.action,
+                options=seg.options,
+            )
+        return ChatterResult(results=stripped, interim_results={})
+
     def __setitem__(self, key: str, value: SegmentResult):
         """Set a result, enforcing SegmentResult type and ensuring name is set."""
         if not isinstance(value, SegmentResult):

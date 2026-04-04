@@ -10,6 +10,7 @@ Struckdown: markdown-like syntax for structured LLM conversations. Uses `[[slot]
 
 - Run tests: `uv run python -m pytest struckdown/tests/ -v`
 - Run single test: `uv run python -m pytest struckdown/tests/test_cache.py -v`
+- Run Ollama tests (requires local Ollama with qwen3): `uv run python -m pytest struckdown/tests/ -v -m ollama`
 - CLI: `uv run sd chat "Tell a joke: [[joke]]"` or `uv run sd batch *.txt "[[summary]]"`
 
 ## Architecture

@@ -5,6 +5,7 @@ import random
 import string
 import sys
 import traceback
+from functools import partial
 from glob import glob
 from pathlib import Path
 from typing import List, Optional
@@ -194,8 +195,12 @@ async def _run_chat_incremental(
     include_paths: Optional[List[Path]],
     verbose: int,
     show_context: bool,
+    stream: bool = True,
+    strict_params: bool = False,
 ) -> tuple["ChatterResult", Optional["SegmentResult"]]:
     """Process prompt incrementally, printing results as slots complete.
+
+    When stream=True, free-text slots are streamed word-by-word to the console.
 
     Verbosity levels:
         0: just slot outputs (slot_key: output)
@@ -205,12 +210,14 @@ async def _run_chat_incremental(
     """
     from . import chatter_incremental_async
     from .incremental import (CheckpointReached, ProcessingComplete,
-                              ProcessingError, SlotCompleted)
+                              ProcessingError, SlotCompleted,
+                              SlotStreamStart, TokenDelta)
     from .results import ChatterResult
 
     break_result = None
     final_result = None
     slot_count = 0
+    streaming_slot = None  # track which slot is currently streaming
 
     async for event in chatter_incremental_async(
         multipart_prompt=prompt_str,
@@ -220,10 +227,41 @@ async def _run_chat_incremental(
         extra_kwargs=extra_kwargs,
         template_path=prompt_file,
         include_paths=include_paths,
+        stream=stream,
+        strict_params=strict_params,
     ):
-        if isinstance(event, SlotCompleted):
+        if isinstance(event, SlotStreamStart):
+            # start streaming a slot -- print the label prefix
+            streaming_slot = event.slot_key
+            sys.stderr.write(f"\033[1m{event.slot_key}\033[0m: ")
+            sys.stderr.flush()
+
+        elif isinstance(event, TokenDelta):
+            # print incremental text as it arrives
+            sys.stderr.write(event.delta)
+            sys.stderr.flush()
+
+        elif isinstance(event, SlotCompleted):
             slot_count += 1
             seg_result = event.result
+
+            # if we were streaming this slot, finish the line
+            if streaming_slot == event.slot_key:
+                sys.stderr.write("\n")
+                sys.stderr.flush()
+                streaming_slot = None
+                # don't re-print the output -- it was already streamed
+                # but still handle break/history
+                if seg_result.action == "break":
+                    break_result = seg_result
+                    continue
+                if event.slot_key == "history":
+                    continue
+
+                # verbose headers
+                if verbose >= 1:
+                    typer.echo(f"  [{event.elapsed_ms:.0f}ms]", err=True)
+                continue
 
             # Skip break action (handle at end)
             if seg_result.action == "break":
@@ -276,6 +314,10 @@ async def _run_chat_incremental(
             final_result = event.result
 
         elif isinstance(event, ProcessingError):
+            # clean up streaming state if error occurs mid-stream
+            if streaming_slot:
+                sys.stderr.write("\n")
+                streaming_slot = None
             raise LLMError(Exception(event.error_message), prompt_str, model.model_name)
 
     return final_result, break_result
@@ -541,6 +583,11 @@ def chat(
         "--dump",
         help="Directory to save API call JSON files (one per slot, named {slot_name}.json)",
     ),
+    strict_params: bool = typer.Option(
+        False,
+        "--strict-params",
+        help="Raise error on unsupported LLM parameters instead of warning",
+    ),
 ):
     """
     Run a single chatter prompt (interactive mode).
@@ -731,16 +778,20 @@ def chat(
         else:
             # Single-run mode (existing behaviour)
             result, break_result = anyio.run(
-                _run_chat_incremental,
-                prompt_str,
-                model,
-                credentials,
-                context,
-                extra_kwargs if extra_kwargs else None,
-                prompt_file,
-                all_include_paths if all_include_paths else None,
-                verbose,
-                show_context,
+                partial(
+                    _run_chat_incremental,
+                    prompt_str,
+                    model,
+                    credentials,
+                    context,
+                    extra_kwargs if extra_kwargs else None,
+                    prompt_file,
+                    all_include_paths if all_include_paths else None,
+                    verbose,
+                    show_context,
+                    stream=True,
+                    strict_params=strict_params,
+                )
             )
     except TemplateError as e:
         e.template_path = prompt_file

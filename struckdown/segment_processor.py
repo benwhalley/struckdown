@@ -194,6 +194,7 @@ async def _process_together_group(
     credentials,
     segment_index: int,
     extra_kwargs: dict,
+    strict_params: bool = False,
 ) -> AsyncGenerator:
     """Process all slots in a together group simultaneously.
 
@@ -299,13 +300,18 @@ async def _process_together_group(
         else:
             # Call LLM
             logger.debug(f"Together: STARTING LLM call for {slot_key}")
+            # merge per-slot overrides (temperature, thinking, model, etc.)
+            call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
+            if slot_info.llm_kwargs:
+                call_kwargs.update(slot_info.llm_kwargs)
             res, completion_obj = await anyio.to_thread.run_sync(
-                lambda rt=return_type, msgs=slot_messages: structured_chat(
+                lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
                     messages=msgs,
                     return_type=rt,
                     llm=llm,
                     credentials=credentials,
-                    extra_kwargs=extra_kwargs or {},
+                    extra_kwargs=kw,
+                    strict_params=strict_params,
                 ),
                 abandon_on_cancel=True,
             )
@@ -426,6 +432,8 @@ async def process_segment_with_delta_incremental(
     global_header_messages: Optional[List[str]] = None,
     segment_index: int = 0,
     strict_undefined: bool = False,
+    stream: bool = False,
+    strict_params: bool = False,
     **extra_kwargs,
 ) -> AsyncGenerator:
     """Process a template segment, yielding SlotCompleted events as each slot is filled.
@@ -451,10 +459,11 @@ async def process_segment_with_delta_incremental(
     # Import here to avoid circular imports
     import anyio
 
-    from .incremental import SlotCompleted
+    from .incremental import SlotCompleted, SlotStreamStart, TokenDelta
     from .jinja_utils import escape_struckdown_syntax
-    from .llm import structured_chat
+    from .llm import structured_chat, structured_chat_async
     from .results import SegmentResult, get_progress_callback
+    from .return_type_models import SlotCategory, classify_slot, compute_optimal_max_tokens
 
     # template_str is the body only (system already extracted by caller)
     body_template = template_str
@@ -531,6 +540,7 @@ async def process_segment_with_delta_incremental(
                 credentials=credentials,
                 segment_index=segment_index,
                 extra_kwargs=extra_kwargs,
+                strict_params=strict_params,
             ):
                 together_events.append(event)
                 yield event
@@ -604,18 +614,66 @@ async def process_segment_with_delta_incremental(
                 accumulated_context, content_before, **extra_kwargs
             )
         else:
-            # Call LLM
-            logger.debug(f"LLM completion: {slot_info.action_type}:{slot_key}")
-            res, completion_obj = await anyio.to_thread.run_sync(
-                lambda: structured_chat(
-                    messages=messages.copy(),
-                    return_type=return_type,
-                    llm=llm,
-                    credentials=credentials,
-                    extra_kwargs=extra_kwargs or {},
-                ),
-                abandon_on_cancel=True,
+            # Classify slot for streaming and token efficiency
+            category = classify_slot(slot_info.action_type, return_type)
+            call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
+
+            # merge per-slot LLM overrides (temperature, thinking, model, etc.)
+            if slot_info.llm_kwargs:
+                call_kwargs.update(slot_info.llm_kwargs)
+
+            # inject tight max_tokens for constrained slots
+            slot_options = (
+                [opt.value for opt in slot_info.options]
+                if slot_info.options else []
             )
+            optimal_max = compute_optimal_max_tokens(
+                slot_info.action_type, return_type, slot_options,
+            )
+            if optimal_max and "max_tokens" not in call_kwargs:
+                call_kwargs["max_tokens"] = optimal_max
+
+            should_stream = (
+                stream
+                and category == SlotCategory.FREE_TEXT
+            )
+            logger.debug(
+                f"LLM completion: {slot_info.action_type}:{slot_key}"
+                f" [{category.value}]"
+                f"{' (streaming)' if should_stream else ''}"
+            )
+
+            if should_stream:
+                yield SlotStreamStart(
+                    segment_index=segment_index,
+                    slot_key=slot_key,
+                )
+
+            # unified async path
+            prev_text = ""
+            completion_obj = None
+            async for partial, com, is_final in structured_chat_async(
+                messages=messages.copy(),
+                return_type=return_type,
+                llm=llm,
+                credentials=credentials,
+                extra_kwargs=call_kwargs,
+                stream=should_stream,
+                strict_params=strict_params,
+            ):
+                if is_final:
+                    res = partial
+                    completion_obj = com
+                elif should_stream:
+                    current = getattr(partial, "response", None)
+                    if current is not None and str(current) != prev_text:
+                        yield TokenDelta(
+                            segment_index=segment_index,
+                            slot_key=slot_key,
+                            delta=str(current)[len(prev_text):],
+                            accumulated=str(current),
+                        )
+                        prev_text = str(current)
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
 
@@ -704,6 +762,7 @@ async def process_segment_with_delta(
     global_system_messages: Optional[List[str]] = None,
     global_header_messages: Optional[List[str]] = None,
     strict_undefined: bool = False,
+    strict_params: bool = False,
     **extra_kwargs,
 ):
     """Process a template segment using delta-based re-rendering.
@@ -738,6 +797,7 @@ async def process_segment_with_delta(
         global_header_messages=global_header_messages,
         segment_index=0,
         strict_undefined=strict_undefined,
+        strict_params=strict_params,
         **extra_kwargs,
     ):
         results[event.slot_key] = event.result

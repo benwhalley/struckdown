@@ -3,12 +3,15 @@ from datetime import date, datetime, time, timedelta
 from typing import (Any, ClassVar, Dict, List, Literal, Optional, Type, Union,
                     get_args, get_origin)
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from .response_types import ResponseTypes
 from .validation import parse_options
 
 # Standard RTs for template syntax
+
+
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh")
 
 
 class LLMConfig(BaseModel):
@@ -21,9 +24,23 @@ class LLMConfig(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     model: Optional[str] = None
     max_tokens: Optional[int] = Field(default=None, gt=0)
-    seed: Optional[int] = Field(default=None, ge=0)  # For reproducible outputs
+    seed: Optional[int] = Field(default=None, ge=0)
+    thinking: Optional[str] = Field(
+        default=None,
+        description="Thinking/reasoning level: off, minimal, low, medium, high, xhigh. "
+        "None means provider default (struckdown does not interfere).",
+    )
 
-    model_config = ConfigDict(extra="forbid")  # Reject unknown parameters
+    @field_validator("thinking")
+    @classmethod
+    def validate_thinking(cls, v):
+        if v is not None and v not in THINKING_LEVELS:
+            raise ValueError(
+                f"thinking must be one of {THINKING_LEVELS}, got '{v}'"
+            )
+        return v
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # Cache for schema classes to avoid recreating them
@@ -1291,3 +1308,93 @@ class JobGroupSchema(BaseModel):
 # Build ACTION_LOOKUP from registered types
 # This maintains backward compatibility with code that imports ACTION_LOOKUP
 ACTION_LOOKUP = ResponseTypes.get_lookup()
+
+
+# --- Slot classification for streaming ---
+
+from enum import Enum
+
+
+class SlotCategory(str, Enum):
+    """Classifies slots by output characteristics for streaming decisions."""
+    FREE_TEXT = "free_text"
+    CONSTRAINED = "constrained"
+    ACTION = "action"
+
+
+# action types that produce short, structured outputs
+_CONSTRAINED_TYPES = frozenset({
+    "pick", "bool", "boolean", "decide",
+    "int", "number", "date", "datetime", "time", "duration",
+    "json", "record",
+})
+
+# action types that produce free-form text
+_FREE_TEXT_TYPES = frozenset({
+    "respond", "default", "speak", "think", "extract", "poem",
+})
+
+
+def classify_slot(action_type: Optional[str], return_type) -> SlotCategory:
+    """Classify a slot for streaming decisions.
+
+    FREE_TEXT slots benefit from token-level streaming.
+    CONSTRAINED slots complete quickly and don't need streaming.
+    ACTION slots bypass the LLM entirely.
+    """
+    if hasattr(return_type, "_executor"):
+        return SlotCategory.ACTION
+    if action_type in _CONSTRAINED_TYPES:
+        return SlotCategory.CONSTRAINED
+    return SlotCategory.FREE_TEXT
+
+
+def build_prefix_resolver(options: List[str]) -> Dict[str, str]:
+    """Build a map of unique prefixes to full option values.
+
+    For ["apple", "orange", "banana"]:
+      "a" -> "apple", "o" -> "orange", "b" -> "banana"
+
+    For ["apple", "apricot", "banana"]:
+      "app" -> "apple", "apr" -> "apricot", "b" -> "banana"
+
+    Used for early disambiguation: once we've seen enough tokens
+    to uniquely identify a pick option, we can cancel the stream.
+    """
+    resolver: Dict[str, str] = {}
+    for opt in options:
+        for length in range(1, len(opt) + 1):
+            prefix = opt[:length].lower()
+            matches = [o for o in options if o.lower().startswith(prefix)]
+            if len(matches) == 1:
+                resolver[prefix] = opt
+                break
+    return resolver
+
+
+def compute_optimal_max_tokens(
+    action_type: Optional[str],
+    return_type,
+    options: Optional[List[str]] = None,
+) -> Optional[int]:
+    """Return a tight max_tokens for constrained slots, or None for free-form.
+
+    Reduces wasted completion tokens for slots with predictable output length.
+    Token counts include overhead for tool/function calling format used by
+    pydantic-ai (function name + argument JSON structure).
+    """
+    # pydantic-ai uses tool calling which has ~30-40 tokens of overhead
+    # (function name, argument key, JSON wrapping)
+    TOOL_CALL_OVERHEAD = 40
+
+    if action_type in ("bool", "boolean", "decide"):
+        return 10 + TOOL_CALL_OVERHEAD
+    if action_type == "pick" and options:
+        resolver = build_prefix_resolver(options)
+        max_prefix = max(len(p) for p in resolver) if resolver else 1
+        return max_prefix + 25 + TOOL_CALL_OVERHEAD
+    if action_type in ("int", "number"):
+        return 20 + TOOL_CALL_OVERHEAD
+    if action_type in ("date", "datetime", "time", "duration"):
+        return 40 + TOOL_CALL_OVERHEAD
+    return None

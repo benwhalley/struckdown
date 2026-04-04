@@ -1,4 +1,7 @@
-"""LLM client, credentials, and API interaction for struckdown."""
+"""LLM client, credentials, and API interaction for struckdown.
+
+Uses pydantic-ai for structured LLM calls and embeddings.
+"""
 
 import json
 import logging
@@ -6,37 +9,14 @@ import os
 import traceback
 import warnings
 from contextvars import ContextVar
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, Union
 
-import instructor
-import litellm
-from instructor.core.exceptions import InstructorRetryException
-from instructor.core.hooks import HookName
-
-# Suppress instructor's hook error warnings (we intentionally raise to stop retries)
-warnings.filterwarnings(
-    "ignore",
-    message="Error in completion:error handler:",
-    category=UserWarning,
-    module="instructor.core.hooks",
-)
-
-# Suppress litellm's async cleanup warning -- their atexit handler doesn't properly handle
-# all client types (e.g. openai.AsyncOpenAI) and runs after asyncio.run() closes the loop.
-# The clients get cleaned up by GC at process exit anyway.
-warnings.filterwarnings(
-    "ignore",
-    message="coroutine 'close_litellm_async_clients' was never awaited",
-    category=RuntimeWarning,
-)
-
-# Configure litellm to drop unsupported params rather than error
-litellm.drop_params = True
-# Suppress litellm's verbose error messages (errors still saved in CSV output)
-litellm.set_verbose = False
-litellm.suppress_debug_info = True
-logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
-logging.getLogger("litellm").setLevel(logging.CRITICAL)
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.output import PromptedOutput
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.settings import ModelSettings
 
 # Module-level flag for API request logging
 _debug_api_requests = False
@@ -95,42 +75,11 @@ import anyio
 import tenacity
 from box import Box
 from decouple import config as env_config
-from litellm.exceptions import (APIConnectionError, APIError,
-                                APIResponseValidationError,
-                                AuthenticationError, BadGatewayError,
-                                BadRequestError, BudgetExceededError,
-                                ContentPolicyViolationError,
-                                ContextWindowExceededError,
-                                InternalServerError, NotFoundError,
-                                PermissionDeniedError, RateLimitError,
-                                ServiceUnavailableError, Timeout,
-                                UnprocessableEntityError,
-                                UnsupportedParamsError)
 
-# Error categories for caching and retry behavior
-# Cacheable: deterministic errors - same input will always fail, safe to cache
-CACHEABLE_ERRORS = (
-    ContentPolicyViolationError,
-    ContextWindowExceededError,
-)
-
-# Transient: temporary errors - might succeed on retry, never cache
-TRANSIENT_ERRORS = (
-    RateLimitError,
-    Timeout,
-    APIConnectionError,
-    ServiceUnavailableError,
-    InternalServerError,
-    BadGatewayError,
-)
-
-# Fatal: require config/credential changes, don't cache (user should fix and retry)
-FATAL_ERRORS = (
-    AuthenticationError,
-    PermissionDeniedError,
-    NotFoundError,
-    BudgetExceededError,
-)
+# HTTP status code categories for error classification
+CACHEABLE_STATUS_CODES = frozenset()  # determined by response body, not status alone
+TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+FATAL_STATUS_CODES = frozenset({401, 403, 404})
 
 import numpy as np
 from more_itertools import chunked
@@ -309,44 +258,61 @@ from .errors import ContentFilterError, ContextWindowError, LLMError
 from .errors import RateLimitError as SDRateLimitError
 
 
+def _classify_http_error_body(error_msg: str) -> Optional[str]:
+    """Classify an HTTP error by inspecting the error message body.
+
+    Returns a category string or None if unclassified.
+    """
+    msg = error_msg.lower()
+    # content policy / safety filter
+    if any(kw in msg for kw in (
+        "content_filter", "content_policy", "contentfilter",
+        "content policy", "responsible ai", "safety",
+    )):
+        return "content_filter"
+    # context window / token limit
+    if any(kw in msg for kw in (
+        "context_length", "context_window", "maximum context",
+        "token limit", "too many tokens", "max_tokens",
+        "reduce the length", "input too long",
+    )):
+        return "context_window"
+    return None
+
+
 def _make_struckdown_error(
-    litellm_error: Exception, prompt: str, model_name: str
+    error: Exception, prompt: str, model_name: str
 ) -> LLMError:
-    """Map a litellm exception to the appropriate struckdown error subclass."""
-    error_type = type(litellm_error).__name__
+    """Map a pydantic-ai or other exception to the appropriate struckdown error subclass."""
+    if isinstance(error, ModelHTTPError):
+        status = error.status_code
 
-    # Content policy violations
-    if isinstance(litellm_error, ContentPolicyViolationError):
-        return ContentFilterError(litellm_error, prompt, model_name)
+        # check body for specific error types (content filter, context window)
+        body_class = _classify_http_error_body(str(error))
+        if body_class == "content_filter":
+            return ContentFilterError(error, prompt, model_name)
+        if body_class == "context_window":
+            return ContextWindowError(error, prompt, model_name)
 
-    # Context window errors
-    if isinstance(litellm_error, ContextWindowExceededError):
-        return ContextWindowError(litellm_error, prompt, model_name)
+        # classify by HTTP status code
+        if status in (429, 408):
+            return SDRateLimitError(error, prompt, model_name)
+        if status in (401, 403):
+            return AuthError(error, prompt, model_name)
+        if status in (500, 502, 503, 504):
+            return SDConnectionError(error, prompt, model_name)
+        if status in (400, 422):
+            return SDBadRequestError(error, prompt, model_name)
+        if status == 404:
+            return AuthError(error, prompt, model_name)
 
-    # Rate limit errors
-    if isinstance(litellm_error, (RateLimitError, Timeout)):
-        return SDRateLimitError(litellm_error, prompt, model_name)
+        return LLMError(error, prompt, model_name)
 
-    # Auth errors
-    if isinstance(litellm_error, (AuthenticationError, PermissionDeniedError)):
-        return AuthError(litellm_error, prompt, model_name)
+    if isinstance(error, UnexpectedModelBehavior):
+        return SDBadRequestError(error, prompt, model_name)
 
-    # Connection errors
-    if isinstance(
-        litellm_error,
-        (APIConnectionError, ServiceUnavailableError, InternalServerError),
-    ):
-        return SDConnectionError(litellm_error, prompt, model_name)
-
-    # Bad request errors
-    if isinstance(
-        litellm_error,
-        (BadRequestError, UnsupportedParamsError, APIResponseValidationError),
-    ):
-        return SDBadRequestError(litellm_error, prompt, model_name)
-
-    # Default to base LLMError
-    return LLMError(litellm_error, prompt, model_name)
+    # fallback for any other exception
+    return LLMError(error, prompt, model_name)
 
 
 def _make_cached_error(
@@ -435,10 +401,60 @@ class LLMCredentials(BaseModel):
     base_url: Optional[str] = Field(
         default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
     )
-    instructor_mode: Optional[str] = Field(
-        default_factory=lambda: env_config("INSTRUCTOR_MODE", "json_schema"),
-        description="Instructor mode for structured outputs: 'json' or 'json_schema'. Set via INSTRUCTOR_MODE env var.",
-    )
+
+
+KNOWN_MODEL_SETTINGS = frozenset({
+    "temperature", "max_tokens", "seed", "top_p", "timeout",
+    "thinking", "presence_penalty", "frequency_penalty",
+})
+
+# internal keys consumed elsewhere in the pipeline, not model settings
+_INTERNAL_KEYS = frozenset({"stream_debounce_ms", "model"})
+
+
+def _translate_kwargs(
+    extra_kwargs: Optional[dict], strict: bool = False
+) -> ModelSettings:
+    """Map struckdown's extra_kwargs to pydantic-ai ModelSettings.
+
+    Unknown params are logged as warnings by default. With strict=True,
+    a ValueError is raised instead -- useful for catching typos or
+    params unsupported by the current provider.
+    """
+    if not extra_kwargs:
+        return ModelSettings()
+    settings: dict = {}
+    dropped: list = []
+    for key, value in extra_kwargs.items():
+        if key in KNOWN_MODEL_SETTINGS:
+            settings[key] = value
+        elif key in _INTERNAL_KEYS:
+            pass
+        else:
+            dropped.append(key)
+    if dropped:
+        msg = f"Dropped unsupported LLM parameters: {', '.join(dropped)}"
+        if strict:
+            raise ValueError(msg)
+        logger.warning(msg)
+    return ModelSettings(**settings)
+
+
+def _merge_llm_config_defaults(extra_kwargs: Optional[dict], return_type) -> dict:
+    """Merge return_type.llm_config defaults into extra_kwargs.
+
+    Explicit kwargs take priority over llm_config defaults.
+    """
+    call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
+    if hasattr(return_type, "llm_config") and return_type.llm_config:
+        cfg = return_type.llm_config
+        if cfg.temperature is not None and "temperature" not in call_kwargs:
+            call_kwargs["temperature"] = cfg.temperature
+        if cfg.seed is not None and "seed" not in call_kwargs:
+            call_kwargs["seed"] = cfg.seed
+        if cfg.thinking is not None and "thinking" not in call_kwargs:
+            call_kwargs["thinking"] = cfg.thinking
+    return call_kwargs
 
 
 class LLM(BaseModel):
@@ -447,60 +463,24 @@ class LLM(BaseModel):
         exclude=True,
     )
 
-    def client(self, credentials: LLMCredentials = None):
+    def get_pydantic_model(self, credentials: Optional[LLMCredentials] = None) -> OpenAIChatModel:
+        """Create a pydantic-ai model instance for this LLM + credentials."""
+        import httpx
+
         if credentials is None:
             credentials = LLMCredentials()
-
         if not credentials.api_key or not credentials.base_url:
             raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
-
-        # Create OpenAI-compatible instructor client (works with litellm proxies)
-        litellm.api_key = credentials.api_key
-        litellm.api_base = credentials.base_url
-        litellm.drop_params = True
-
-        # Use instructor_mode from credentials (default: JSON for broad compatibility)
-        mode_str = (credentials.instructor_mode or "json").upper()
-        mode = getattr(instructor.Mode, mode_str, instructor.Mode.JSON)
-        client = instructor.from_litellm(litellm.completion, mode=mode)
-
-        # Truncate validation errors in retry messages to save tokens
-        def truncate_validation_errors(**kwargs):
-            max_chars = 2000
-            for msg in kwargs.get("messages", []):
-                content = msg.get("content", "")
-                if "validation error" in content.lower() and len(content) > max_chars:
-                    msg["content"] = content[:max_chars] + "\n\n... (truncated)"
-
-        client.on(HookName.COMPLETION_KWARGS, truncate_validation_errors)
-
-        # Log errors/retries so users see when calls fail and retry
-        # Re-raise non-retryable errors to stop retry loop
-        def log_completion_error(error, **kwargs):
-            # don't retry content policy violations - they will always fail
-            if isinstance(error, ContentPolicyViolationError):
-                logger.debug("Content policy violation - not retrying")
-                raise error
-            logger.debug(f"LLM error, retrying: {type(error).__name__}")
-
-        client.on(HookName.COMPLETION_ERROR, log_completion_error)
-
-        # Attach debug hook if enabled
-        if _debug_api_requests:
-
-            def log_api_request(**kwargs):
-                """Log the full API request as JSON."""
-                import sys
-
-                print("\n" + "=" * 80, file=sys.stderr)
-                print("API REQUEST", file=sys.stderr)
-                print("=" * 80, file=sys.stderr)
-                print(json.dumps(kwargs, indent=2, default=str), file=sys.stderr)
-                print("=" * 80 + "\n", file=sys.stderr)
-
-            client.on(HookName.COMPLETION_KWARGS, log_api_request)
-
-        return client
+        # use httpx client with redirect-following enabled -- many litellm
+        # proxies redirect HTTP→HTTPS and httpx doesn't follow 308 for POST
+        # by default
+        http_client = httpx.AsyncClient(follow_redirects=True)
+        provider = OpenAIProvider(
+            api_key=credentials.api_key,
+            base_url=credentials.base_url,
+            http_client=http_client,
+        )
+        return OpenAIChatModel(self.model_name, provider=provider)
 
 
 # Marker for cached errors - stored in cache, re-raised on cache hit
@@ -517,7 +497,126 @@ def _create_cached_error(error: Exception, model_name: str) -> dict:
     }
 
 
-@memory.cache(ignore=["return_type", "llm", "credentials"])
+def _is_cacheable_error(error: Exception) -> bool:
+    """Check if an error is deterministic and safe to cache."""
+    if isinstance(error, ModelHTTPError):
+        body_class = _classify_http_error_body(str(error))
+        return body_class in ("content_filter", "context_window")
+    return False
+
+
+def _is_transient_http_error(error: Exception) -> bool:
+    """Check if an error is transient (might succeed on retry)."""
+    if isinstance(error, ModelHTTPError):
+        return error.status_code in TRANSIENT_STATUS_CODES
+    return False
+
+
+def _is_fatal_http_error(error: Exception) -> bool:
+    """Check if an error requires config/credential changes."""
+    if isinstance(error, ModelHTTPError):
+        return error.status_code in FATAL_STATUS_CODES
+    return False
+
+
+def _build_pydantic_ai_agent(
+    return_type, llm: "LLM", credentials: "LLMCredentials", mode: str = "tool",
+) -> Agent:
+    """Build a pydantic-ai Agent for structured output extraction.
+
+    Args:
+        mode: "tool" (default) uses tool calling; "prompted" injects the JSON
+              schema into the prompt text instead -- works with models that
+              don't reliably follow tool calls.
+    """
+    model = llm.get_pydantic_model(credentials)
+    if mode == "prompted":
+        return Agent(model, output_type=PromptedOutput(return_type), retries=2)
+    return Agent(model, output_type=return_type, retries=2)
+
+
+def _messages_to_user_prompt(messages: List[Dict[str, str]]) -> str:
+    """Convert OpenAI-format message list to a single user prompt string.
+
+    Pydantic-ai Agent.run() takes a user_prompt string. System messages are
+    prepended. Multi-turn conversations are flattened with role labels.
+    """
+    system_parts = []
+    conversation_parts = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_parts.append(content)
+        elif role == "assistant":
+            conversation_parts.append(f"[assistant]: {content}")
+        else:
+            conversation_parts.append(content)
+
+    parts = []
+    if system_parts:
+        parts.append("\n\n".join(system_parts))
+    if conversation_parts:
+        parts.append("\n\n".join(conversation_parts))
+    return "\n\n".join(parts)
+
+
+def _build_completion_dict(
+    model_response, messages: List[Dict[str, str]], cost: Optional[float] = None,
+) -> dict:
+    """Build a completion dict compatible with ChatterResult consumers.
+
+    The dict structure matches what downstream code expects:
+    - usage.prompt_tokens, usage.completion_tokens
+    - usage.prompt_tokens_details.cached_tokens, cache_creation_tokens
+    - _hidden_params.response_cost
+    - _request_messages
+    """
+    usage = getattr(model_response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
+    output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+    cache_read = getattr(usage, "cache_read_tokens", 0) if usage else 0
+    cache_write = getattr(usage, "cache_write_tokens", 0) if usage else 0
+
+    # try to get cost from pydantic-ai's genai-prices integration
+    response_cost = cost
+    if response_cost is None and model_response is not None:
+        try:
+            price_calc = model_response.cost()
+            response_cost = price_calc.total if price_calc else None
+        except Exception:
+            response_cost = None
+
+    return {
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": cache_read or 0,
+                "cache_creation_tokens": cache_write or 0,
+            },
+        },
+        "_hidden_params": {
+            "response_cost": response_cost,
+        },
+        "_request_messages": messages,
+    }
+
+
+def _run_agent_sync(agent: Agent, user_prompt: str, settings: ModelSettings):
+    """Run a pydantic-ai agent synchronously. Returns (output_dict, completion_dict)."""
+    result = agent.run_sync(user_prompt, model_settings=settings)
+    # get the last model response for usage/cost
+    last_response = None
+    for msg in reversed(result.all_messages()):
+        if hasattr(msg, "usage"):
+            last_response = msg
+            break
+    return result.output, last_response
+
+
+@memory.cache(ignore=["return_type", "llm", "credentials", "strict_params"])
 def _call_llm_cached(
     messages: List[Dict[str, str]],
     model_name: str,
@@ -529,109 +628,81 @@ def _call_llm_cached(
     llm,
     credentials,
     cache_version: str,
+    strict_params: bool = False,
 ):
-    """
-    Cache the raw completion dict from the LLM.
-    This is the expensive API call we want to cache.
+    """Cache the raw response dict from the LLM.
+
+    Uses pydantic-ai Agent.run_sync() for structured output extraction.
     Returns dicts (not Pydantic models) so they pickle safely.
 
     Deterministic errors (content policy, context window) are cached to avoid
     repeated failed API calls. Change seed to force retry.
-
-    Args:
-        messages: List of message dicts with 'role' and 'content' keys
-        cache_version: Version string included in cache key (typically struckdown version)
     """
     mm = str(messages)[:100]
     logger.debug(f"LLM CALL: {mm}")
     logger.debug(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
-    try:
-        call_kwargs = extra_kwargs.copy() if extra_kwargs else {}
-        res, com = llm.client(credentials).chat.completions.create_with_completion(
-            model=model_name,
-            response_model=return_type,
-            messages=messages,
-            max_retries=max_retries,
-            **call_kwargs,
-        )
-    except CACHEABLE_ERRORS as e:
-        # deterministic errors - cache them to avoid repeated failures
-        logger.debug(
-            f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
-        )
-        _log_error_details(e, model_name, "(cacheable)")
-        return _create_cached_error(e, model_name), None
-    except FATAL_ERRORS as e:
-        # fatal errors - don't cache, user needs to fix config
-        logger.debug(f"Fatal API error for model {model_name}: {e}")
-        _log_error_details(e, model_name, "(fatal)")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise _make_struckdown_error(e, prompt_repr, model_name) from e
-    except TRANSIENT_ERRORS as e:
-        # transient errors - don't cache, might succeed on retry
-        logger.debug(f"Transient API error for model {model_name}: {e}")
-        _log_error_details(e, model_name, "(transient)")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise _make_struckdown_error(e, prompt_repr, model_name) from e
-    except (
-        BadRequestError,
-        UnsupportedParamsError,
-        APIResponseValidationError,
-        UnprocessableEntityError,
-        APIError,
-    ) as e:
-        # these may wrap cacheable errors - check before deciding
-        _log_error_details(e, model_name, "(bad request / API error)")
-        if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(
-                f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
-            )
-            return _create_cached_error(e, model_name), None
-        logger.debug(f"Bad request error for model {model_name}: {e}")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise _make_struckdown_error(e, prompt_repr, model_name) from e
-    except InstructorRetryException as e:
-        # instructor wraps LLM errors after retries; check if cacheable
-        _log_error_details(e, model_name, "(instructor retry exhausted)")
-        if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(
-                f"Cacheable error for model {model_name} (will be cached): wrapped"
-            )
-            return _create_cached_error(e, model_name), None
-        logger.debug(f"LLM call failed after retries for model {model_name}: {e}")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise _make_struckdown_error(e, prompt_repr, model_name) from e
-    except Exception as e:
-        # catch-all: check if this is a cacheable error in disguise
-        _log_error_details(e, model_name, "(unknown)")
-        if isinstance(e, CACHEABLE_ERRORS):
-            logger.debug(
-                f"Cacheable error for model {model_name} (will be cached): {type(e).__name__}"
-            )
-            return _create_cached_error(e, model_name), None
-        full_traceback = traceback.format_exc()
-        logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
-        prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
-        raise _make_struckdown_error(e, prompt_repr, model_name) from e
 
-    logger.debug(f"\n\n{LC.GREEN}Response: {res}{LC.RESET}\n")
+    # build model settings from extra_kwargs + return_type llm_config
+    call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
+    if max_tokens and "max_tokens" not in call_kwargs:
+        call_kwargs["max_tokens"] = max_tokens
+    settings = _translate_kwargs(call_kwargs, strict=strict_params)
 
-    # for safe pickling
-    com_dict = com.model_dump()
+    if _debug_api_requests:
+        import sys
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("API REQUEST", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(json.dumps({"messages": messages, "model": model_name,
+                          "settings": str(settings)}, indent=2, default=str),
+              file=sys.stderr)
+        print("=" * 80 + "\n", file=sys.stderr)
 
-    if hasattr(com, "_hidden_params"):
-        com_dict["_hidden_params"] = com._hidden_params
-        logger.debug(
-            f"Preserved _hidden_params with response_cost: {com._hidden_params.get('response_cost') if com._hidden_params else None}"
-        )
-    else:
-        logger.debug("No _hidden_params attribute on completion object")
+    user_prompt = _messages_to_user_prompt(messages)
+    prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+
+    # try tool mode first, fall back to prompted mode if the model can't
+    # handle tool calling (e.g. returns text instead of a tool call)
+    for mode in ("tool", "prompted"):
+        agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
+        try:
+            output, model_response = _run_agent_sync(agent, user_prompt, settings)
+            break
+        except ModelHTTPError as e:
+            _log_error_details(e, model_name, f"(HTTP {e.status_code})")
+            if _is_cacheable_error(e):
+                logger.debug(
+                    f"Cacheable error for model {model_name} (will be cached): "
+                    f"{type(e).__name__}"
+                )
+                return _create_cached_error(e, model_name), None
+            raise _make_struckdown_error(e, prompt_repr, model_name) from e
+        except UnexpectedModelBehavior as e:
+            if mode == "tool":
+                logger.info(
+                    f"Tool-mode structured output failed for {model_name}, "
+                    f"retrying with prompted mode: {e}"
+                )
+                continue
+            _log_error_details(e, model_name, "(unexpected model behavior, prompted mode)")
+            raise _make_struckdown_error(e, prompt_repr, model_name) from e
+        except Exception as e:
+            _log_error_details(e, model_name, "(unknown)")
+            if _is_cacheable_error(e):
+                return _create_cached_error(e, model_name), None
+            full_traceback = traceback.format_exc()
+            logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
+            raise _make_struckdown_error(e, prompt_repr, model_name) from e
+
+    logger.debug(f"\n\n{LC.GREEN}Response: {output}{LC.RESET}\n")
+
+    com_dict = _build_completion_dict(model_response, messages)
 
     # mark that we made a fresh API call (this code only runs on cache miss)
     _cache_miss_marker.set(True)
-    # store the actual messages sent to the API
-    com_dict["_request_messages"] = messages
-    return _strip_null_bytes(res.model_dump()), com_dict
+
+    res_dict = output.model_dump() if hasattr(output, "model_dump") else output
+    return _strip_null_bytes(res_dict), com_dict
 
 
 def structured_chat(
@@ -643,9 +714,9 @@ def structured_chat(
     max_retries=3,
     max_tokens=None,
     extra_kwargs=None,
+    strict_params: bool = False,
 ):
-    """
-    Use instructor to make a tool call to an LLM, returning the `response` field, and a completion object.
+    """Make a structured LLM call via pydantic-ai, returning (response, completion).
 
     Args:
         prompt: (Deprecated) Single prompt string. Use messages parameter instead.
@@ -653,9 +724,10 @@ def structured_chat(
         return_type: Pydantic model for response structure
         llm: LLM configuration
         credentials: API credentials
-        max_retries: Number of retry attempts
+        max_retries: Number of retry attempts (handled by caller, not pydantic-ai)
         max_tokens: Maximum tokens in response
         extra_kwargs: Additional LLM parameters
+        strict_params: Raise ValueError on unsupported params instead of warning
     """
     import time
 
@@ -724,6 +796,7 @@ def structured_chat(
             llm=llm,
             credentials=credentials,
             cache_version=__version__,
+            strict_params=strict_params,
         )
     except LLMError as e:
         elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -748,7 +821,6 @@ def structured_chat(
     res = return_type.model_validate(res_dict)
 
     # Determine if this was a cache hit or fresh call using the marker
-    # _cache_miss_marker is set to True inside _call_llm_cached (only runs on cache miss)
     was_cached = not _cache_miss_marker.get()
     com_dict["_cached"] = was_cached
     com = Box(com_dict)
@@ -761,9 +833,163 @@ def structured_chat(
     )
 
     logger.debug(
-        f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} tokens produced{LC.RESET}\n\n"
+        f"{LC.PURPLE}Response type: {type(res)}; {len(str(res))} chars produced{LC.RESET}\n\n"
     )
     return res, com
+
+
+async def structured_chat_async(
+    messages=None,
+    return_type=None,
+    llm: LLM = None,
+    credentials: LLMCredentials = None,
+    max_retries=3,
+    extra_kwargs=None,
+    stream=False,
+    strict_params: bool = False,
+) -> AsyncGenerator[Tuple, None]:
+    """Async structured chat. Yields (partial_or_result, completion, is_final) tuples.
+
+    When stream=False: runs the existing sync structured_chat in a thread,
+    yields a single (result, completion, True) tuple.
+
+    When stream=True: uses pydantic-ai's Agent.run_stream() to stream partial
+    Pydantic models, yielding (partial, None, False) for each chunk,
+    then (final_result, completion, True) at the end.
+    """
+    if llm is None:
+        llm = LLM()
+    if credentials is None:
+        credentials = LLMCredentials()
+
+    if not stream:
+        # non-streaming: wrap existing sync path in a thread
+        res, com = await anyio.to_thread.run_sync(
+            lambda: structured_chat(
+                messages=messages,
+                return_type=return_type,
+                llm=llm,
+                credentials=credentials,
+                max_retries=max_retries,
+                extra_kwargs=extra_kwargs,
+                strict_params=strict_params,
+            ),
+            abandon_on_cancel=True,
+        )
+        yield (res, com, True)
+        return
+
+    # streaming path: check if result is already cached (without computing)
+    from struckdown import __version__
+
+    def _probe_cache():
+        """Check if the result exists in cache without making an API call."""
+        cache_args = dict(
+            messages=messages,
+            model_name=llm.model_name,
+            max_retries=max_retries,
+            max_tokens=None,
+            extra_kwargs=extra_kwargs or {},
+            return_type_hash=hash_return_type(return_type),
+            cache_version=__version__,
+        )
+        # joblib's check_call_in_cache returns True if cached
+        if _call_llm_cached.check_call_in_cache(
+            **cache_args,
+            return_type=return_type,
+            llm=llm,
+            credentials=credentials,
+        ):
+            # cache hit -- fetch the cached result
+            _cache_miss_marker.set(False)
+            res_dict, com_dict = _call_llm_cached(
+                **cache_args,
+                return_type=return_type,
+                llm=llm,
+                credentials=credentials,
+                strict_params=strict_params,
+            )
+            return res_dict, com_dict
+        return None, None
+
+    try:
+        res_dict, com_dict = await anyio.to_thread.run_sync(
+            _probe_cache, abandon_on_cancel=True,
+        )
+        if res_dict is not None:
+            # cache hit -- return immediately without streaming
+            if isinstance(res_dict, dict) and res_dict.get(CACHED_ERROR_MARKER):
+                error_class = res_dict.get("error_class", "CachedError")
+                error_msg = res_dict.get("error_message", "Unknown cached error")
+                prompt_repr = next(
+                    (m["content"] for m in messages if m["role"] == "user"), ""
+                )
+                raise _make_cached_error(
+                    error_class, error_msg, prompt_repr, llm.model_name
+                )
+            res = return_type.model_validate(res_dict)
+            com_dict["_cached"] = True
+            yield (res, Box(com_dict), True)
+            return
+    except LLMError:
+        raise
+
+    # cache miss -- stream via pydantic-ai Agent.run_stream()
+    call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
+    settings = _translate_kwargs(call_kwargs, strict=strict_params)
+
+    user_prompt = _messages_to_user_prompt(messages)
+    prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+
+    # debounce: configurable via extra_kwargs, default 200ms for responsive feel
+    debounce_s = (extra_kwargs or {}).get("stream_debounce_ms", 200) / 1000.0
+
+    # try tool mode first, fall back to prompted mode
+    for mode in ("tool", "prompted"):
+        agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
+        prev_text = ""
+        final_output = None
+        last_response = None
+        try:
+            async with agent.run_stream(user_prompt, model_settings=settings) as stream:
+                async for partial in stream.stream_output(debounce_by=debounce_s):
+                    final_output = partial
+                    current = getattr(partial, "response", None)
+                    if current is not None and str(current) != prev_text:
+                        yield (partial, None, False)
+                        prev_text = str(current)
+                # get the final output after stream completes
+                if final_output is None:
+                    final_output = await stream.get_output()
+                # extract model response for usage info
+                for msg in reversed(stream.all_messages()):
+                    if hasattr(msg, "usage"):
+                        last_response = msg
+                        break
+            break
+        except UnexpectedModelBehavior as e:
+            if mode == "tool":
+                logger.info(
+                    f"Tool-mode streaming failed for {llm.model_name}, "
+                    f"retrying with prompted mode: {e}"
+                )
+                continue
+            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+        except ModelHTTPError as e:
+            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+        except Exception as e:
+            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+
+    if final_output is None:
+        raise LLMError(
+            Exception("No response received from streaming"),
+            next((m["content"] for m in messages if m["role"] == "user"), ""),
+            llm.model_name,
+        )
+
+    com_dict = _build_completion_dict(last_response, messages)
+    com_dict["_cached"] = False
+    yield (final_output, Box(com_dict), True)
 
 
 # Singleton cache for local embedding models
@@ -844,13 +1070,15 @@ def _get_local_embedding(
     return embeddings.tolist()
 
 
-def _is_transient_error(exception: BaseException) -> bool:
-    """Check if an exception is transient and should be retried."""
-    return isinstance(exception, TRANSIENT_ERRORS)
+def _is_transient_embedding_error(exception: BaseException) -> bool:
+    """Check if an embedding exception is transient and should be retried."""
+    if isinstance(exception, ModelHTTPError):
+        return exception.status_code in TRANSIENT_STATUS_CODES
+    return False
 
 
 @tenacity.retry(
-    retry=tenacity.retry_if_exception(_is_transient_error),
+    retry=tenacity.retry_if_exception(_is_transient_embedding_error),
     wait=tenacity.wait_exponential(multiplier=1, min=2, max=120),
     stop=tenacity.stop_after_attempt(7),
     before_sleep=lambda retry_state: logger.info(
@@ -867,43 +1095,48 @@ async def _get_api_embedding_batch_async(
     base_url: Optional[str],
     timeout: int = EMBEDDING_TIMEOUT,
 ) -> Tuple[List[List[float]], int, Optional[float]]:
-    """Get embeddings for a single batch via async API call.
+    """Get embeddings for a single batch via pydantic-ai async API call.
 
     Retries transient errors (rate limits, timeouts, 5xx) with exponential backoff.
 
     Returns:
         Tuple of (embeddings, total_tokens, cost). cost is None if unknown.
     """
+    import httpx
+    from pydantic_ai.embeddings.openai import OpenAIEmbeddingModel
+
     logger.debug(
         f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}"
     )
-    response = await litellm.aembedding(
-        model=model_name,
-        input=list(map(str, batch)),
-        dimensions=dimensions,
+
+    http_client = httpx.AsyncClient(follow_redirects=True, timeout=timeout)
+    provider = OpenAIProvider(
         api_key=api_key,
-        api_base=base_url,
-        timeout=timeout,
+        base_url=base_url,
+        http_client=http_client,
     )
-    logger.debug(f"API embedding batch complete: {len(response['data'])} embeddings")
+    embedding_model = OpenAIEmbeddingModel(model_name, provider=provider)
 
-    # extract token count from response
-    usage = response.get("usage", {})
-    total_tokens = usage.get("total_tokens", 0) or usage.get("prompt_tokens", 0) or 0
+    settings = {"dimensions": dimensions} if dimensions else {}
+    result = await embedding_model.embed(
+        list(map(str, batch)),
+        input_type="document",
+        settings=settings,
+    )
 
-    # calculate cost using litellm's pricing
+    logger.debug(f"API embedding batch complete: {len(result.embeddings)} embeddings")
+
+    # extract token count and cost from result
+    total_tokens = result.usage.total_tokens if result.usage else 0
+
+    cost = None
     try:
-        cost = litellm.completion_cost(
-            completion_response=response,
-            model=model_name,
-            call_type="embedding",
-        )
+        price = result.cost()
+        cost = price.total if price else None
     except Exception as e:
         logger.debug(f"Could not calculate embedding cost: {e}")
-        cost = None
 
-    embeddings = [item["embedding"] for item in response["data"]]
-    return embeddings, total_tokens, cost
+    return result.embeddings, total_tokens, cost
 
 
 # Type alias for progress callback: receives count of items just completed
@@ -1297,14 +1530,7 @@ def get_embedding(texts: List[str], **kwargs) -> EmbeddingResultList:
         if "no running event loop" not in str(e):
             raise
 
-    async def _run_with_cleanup():
-        try:
-            return await get_embedding_async(texts, **kwargs)
-        finally:
-            # clean up litellm's async clients before asyncio.run() closes the event loop
-            await litellm.close_litellm_async_clients()
-
-    return asyncio.run(_run_with_cleanup())
+    return asyncio.run(get_embedding_async(texts, **kwargs))
 
 
 # --- Cross-encoder similarity ---

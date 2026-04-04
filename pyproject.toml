@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.5"
+version = "0.6"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -17,7 +17,7 @@ requires-python = ">=3.12"
 dependencies = [
     "certifi>=2023.0.0",
     "asgiref>=3.7.0",
-    "instructor[litellm]>=1.11.0",
+    "pydantic-ai>=0.2.0",
     "tenacity>=8.2.0",
     "jinja2>=3.1.6",
     "lark>=1.2.2",
@@ -77,4 +77,6 @@ filterwarnings = [
 ]
 markers = [
     "integration: marks tests as integration tests (require network access)",
+    "ollama: marks tests requiring a local Ollama instance (deselected by default)",
 ]
+addopts = "-m 'not ollama'"

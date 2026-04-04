@@ -287,13 +287,21 @@ Simulate conversation turns:
 
 ## Model/Temperature Overrides
 
-Override settings per-slot:
+Override LLM settings per-slot:
 
 ```
 [[think:reasoning|temperature=0.3]]
 [[pick:choice|red,blue|model=gpt-4]]
 [[extract:data|model=gpt-4,temperature=0.0]]
+[[think:deep|thinking=high,temperature=0.3]]
+[[respond:summary|thinking=off]]
 ```
+
+Supported per-slot parameters: `temperature`, `thinking`, `model`, `max_tokens`, `seed`. See [Model Overrides](../how-to/model-overrides.md) for details.
+
+## Streaming
+
+Free-text slots (`respond`, `speak`, `think`, `extract`, `poem`) stream token-by-token when using the async API or CLI. Constrained slots (`pick`, `bool`, `int`, etc.) complete atomically. No template syntax changes are required -- streaming is handled automatically.
 
 ## Custom Pydantic Types
 

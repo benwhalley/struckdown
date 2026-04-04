@@ -5,17 +5,34 @@ parent: How-To Guides
 nav_order: 2
 ---
 
-# Temperature and Model Overrides in Struckdown
+# Per-Slot LLM Parameters
 
 ## Overview
 
-Struckdown now supports per-completion-slot temperature and model overrides, allowing fine-grained control over LLM parameters for each completion type.
+Struckdown supports per-slot control over LLM parameters -- temperature, thinking level, model selection, and more. Parameters are set inline using pipe syntax and validated at parse time.
 
-## Features
+## Supported Parameters
 
-### 1. Default Temperatures per Response Type
+| Parameter | Type | Range / Values | Description |
+|-----------|------|----------------|-------------|
+| `temperature` | float | 0.0 -- 2.0 | Randomness. Lower = deterministic, higher = creative |
+| `thinking` | string | off, minimal, low, medium, high, xhigh | Extended reasoning level (provider-dependent) |
+| `model` | string | any model name | Override the LLM model for this slot |
+| `max_tokens` | int | > 0 | Maximum tokens in response |
+| `seed` | int | >= 0 | For reproducible outputs |
 
-Each response type now has a sensible default temperature automatically applied:
+Additional parameters supported via `extra_kwargs` (not per-slot):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `top_p` | float | Nucleus sampling |
+| `timeout` | float | Request timeout in seconds |
+| `presence_penalty` | float | Penalise tokens already in output |
+| `frequency_penalty` | float | Penalise frequent tokens |
+
+## Default Temperatures
+
+Each response type has a sensible default temperature:
 
 | Response Type | Default Temp | Rationale |
 |--------------|--------------|-----------|
@@ -28,9 +45,9 @@ Each response type now has a sensible default temperature automatically applied:
 | `speak` | 0.8 | More conversational variety |
 | `poem` | 1.5 | Maximum creativity |
 
-### 2. Per-Slot Parameter Overrides
+## Per-Slot Syntax
 
-You can override temperature and model on any completion slot using pipe syntax:
+Override parameters on any completion slot using pipe syntax:
 
 ```
 [[extract:quote|temperature=0.5]]
@@ -40,62 +57,95 @@ You can override temperature and model on any completion slot using pipe syntax:
 [[think:analysis|temperature=0.4,model=gpt-5]]
 ```
 
-### 3. Temperature Validation
-
-Temperature values are validated at parse time:
-- Must be between 0.0 and 2.0
-- Invalid values raise helpful error messages
-- Prevents accidental misconfigurations
-
-### 4. Model-Specific Options Preserved
-
-Options specific to response models (like `min`, `max`, `required`) are preserved:
+Model-specific options (like `min`, `max`, `required`) are preserved alongside LLM parameters:
 
 ```
 [[number:score|min=0,max=100,temperature=0.0]]
 [[date:when|required,temperature=0.2]]
 ```
 
-The parser intelligently separates:
-- **LLM parameters**: `temperature`, `model`, `max_tokens`, `top_p`, etc. → passed to LLM
-- **Model options**: `min`, `max`, `required` → used by response model factories
+The parser separates:
+- **LLM parameters**: `temperature`, `thinking`, `model`, `max_tokens`, `seed` -- passed to the LLM
+- **Slot options**: `min`, `max`, `required` -- used by response model factories
 
-## Implementation Details
+## Thinking / Extended Reasoning
 
-### Architecture
+Use `thinking` to enable extended reasoning (chain-of-thought) on models that support it. The thinking parameter controls how much reasoning the model performs before producing its answer.
 
-1. **ResponseModel Base Class** (`return_type_models.py`)
-   - Provides `_llm_defaults` TypedDict for type safety
-   - Uses `__init_subclass__` hook to automatically extract defaults from subclasses
-   - Each response model specifies its temperature via `default_temperature` field
+```
+[[think:analysis|thinking=high]]
+[[think:deep_reasoning|thinking=xhigh,temperature=0.3]]
+[[pick:choice|yes,no|thinking=low]]
+```
 
-2. **Option Parsing** (`parsing.py`)
-   - `_parse_options()` separates LLM kwargs from model-specific options
-   - Validates temperature range (0.0 - 2.0)
-   - Stores parsed parameters in `PromptPart.llm_kwargs`
+**Levels:**
+- `off` -- explicitly disable thinking (for models where it's on by default)
+- `minimal`, `low`, `medium`, `high`, `xhigh` -- increasing reasoning depth
 
-3. **LLM Call Integration** (`__init__.py`)
-   - Extracts defaults from `response_model._llm_defaults`
-   - Applies slot-specific overrides from `prompt_part.llm_kwargs`
-   - Merges with global `extra_kwargs` (slot-specific takes priority)
-   - Creates new LLM instance if model override specified
+**Omitting `thinking`** means struckdown does not interfere -- the provider's default behaviour applies. This is distinct from `thinking=off`, which explicitly disables it.
 
-### Priority Order
+**Provider support:** Thinking is supported by Claude (Opus, Sonnet with extended thinking), OpenAI o-series models, and other providers via pydantic-ai's unified `ModelSettings.thinking` field. If a provider does not support the requested thinking level, the error propagates -- it is not silently dropped.
+
+### Example: mixing thinking levels
+
+```
+Analyse this document carefully:
+{{source}}
+
+First, reason through the key themes:
+[[think:reasoning|thinking=high]]
+
+Then pick the dominant theme:
+[[pick:theme|politics,economics,culture,science|thinking=off]]
+
+Finally, write a summary:
+[[respond:summary|temperature=0.7]]
+```
+
+## Streaming
+
+Free-text slots (`respond`, `speak`, `think`, `extract`, `poem`) are streamed token-by-token by default when using the CLI or the async incremental API. Constrained slots (`pick`, `bool`, `int`, etc.) complete atomically.
+
+Streaming is transparent to template authors -- no syntax changes required. It is controlled by the `stream` parameter on `chatter_incremental_async()` (default: `True` for async, `False` for sync wrapper).
+
+## Unsupported Parameters
+
+When a parameter is not recognised by struckdown, the default behaviour is to log a warning and drop it:
+
+```
+WARNING: Dropped unsupported LLM parameters: top_k, custom_param
+```
+
+For stricter handling, enable `strict_params` to raise an error instead:
+
+```python
+# Python API
+result = chatter(template, strict_params=True)
+```
+
+```bash
+# CLI
+sd chat --strict-params -p template.sd
+```
+
+This is useful for catching typos or ensuring all parameters are supported by the current provider.
+
+## Priority Order
 
 LLM parameters are applied in this priority order (highest to lowest):
 
 1. **Slot-specific overrides**: `[[type:var|temperature=X]]`
-2. **Model defaults**: `ResponseModel._llm_defaults`
+2. **Return type defaults**: `ResponseModel.llm_config`
 3. **Global extra_kwargs**: Passed to `chatter()` function
 
 ## Examples
 
-### Basic Usage
+### Basic usage
 
 ```python
 from struckdown import chatter
 
-# Uses default temperature for each type
+# uses default temperature for each type
 result = chatter("""
 Extract the quote: "Hello world"
 [[extract:quote]]
@@ -112,10 +162,9 @@ Be creative:
 # verse uses temp=1.5 (creative)
 ```
 
-### With Overrides
+### With overrides
 
 ```python
-# Override specific slots
 result = chatter("""
 Extract carefully with slight flexibility:
 [[extract:quote|temperature=0.1]]
@@ -128,103 +177,26 @@ Use a specific model:
 """)
 ```
 
-### Combining Options
+### With thinking
 
 ```python
-# Mix model-specific options with LLM parameters
 result = chatter("""
-Score from 0-100, deterministically:
-[[number:score|min=0,max=100,temperature=0.0]]
+Reason deeply about this problem:
+[[think:reasoning|thinking=high]]
 
-Required date with low temperature:
-[[date:deadline|required,temperature=0.1]]
+Quick classification (no extended reasoning needed):
+[[pick:category|A,B,C|thinking=off]]
 """)
 ```
 
-## Backward Compatibility
-
-✅ All existing templates work without changes
-✅ Default temperatures applied automatically
-✅ No breaking changes to API
-✅ All 114 existing tests pass
-
-## Testing
-
-Comprehensive test suite in `tests/test_temperature_overrides.py`:
-
-- ✅ Default temperatures for all response types
-- ✅ Parsing of temperature/model overrides
-- ✅ Validation of temperature range
-- ✅ Separation of LLM kwargs from model options
-- ✅ Backward compatibility with existing syntax
-
-## Technical Notes
-
-### Type Safety
-
-- `LLMDefaults` TypedDict constrains temperature to `float` and model to `Optional[str]`
-- Temperature validation at parse time prevents runtime errors
-- Clear error messages for invalid configurations
-
-### Performance
-
-- No performance impact on existing code
-- Defaults are class attributes (no runtime computation)
-- Option parsing is efficient (single pass)
-
-### Extensibility
-
-Additional LLM parameters can be easily added:
+### Cost optimisation
 
 ```python
-# In parsing.py
-LLM_PARAM_KEYS = {
-    'temperature', 'model', 'max_tokens',
-    'top_p', 'top_k',  # Already supported!
-    'frequency_penalty', 'presence_penalty'
-}
-```
-
-## Future Enhancements
-
-Potential additions:
-- Default model per response type
-- Response format overrides (JSON mode, etc.)
-- Sampling parameters (top_k, top_p)
-- Per-slot max_tokens limits
-
-## Migration Guide
-
-No migration needed! But you can now:
-
-1. **Remove manual temperature settings** from `extra_kwargs` - defaults are better
-2. **Fine-tune specific slots** that need different behavior
-3. **Use model overrides** for cost optimization (cheap model for simple tasks, expensive for complex)
-
-Example optimization:
-
-```python
-# Before: everything uses same model/temp
-result = chatter(template, extra_kwargs={'temperature': 0.5})
-
-# After: optimize per-slot
 result = chatter("""
 Simple extraction (cheap, deterministic):
 [[extract:data|model=gpt-4o-mini,temperature=0.0]]
 
 Complex reasoning (expensive, careful):
-[[think:analysis|model=gpt-5,temperature=0.3]]
+[[think:analysis|model=gpt-5,temperature=0.3,thinking=high]]
 """)
 ```
-
-## Summary
-
-This feature provides:
-- ✅ Sensible defaults for every response type
-- ✅ Fine-grained per-slot control
-- ✅ Type-safe configuration
-- ✅ Validation and error handling
-- ✅ Zero breaking changes
-- ✅ Full backward compatibility
-
-The implementation is clean, tested, and ready for production use!

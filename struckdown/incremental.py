@@ -1,12 +1,13 @@
 """Incremental result events for struckdown.
 
-This module provides event types for incremental (slot-by-slot) result yielding.
-Events are yielded as each slot completes, allowing consumers to display
-progress in real-time.
+This module provides event types for incremental (slot-by-slot) result yielding
+and token-by-token streaming for free-form text slots.
 
-Terminology:
-- Incremental: Slot results yielded as they complete (this module)
-- Streaming: Token-by-token LLM output in real-time (future Phase 2)
+Event flow for a streaming free-text slot:
+  SlotStreamStart → TokenDelta → TokenDelta → ... → SlotCompleted
+
+Event flow for a constrained or non-streaming slot:
+  SlotCompleted
 """
 
 from typing import Dict, Literal, Optional, Union
@@ -50,6 +51,28 @@ class ProcessingComplete(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class SlotStreamStart(BaseModel):
+    """Emitted when a streamable (free-text) slot begins generating."""
+
+    type: Literal["stream_start"] = "stream_start"
+    segment_index: int
+    slot_key: str
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class TokenDelta(BaseModel):
+    """Emitted for each token chunk during streaming of a free-text slot."""
+
+    type: Literal["token_delta"] = "token_delta"
+    segment_index: int
+    slot_key: str
+    delta: str
+    accumulated: str
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 class ProcessingError(BaseModel):
     """Emitted when an error occurs during processing."""
 
@@ -63,5 +86,6 @@ class ProcessingError(BaseModel):
 
 
 IncrementalEvent = Union[
-    SlotCompleted, CheckpointReached, ProcessingComplete, ProcessingError
+    SlotCompleted, SlotStreamStart, TokenDelta,
+    CheckpointReached, ProcessingComplete, ProcessingError,
 ]
