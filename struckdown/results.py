@@ -67,6 +67,19 @@ class SegmentResult(BaseModel):
         description="Pydantic model schema (JSON Schema) for the expected response",
     )
 
+    @property
+    def thinking(self) -> Optional[str]:
+        """The model's thinking/reasoning text for this slot, if available.
+
+        Returns None when thinking was not enabled, the result was from cache
+        without thinking data, or debug data has been stripped.
+        """
+        if not self.completion:
+            return None
+        if isinstance(self.completion, dict):
+            return self.completion.get("_thinking")
+        return getattr(self.completion, "_thinking", None)
+
     def get_schema_summary(self) -> str:
         """Extract key constraints from response schema.
 
@@ -299,6 +312,15 @@ class ChatterResult(BaseModel):
     @property
     def outputs(self):
         return Box({k: v.output for k, v in self.results.items()})
+
+    @property
+    def thinking(self) -> Dict[str, str]:
+        """Thinking text for all slots that produced thinking content."""
+        return {
+            name: seg.thinking
+            for name, seg in self.results.items()
+            if seg.thinking is not None
+        }
 
     @property
     def total_cost(self) -> float:

@@ -587,6 +587,11 @@ def _build_completion_dict(
         except Exception:
             response_cost = None
 
+    # extract thinking content from model response (empty string -> None)
+    thinking = None
+    if model_response is not None:
+        thinking = getattr(model_response, "thinking", None) or None
+
     return {
         "usage": {
             "prompt_tokens": input_tokens,
@@ -601,6 +606,7 @@ def _build_completion_dict(
             "response_cost": response_cost,
         },
         "_request_messages": messages,
+        "_thinking": thinking,
     }
 
 
