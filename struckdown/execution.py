@@ -5,7 +5,7 @@ from collections import OrderedDict
 from typing import List
 
 from .jinja_utils import extract_jinja_variables
-from .results import ChatterResult
+from .results import StruckdownResult
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +104,11 @@ class SegmentDependencyGraph:
 
 
 async def merge_contexts(*contexts):
-    """Must be a task to preserve ordering/graph in chatter"""
+    """Must be a task to preserve ordering/graph in complete"""
     merged = {}
     if contexts:
         for c in contexts:
-            if isinstance(c, ChatterResult):
+            if isinstance(c, StruckdownResult):
                 for key, segment_result in c.results.items():
                     merged[key] = segment_result.output
             else:

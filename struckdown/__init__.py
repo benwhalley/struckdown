@@ -47,7 +47,7 @@ from .execution import SegmentDependencyGraph, merge_contexts
 from .incremental import (CheckpointReached, IncrementalEvent,
                           ProcessingComplete, ProcessingError, SlotCompleted,
                           SlotStreamStart, TokenDelta)
-# Import internal modules for chatter implementation
+# Import internal modules for complete implementation
 from .jinja_analysis import TemplateAnalysis, analyze_template
 # Re-export from jinja_utils module
 from .jinja_utils import (SilentUndefined, escape_context_dict,
@@ -68,7 +68,7 @@ from .parsing import (_add_default_completion_if_needed,
                       resolve_includes, split_by_checkpoint)
 from .response_types import ResponseTypes
 # Re-export from results module
-from .results import (ChatterResult, CostSummary, SegmentResult,
+from .results import (StruckdownResult, CostSummary, SlotResult,
                       StruckdownEarlyTermination, progress_tracking)
 from .return_type_models import (ACTION_LOOKUP, LLMConfig, SlotCategory,
                                 THINKING_LEVELS, classify_slot)
@@ -78,7 +78,7 @@ from .validation import (ParsedOptions, parse_options,
                          validate_number_constraints)
 
 
-async def _chatter_single_async(
+async def _complete_single_async(
     multipart_prompt: str,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
@@ -88,7 +88,7 @@ async def _chatter_single_async(
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
-) -> ChatterResult:
+) -> StruckdownResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
 
@@ -117,7 +117,7 @@ async def _chatter_single_async(
     logger.debug(f"Split into {len(raw_segments)} raw segments")
 
     # EXECUTION TIME: Process segments in batches (parallel within each batch)
-    final = ChatterResult()
+    final = StruckdownResult()
     accumulated_context = context.copy()
 
     # Track global system messages (persist across checkpoints)
@@ -345,7 +345,7 @@ async def _chatter_single_async(
     return final
 
 
-async def chatter_async(
+async def complete_async(
     multipart_prompt: str,
     context: Union[dict, List[dict]] = {},
     *,
@@ -358,7 +358,7 @@ async def chatter_async(
     strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
-) -> Union[ChatterResult, List[ChatterResult]]:
+) -> Union[StruckdownResult, List[StruckdownResult]]:
     """
     Process a struckdown template with one or more contexts.
 
@@ -366,11 +366,11 @@ async def chatter_async(
     When given a list, processes all contexts in parallel with concurrency control.
 
     Examples:
-        # Single context - returns ChatterResult
-        result = await chatter_async("tell a joke [[joke]]", {"topic": "cats"})
+        # Single context - returns StruckdownResult
+        result = await complete_async("tell a joke [[joke]]", {"topic": "cats"})
 
-        # Multiple contexts - returns List[ChatterResult]
-        results = await chatter_async(
+        # Multiple contexts - returns List[StruckdownResult]
+        results = await complete_async(
             "tell a joke about {{topic}} [[joke]]",
             [{"topic": "cats"}, {"topic": "dogs"}]
         )
@@ -388,12 +388,12 @@ async def chatter_async(
         on_complete: Optional callback(index, result) called after each completion (list mode only)
 
     Returns:
-        ChatterResult for single context, List[ChatterResult] for list of contexts.
+        StruckdownResult for single context, List[StruckdownResult] for list of contexts.
     """
     if isinstance(context, list):
         # Multiple contexts - process in parallel
         sem = anyio.Semaphore(max_concurrent) if max_concurrent else get_llm_semaphore()
-        results: List[ChatterResult | Exception] = [None] * len(context)
+        results: List[StruckdownResult | Exception] = [None] * len(context)
 
         async with anyio.create_task_group() as tg:
             for idx, ctx in enumerate(context):
@@ -401,7 +401,7 @@ async def chatter_async(
                 async def run_and_store(index=idx, context_item=ctx):
                     async with sem:
                         try:
-                            result = await _chatter_single_async(
+                            result = await _complete_single_async(
                                 multipart_prompt=multipart_prompt,
                                 context=context_item,
                                 model=model,
@@ -426,7 +426,7 @@ async def chatter_async(
         return results
     else:
         # Single context
-        return await _chatter_single_async(
+        return await _complete_single_async(
             multipart_prompt=multipart_prompt,
             context=context,
             model=model,
@@ -439,7 +439,7 @@ async def chatter_async(
         )
 
 
-def chatter(
+def complete(
     multipart_prompt: str,
     context: Union[dict, List[dict]] = {},
     *,
@@ -452,11 +452,11 @@ def chatter(
     strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
-) -> Union[ChatterResult, List[ChatterResult]]:
-    """Synchronous wrapper for chatter_async. Accepts single dict or list of dicts."""
+) -> Union[StruckdownResult, List[StruckdownResult]]:
+    """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
     return anyio.run(
         partial(
-            chatter_async,
+            complete_async,
             multipart_prompt,
             context,
             model=model,
@@ -472,7 +472,7 @@ def chatter(
     )
 
 
-async def chatter_incremental_async(
+async def complete_incremental_async(
     multipart_prompt: str,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
@@ -487,12 +487,12 @@ async def chatter_incremental_async(
     """
     Process a struckdown template, yielding events as slots complete.
 
-    This is the incremental (generator) version of chatter_async. It yields
+    This is the incremental (generator) version of complete_async. It yields
     events after each slot completion, allowing consumers to display progress
     in real-time. Independent segments are processed in parallel.
 
     Example:
-        async for event in chatter_incremental_async("tell a joke [[joke]]"):
+        async for event in complete_incremental_async("tell a joke [[joke]]"):
             if event.type == "slot_completed":
                 print(f"{event.slot_key}: {event.result.output}")
 
@@ -510,7 +510,7 @@ async def chatter_incremental_async(
         IncrementalEvent objects:
         - SlotCompleted: after each slot is filled
         - CheckpointReached: after a <checkpoint> boundary
-        - ProcessingComplete: final event with aggregated ChatterResult
+        - ProcessingComplete: final event with aggregated StruckdownResult
         - ProcessingError: if an error occurs (includes partial results)
     """
     import asyncio
@@ -541,7 +541,7 @@ async def chatter_incremental_async(
     logger.debug(f"Split into {len(raw_segments)} raw segments")
 
     # EXECUTION TIME: Process segments in batches (parallel within each batch)
-    all_results = ChatterResult()
+    all_results = StruckdownResult()
     accumulated_context = context.copy()
 
     # Track global system messages (persist across checkpoints)
@@ -846,7 +846,7 @@ async def chatter_incremental_async(
     yield ProcessingComplete(result=all_results, early_termination=False)
 
 
-def chatter_incremental(
+def complete_incremental(
     multipart_prompt: str,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
@@ -858,10 +858,10 @@ def chatter_incremental(
     stream: bool = False,
     strict_params: bool = False,
 ) -> Generator[IncrementalEvent, None, None]:
-    """Synchronous wrapper for chatter_incremental_async.
+    """Synchronous wrapper for complete_incremental_async.
 
     Note: This collects all events then yields them. For true incremental
-    processing, use chatter_incremental_async() in an async context.
+    processing, use complete_incremental_async() in an async context.
     Streaming is disabled by default since it provides no benefit
     when events are collected synchronously.
     """
@@ -871,7 +871,7 @@ def chatter_incremental(
     async def collect():
         return [
             e
-            async for e in chatter_incremental_async(
+            async for e in complete_incremental_async(
                 multipart_prompt,
                 model,
                 credentials,
@@ -894,12 +894,12 @@ __all__ = [
     # Version
     "__version__",
     # Main entry points
-    "chatter",
-    "chatter_async",
-    "chatter_many",
-    "chatter_many_async",
-    "chatter_incremental",
-    "chatter_incremental_async",
+    "complete",
+    "complete_async",
+    "complete_many",
+    "complete_many_async",
+    "complete_incremental",
+    "complete_incremental_async",
     "structured_chat",
     "get_embedding",
     "get_embedding_async",
@@ -913,8 +913,8 @@ __all__ = [
     "ProcessingComplete",
     "ProcessingError",
     # Results
-    "SegmentResult",
-    "ChatterResult",
+    "SlotResult",
+    "StruckdownResult",
     "CostSummary",
     # LLM
     "LLM",

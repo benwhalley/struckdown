@@ -5,7 +5,7 @@ Tests for prompt injection prevention via escaping of struckdown syntax.
 import logging
 import unittest
 
-from struckdown import chatter, escape_context_dict, escape_struckdown_syntax
+from struckdown import complete, escape_context_dict, escape_struckdown_syntax
 
 
 class EscapingTestCase(unittest.TestCase):
@@ -132,7 +132,7 @@ class EscapingTestCase(unittest.TestCase):
 
 
 class PromptInjectionIntegrationTestCase(unittest.TestCase):
-    """Integration tests for prompt injection prevention in chatter"""
+    """Integration tests for prompt injection prevention in complete"""
 
     def test_llm_output_is_escaped(self):
         """Test that LLM outputs containing struckdown syntax are escaped"""

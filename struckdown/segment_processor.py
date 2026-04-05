@@ -224,7 +224,7 @@ async def _process_together_group(
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat
-    from .results import SegmentResult, get_progress_callback
+    from .results import SlotResult, get_progress_callback
 
     # Find all unfilled slots in this together group
     group_slots = [
@@ -377,7 +377,7 @@ async def _process_together_group(
             except Exception:
                 pass
 
-        segment_result = SegmentResult(
+        segment_result = SlotResult(
             name=slot_key,
             output=extracted_value,
             completion=completion_obj,
@@ -462,7 +462,7 @@ async def process_segment_with_delta_incremental(
     from .incremental import SlotCompleted, SlotStreamStart, TokenDelta
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat, structured_chat_async
-    from .results import SegmentResult, get_progress_callback
+    from .results import SlotResult, get_progress_callback
     from .return_type_models import SlotCategory, classify_slot, compute_optimal_max_tokens
 
     # template_str is the body only (system already extracted by caller)
@@ -705,7 +705,7 @@ async def process_segment_with_delta_incremental(
                 pass
 
         # Build result
-        segment_result = SegmentResult(
+        segment_result = SlotResult(
             name=slot_key,
             output=extracted_value,
             completion=completion_obj,
@@ -767,7 +767,7 @@ async def process_segment_with_delta(
 ):
     """Process a template segment using delta-based re-rendering.
 
-    This is the non-incremental version that returns a ChatterResult after
+    This is the non-incremental version that returns a StruckdownResult after
     all slots are filled. It internally consumes the incremental generator.
 
     Args:
@@ -781,11 +781,11 @@ async def process_segment_with_delta(
         **extra_kwargs: Additional LLM parameters
 
     Returns:
-        ChatterResult with all slot completions
+        StruckdownResult with all slot completions
     """
-    from .results import ChatterResult
+    from .results import StruckdownResult
 
-    results = ChatterResult()
+    results = StruckdownResult()
 
     async for event in process_segment_with_delta_incremental(
         template_str=template_str,

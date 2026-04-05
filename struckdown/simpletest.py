@@ -1,5 +1,5 @@
-from struckdown import chatter
+from struckdown import complete
 
 xx = """pick the green one [[pick:fruit|{{cc}}]]"""
 
-chatter(xx, context={"cc": "apple,orange,banana"}).response
+complete(xx, context={"cc": "apple,orange,banana"}).response

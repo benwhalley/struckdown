@@ -7,7 +7,7 @@ The escaping mechanism inserts zero-width space (U+200B) into dangerous patterns
 - `[[` becomes `[\u200b[` (breaks slot/action syntax)
 - `¡SYSTEM` becomes `¡\u200bSYSTEM` (breaks legacy system syntax)
 
-IMPORTANT: The SegmentResult.output stores the RAW LLM output (for display).
+IMPORTANT: The SlotResult.output stores the RAW LLM output (for display).
 The escaping happens when values are stored in accumulated_context, which
 is used for subsequent Jinja renders. This prevents injection while preserving
 visibility into what the LLM actually returned.

@@ -631,7 +631,7 @@ def summarize_completion(
         One-sentence summary or None if summarization fails
     """
     try:
-        from struckdown import chatter
+        from struckdown import complete
 
         # Escape both struckdown commands and template syntax
         escaped_current = _escape_for_summary(current_prompt_text)
@@ -655,7 +655,7 @@ def summarize_completion(
 This is an instruction given to an LLM. We want to give a 1 line summary in a UI of the LAST instruction.
 Summarise the instruction in ~12 words max. Use imperative form (i.e. as though you are telling someone what to do this instruction yourself). Be extremely concise:[[response]]"""
 
-        result = chatter(summary_prompt)
+        result = complete(summary_prompt)
         if result:
             return result["response"].strip()
         return None

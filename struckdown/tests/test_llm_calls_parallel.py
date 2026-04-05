@@ -1,6 +1,6 @@
 """
 Tests for parallel LLM calling functionality.
-This file tests the parallel processing and dependency resolution of chatter.
+This file tests the parallel processing and dependency resolution of complete.
 """
 
 import asyncio
@@ -8,8 +8,8 @@ import unittest
 from collections import OrderedDict
 from unittest.mock import AsyncMock, Mock, patch
 
-from struckdown import (ChatterResult, SegmentDependencyGraph, chatter,
-                        chatter_async)
+from struckdown import (StruckdownResult, SegmentDependencyGraph, complete,
+                        complete_async)
 
 
 class ParallelLLMCallsTestCase(unittest.TestCase):

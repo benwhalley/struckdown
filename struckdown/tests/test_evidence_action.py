@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from struckdown import chatter
+from struckdown import complete
 from struckdown.actions import Actions
 from struckdown.actions.evidence import (chunk_text, evidence_search,
                                          load_evidence_files)
@@ -218,7 +218,7 @@ class TestEvidenceActionRegistration:
 
 
 class TestEvidenceIntegration:
-    """Integration tests using chatter() with @evidence action"""
+    """Integration tests using complete() with @evidence action"""
 
     def test_evidence_in_template_context(self):
         """Test that @evidence output is available in template"""
@@ -244,7 +244,7 @@ Based on the evidence above, what is the capital of France?
                 mock_completion = {"usage": {"total_tokens": 10}}
                 mock_chat.return_value = (mock_result, mock_completion)
 
-                result = chatter(template, context={"evidence_folder": str(folder)})
+                result = complete(template, context={"evidence_folder": str(folder)})
 
                 # verify structured_chat was called
                 assert mock_chat.called
@@ -276,7 +276,7 @@ Answer: [[answer]]
             mock_chat.return_value = (mock_result, mock_completion)
 
             # should not raise, even without evidence folder
-            result = chatter(template, context={})
+            result = complete(template, context={})
 
             assert mock_chat.called
 
@@ -306,7 +306,7 @@ What is the speed of light?
                 mock_chat.return_value = (mock_result, mock_completion)
 
                 # pass _template_path to trigger auto-discovery
-                result = chatter(
+                result = complete(
                     template,
                     context={"_template_path": str(template_dir / "prompt.sd")},
                 )

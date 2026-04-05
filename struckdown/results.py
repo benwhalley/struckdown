@@ -27,14 +27,14 @@ def progress_tracking(on_api_call: Callable[[], None]):
     """Context manager for tracking individual API calls.
 
     Allows callers to receive a callback after each LLM completion,
-    enabling real-time progress updates without changing the chatter() signature.
+    enabling real-time progress updates without changing the complete() signature.
 
     Usage:
         def on_call():
             print("API call completed!")
 
         with progress_tracking(on_api_call=on_call):
-            result = chatter(...)  # on_call() fires after each completion
+            result = complete(...)  # on_call() fires after each completion
     """
     token = _progress_callback.set(on_api_call)
     try:
@@ -43,7 +43,7 @@ def progress_tracking(on_api_call: Callable[[], None]):
         _progress_callback.reset(token)
 
 
-class SegmentResult(BaseModel):
+class SlotResult(BaseModel):
     name: Optional[str] = Field(
         default=None, description="The slot/variable name for this result"
     )
@@ -167,7 +167,7 @@ class SegmentResult(BaseModel):
     def reconstruct_typed_output(cls, data: Any) -> Any:
         """Reconstruct registered Pydantic models from dict during deserialization.
 
-        When SegmentResult is loaded from JSON, action outputs (like FoundEvidenceSet)
+        When SlotResult is loaded from JSON, action outputs (like FoundEvidenceSet)
         are plain dicts. This validator checks if the action has a registered return_type
         and reconstructs the Pydantic model, preserving computed fields and methods.
 
@@ -202,12 +202,12 @@ class SegmentResult(BaseModel):
         return str(self.output)
 
     def __repr__(self):
-        """Debug representation shows it's a SegmentResult with the output"""
-        return f"SegmentResult(name={self.name!r}, output={self.output!r}, action={self.action!r})"
+        """Debug representation shows it's a SlotResult with the output"""
+        return f"SlotResult(name={self.name!r}, output={self.output!r}, action={self.action!r})"
 
     def __eq__(self, other):
         """Equality compares the output value"""
-        if isinstance(other, SegmentResult):
+        if isinstance(other, SlotResult):
             return self.output == other.output
         return self.output == other
 
@@ -223,12 +223,12 @@ class SegmentResult(BaseModel):
             return hash(id(self))
 
 
-class ChatterResult(BaseModel):
+class StruckdownResult(BaseModel):
     type: str = Field(
         default="chatter", description="Discriminator field for union serialization"
     )
-    results: Dict[str, SegmentResult] = Field(default_factory=dict)
-    interim_results: Dict[str, List[SegmentResult]] = Field(
+    results: Dict[str, SlotResult] = Field(default_factory=dict)
+    interim_results: Dict[str, List[SlotResult]] = Field(
         default_factory=dict,
         description="Intermediate LLM calls and processing steps for multi-stage extractions (e.g., pattern expansion)",
     )
@@ -245,7 +245,7 @@ class ChatterResult(BaseModel):
         # show outputs dict
         outputs_repr = {k: str(v.output) for k, v in self.results.items()}
 
-        return f"<ChatterResult: outputs={outputs_repr}, prompt='{first_prompt}'>"
+        return f"<StruckdownResult: outputs={outputs_repr}, prompt='{first_prompt}'>"
 
     def __getitem__(self, key):
         return self.results[key].output
@@ -264,11 +264,11 @@ class ChatterResult(BaseModel):
             return self.results[name].output
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
-    def strip_debug_data(self) -> "ChatterResult":
+    def strip_debug_data(self) -> "StruckdownResult":
         """Return a copy with prompts and completions removed for compact storage."""
         stripped = {}
         for name, seg in self.results.items():
-            stripped[name] = SegmentResult(
+            stripped[name] = SlotResult(
                 name=seg.name,
                 prompt="",
                 output=seg.output,
@@ -276,20 +276,20 @@ class ChatterResult(BaseModel):
                 action=seg.action,
                 options=seg.options,
             )
-        return ChatterResult(results=stripped, interim_results={})
+        return StruckdownResult(results=stripped, interim_results={})
 
-    def __setitem__(self, key: str, value: SegmentResult):
-        """Set a result, enforcing SegmentResult type and ensuring name is set."""
-        if not isinstance(value, SegmentResult):
+    def __setitem__(self, key: str, value: SlotResult):
+        """Set a result, enforcing SlotResult type and ensuring name is set."""
+        if not isinstance(value, SlotResult):
             raise TypeError(
-                f"ChatterResult only accepts SegmentResult values, got {type(value).__name__}"
+                f"StruckdownResult only accepts SlotResult values, got {type(value).__name__}"
             )
         if value.name is None:
             value.name = key
         self.results[key] = value
 
-    def update(self, d: Dict[str, SegmentResult]):
-        """Update results with a dict of SegmentResults, ensuring names are set."""
+    def update(self, d: Dict[str, SlotResult]):
+        """Update results with a dict of SlotResults, ensuring names are set."""
         for k, v in d.items():
             if v.name is None:
                 v.name = k
@@ -456,7 +456,7 @@ class ChatterResult(BaseModel):
 
 
 class CostSummary(BaseModel):
-    """Aggregated cost summary from multiple ChatterResult objects.
+    """Aggregated cost summary from multiple StruckdownResult objects.
 
     Consolidates cost tracking logic for display in CLIs.
     """
@@ -473,11 +473,11 @@ class CostSummary(BaseModel):
     all_costs_unknown: bool = False
 
     @classmethod
-    def from_results(cls, results: List["ChatterResult"]) -> "CostSummary":
-        """Aggregate cost data from multiple ChatterResult objects.
+    def from_results(cls, results: List["StruckdownResult"]) -> "CostSummary":
+        """Aggregate cost data from multiple StruckdownResult objects.
 
         Args:
-            results: List of ChatterResult objects to aggregate
+            results: List of StruckdownResult objects to aggregate
 
         Returns:
             CostSummary with aggregated data
@@ -580,5 +580,5 @@ class StruckdownEarlyTermination(Exception):
     def __init__(self, message, partial_results=None):
         super().__init__(message)
         self.partial_results = (
-            partial_results if partial_results is not None else ChatterResult()
+            partial_results if partial_results is not None else StruckdownResult()
         )

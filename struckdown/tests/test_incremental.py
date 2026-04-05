@@ -1,7 +1,7 @@
 """Tests for incremental result yielding."""
 
 from struckdown import (CheckpointReached, ProcessingComplete, ProcessingError,
-                        SlotCompleted, chatter_incremental)
+                        SlotCompleted, complete_incremental)
 
 
 class TestIncrementalEventTypes:
@@ -10,9 +10,9 @@ class TestIncrementalEventTypes:
     def test_slot_completed_type_literal(self):
         """SlotCompleted has correct type literal."""
         from struckdown.incremental import SlotCompleted
-        from struckdown.results import SegmentResult
+        from struckdown.results import SlotResult
 
-        result = SegmentResult(name="test", output="value", prompt="prompt")
+        result = SlotResult(name="test", output="value", prompt="prompt")
         event = SlotCompleted(
             segment_index=0,
             slot_key="test",
@@ -33,23 +33,23 @@ class TestIncrementalEventTypes:
 
     def test_processing_complete_type_literal(self):
         """ProcessingComplete has correct type literal."""
-        from struckdown.results import ChatterResult
+        from struckdown.results import StruckdownResult
 
         event = ProcessingComplete(
-            result=ChatterResult(),
+            result=StruckdownResult(),
             early_termination=False,
         )
         assert event.type == "complete"
 
     def test_processing_error_type_literal(self):
         """ProcessingError has correct type literal."""
-        from struckdown.results import ChatterResult
+        from struckdown.results import StruckdownResult
 
         event = ProcessingError(
             segment_index=0,
             slot_key="test",
             error_message="test error",
-            partial_results=ChatterResult(),
+            partial_results=StruckdownResult(),
         )
         assert event.type == "error"
 
@@ -60,9 +60,9 @@ class TestIncrementalEventSerialization:
     def test_slot_completed_serializes(self):
         """SlotCompleted can be serialized to JSON."""
         from struckdown.incremental import SlotCompleted
-        from struckdown.results import SegmentResult
+        from struckdown.results import SlotResult
 
-        result = SegmentResult(name="test", output="value", prompt="prompt")
+        result = SlotResult(name="test", output="value", prompt="prompt")
         event = SlotCompleted(
             segment_index=0,
             slot_key="test",
@@ -87,10 +87,10 @@ class TestIncrementalEventSerialization:
 
     def test_processing_complete_serializes(self):
         """ProcessingComplete can be serialized to JSON."""
-        from struckdown.results import ChatterResult
+        from struckdown.results import StruckdownResult
 
         event = ProcessingComplete(
-            result=ChatterResult(),
+            result=StruckdownResult(),
             early_termination=False,
         )
         json_str = event.model_dump_json()
@@ -98,12 +98,12 @@ class TestIncrementalEventSerialization:
 
 
 class TestChatterIncremental:
-    """Test chatter_incremental function (sync wrapper)."""
+    """Test complete_incremental function (sync wrapper)."""
 
     def test_single_slot_yields_events(self):
         """Single slot yields SlotCompleted, CheckpointReached, ProcessingComplete."""
         # Use template with content before slot to ensure messages are generated
-        events = list(chatter_incremental("Say hello: [[greeting]]"))
+        events = list(complete_incremental("Say hello: [[greeting]]"))
 
         # Should have at least 3 events
         assert len(events) >= 3
@@ -123,7 +123,7 @@ class TestChatterIncremental:
     def test_multiple_slots_yield_in_order(self):
         """Multiple slots yield events in template order."""
         events = list(
-            chatter_incremental("Say a: [[a]] then say b: [[b]] then say c: [[c]]")
+            complete_incremental("Say a: [[a]] then say b: [[b]] then say c: [[c]]")
         )
 
         slot_events = [e for e in events if e.type == "slot_completed"]
@@ -134,7 +134,7 @@ class TestChatterIncremental:
     def test_checkpoint_separates_segments(self):
         """Checkpoint yields CheckpointReached events."""
         template = "First: [[a]] <checkpoint> Second: [[b]]"
-        events = list(chatter_incremental(template))
+        events = list(complete_incremental(template))
 
         checkpoints = [e for e in events if e.type == "checkpoint"]
         # Two segments = two checkpoint events
@@ -142,15 +142,15 @@ class TestChatterIncremental:
 
     def test_slot_completed_has_timing(self):
         """SlotCompleted events include elapsed_ms."""
-        events = list(chatter_incremental("Say something: [[x]]"))
+        events = list(complete_incremental("Say something: [[x]]"))
 
         slot_event = next(e for e in events if e.type == "slot_completed")
         assert hasattr(slot_event, "elapsed_ms")
         assert slot_event.elapsed_ms >= 0
 
     def test_slot_completed_has_result(self):
-        """SlotCompleted events include full SegmentResult."""
-        events = list(chatter_incremental("Tell a joke: [[joke]]"))
+        """SlotCompleted events include full SlotResult."""
+        events = list(complete_incremental("Tell a joke: [[joke]]"))
 
         slot_event = next(e for e in events if e.type == "slot_completed")
         assert hasattr(slot_event, "result")
@@ -160,7 +160,7 @@ class TestChatterIncremental:
     def test_final_result_contains_all_slots(self):
         """ProcessingComplete result contains all slot results."""
         template = "Say a: [[a]] Say b: [[b]]"
-        events = list(chatter_incremental(template))
+        events = list(complete_incremental(template))
 
         complete_event = next(e for e in events if e.type == "complete")
         assert "a" in complete_event.result.results
@@ -171,14 +171,14 @@ class TestChatterIncremental:
         template = "The topic is {{topic}}. Respond: [[response]]"
         context = {"topic": "testing"}
 
-        events = list(chatter_incremental(template, context=context))
+        events = list(complete_incremental(template, context=context))
 
         # Should complete without error
         assert events[-1].type == "complete"
 
     def test_was_cached_flag_present(self):
         """SlotCompleted events include was_cached flag."""
-        events = list(chatter_incremental("Say x: [[x]]"))
+        events = list(complete_incremental("Say x: [[x]]"))
 
         slot_event = next(e for e in events if e.type == "slot_completed")
         assert hasattr(slot_event, "was_cached")
@@ -186,7 +186,7 @@ class TestChatterIncremental:
 
     def test_checkpoint_has_accumulated_results(self):
         """CheckpointReached events include accumulated_results."""
-        events = list(chatter_incremental("Say a: [[a]] Say b: [[b]]"))
+        events = list(complete_incremental("Say a: [[a]] Say b: [[b]]"))
 
         checkpoint = next(e for e in events if e.type == "checkpoint")
         assert hasattr(checkpoint, "accumulated_results")
@@ -204,7 +204,7 @@ class TestIncrementalMatchesNonIncremental:
         template = "Rate from 1-10: [[number:rating]]"
 
         # Run incremental
-        events = list(chatter_incremental(template))
+        events = list(complete_incremental(template))
         incremental_result = events[-1].result
 
         # The results should have the same keys
@@ -215,7 +215,7 @@ class TestIncrementalMatchesNonIncremental:
         # Use a clear true/false question to get a definite boolean
         template = "Is 2 + 2 = 4? [[bool:answer]]"
 
-        events = list(chatter_incremental(template))
+        events = list(complete_incremental(template))
         incremental_result = events[-1].result
 
         # Should have boolean output (or None if LLM can't determine)
@@ -228,14 +228,14 @@ class TestIncrementalMatchesNonIncremental:
     def test_typed_slots_work(self):
         """Various typed slots work with incremental mode."""
         # Test pick type
-        events = list(chatter_incremental("Pick one: [[pick:choice|a,b,c]]"))
+        events = list(complete_incremental("Pick one: [[pick:choice|a,b,c]]"))
         assert events[-1].type == "complete"
         assert "choice" in events[-1].result.results
 
     def test_segment_index_increases(self):
         """Segment index increases across checkpoints."""
         template = "First: [[a]] <checkpoint> Second: [[b]] <checkpoint> Third: [[c]]"
-        events = list(chatter_incremental(template))
+        events = list(complete_incremental(template))
 
         slot_events = [e for e in events if e.type == "slot_completed"]
 

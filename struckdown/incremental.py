@@ -14,7 +14,7 @@ from typing import Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
-from .results import ChatterResult, SegmentResult
+from .results import StruckdownResult, SlotResult
 
 
 class SlotCompleted(BaseModel):
@@ -23,7 +23,7 @@ class SlotCompleted(BaseModel):
     type: Literal["slot_completed"] = "slot_completed"
     segment_index: int
     slot_key: str
-    result: SegmentResult
+    result: SlotResult
     elapsed_ms: float
     was_cached: bool
 
@@ -36,7 +36,7 @@ class CheckpointReached(BaseModel):
     type: Literal["checkpoint"] = "checkpoint"
     segment_index: int
     segment_name: Optional[str] = None
-    accumulated_results: Dict[str, SegmentResult]
+    accumulated_results: Dict[str, SlotResult]
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -45,7 +45,7 @@ class ProcessingComplete(BaseModel):
     """Final event with aggregated results."""
 
     type: Literal["complete"] = "complete"
-    result: ChatterResult
+    result: StruckdownResult
     early_termination: bool = False
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -80,7 +80,7 @@ class ProcessingError(BaseModel):
     segment_index: int
     slot_key: Optional[str] = None
     error_message: str
-    partial_results: ChatterResult
+    partial_results: StruckdownResult
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

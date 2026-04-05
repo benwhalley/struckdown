@@ -30,7 +30,7 @@ def history_action(
 
     The filename can be:
     1. Passed directly: [[@history|conversation.txt]]
-    2. Set via context['_history_file'] (from CLI --history option or chatter() call)
+    2. Set via context['_history_file'] (from CLI --history option or complete() call)
 
     Usage:
         [[@history]]                                    # uses context['_history_file']
@@ -87,7 +87,7 @@ def history_action(
         if filename is None:
             raise ValueError(
                 "No history file specified. Either pass a filename to @history or "
-                "set context['_history_file'] (via CLI --history or chatter() context)"
+                "set context['_history_file'] (via CLI --history or complete() context)"
             )
 
         # Read file relative to cwd

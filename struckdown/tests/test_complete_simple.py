@@ -1,23 +1,23 @@
 """
-Simple unit tests for chatter functionality that don't require database setup.
+Simple unit tests for complete functionality that don't require database setup.
 """
 
 import unittest
 from collections import OrderedDict
 from unittest.mock import Mock
 
-from struckdown import ChatterResult, SegmentDependencyGraph, SegmentResult
+from struckdown import StruckdownResult, SegmentDependencyGraph, SlotResult
 
 
 class ChatterSimpleTestCase(unittest.TestCase):
-    def test_chatter_result_properties(self):
-        """Test ChatterResult helper properties work correctly"""
-        result = ChatterResult()
-        result["first"] = SegmentResult(name="first", output="first_value", prompt="")
-        result["second"] = SegmentResult(
+    def test_complete_result_properties(self):
+        """Test StruckdownResult helper properties work correctly"""
+        result = StruckdownResult()
+        result["first"] = SlotResult(name="first", output="first_value", prompt="")
+        result["second"] = SlotResult(
             name="second", output="second_value", prompt=""
         )
-        result["last"] = SegmentResult(name="last", output="last_value", prompt="")
+        result["last"] = SlotResult(name="last", output="last_value", prompt="")
 
         # Test .response property returns the last item
         self.assertEqual(result.response, "last_value")
@@ -32,14 +32,14 @@ class ChatterSimpleTestCase(unittest.TestCase):
         keys = list(result.keys())
         self.assertEqual(keys, ["first", "second", "last"])
 
-    def test_chatter_result_ordering(self):
-        """Test that ChatterResult preserves insertion order"""
-        result = ChatterResult()
+    def test_complete_result_ordering(self):
+        """Test that StruckdownResult preserves insertion order"""
+        result = StruckdownResult()
 
         # Add items in specific order
-        result["zebra"] = SegmentResult(name="zebra", output="z", prompt="")
-        result["apple"] = SegmentResult(name="apple", output="a", prompt="")
-        result["banana"] = SegmentResult(name="banana", output="b", prompt="")
+        result["zebra"] = SlotResult(name="zebra", output="z", prompt="")
+        result["apple"] = SlotResult(name="apple", output="a", prompt="")
+        result["banana"] = SlotResult(name="banana", output="b", prompt="")
 
         # Verify order is preserved
         keys = list(result.keys())
@@ -48,16 +48,16 @@ class ChatterSimpleTestCase(unittest.TestCase):
         # Verify response is last inserted
         self.assertEqual(result.response, "b")
 
-    def test_chatter_result_type_enforcement(self):
-        """Test that ChatterResult enforces SegmentResult type"""
-        result = ChatterResult()
+    def test_complete_result_type_enforcement(self):
+        """Test that StruckdownResult enforces SlotResult type"""
+        result = StruckdownResult()
 
-        # Should raise TypeError when trying to assign non-SegmentResult
+        # Should raise TypeError when trying to assign non-SlotResult
         with self.assertRaises(TypeError) as context:
             result["key"] = "raw_string"
 
         self.assertIn(
-            "ChatterResult only accepts SegmentResult values", str(context.exception)
+            "StruckdownResult only accepts SlotResult values", str(context.exception)
         )
         self.assertIn("str", str(context.exception))
 

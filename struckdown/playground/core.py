@@ -15,7 +15,7 @@ import anyio
 import pandas as pd
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken
 
-from struckdown import (LLM, LLMCredentials, chatter_async,
+from struckdown import (LLM, LLMCredentials, complete_async,
                         extract_jinja_variables)
 from struckdown.parsing import (extract_slot_key, extract_slot_variable_refs,
                                 find_slots_with_positions, parser)
@@ -310,7 +310,7 @@ async def run_single(
                 inputs = {**inputs, "_evidence_store": evidence_chunks}
 
         model = LLM(model_name=model_name) if model_name else LLM()
-        result = await chatter_async(
+        result = await complete_async(
             syntax,
             model=model,
             credentials=credentials,
@@ -319,7 +319,7 @@ async def run_single(
             strict_undefined=strict_undefined,
         )
 
-        # Build cost info from ChatterResult properties
+        # Build cost info from StruckdownResult properties
         cost_info = None
         try:
             cost_info = {
@@ -390,7 +390,7 @@ async def run_batch_streaming(
         on_row_complete: Optional callback called with result dict
         slot_level: If True, yield slot-level events for incremental updates
     """
-    from struckdown import chatter_incremental_async
+    from struckdown import complete_incremental_async
 
     model = LLM(model_name=model_name) if model_name else LLM()
     semaphore = anyio.Semaphore(max_concurrent)
@@ -407,7 +407,7 @@ async def run_batch_streaming(
                 # Use incremental mode for slot-level events
                 outputs = {}
                 try:
-                    async for event in chatter_incremental_async(
+                    async for event in complete_incremental_async(
                         syntax,
                         model=model,
                         credentials=credentials,
@@ -466,7 +466,7 @@ async def run_batch_streaming(
             else:
                 # Original row-level mode
                 try:
-                    result = await chatter_async(
+                    result = await complete_async(
                         syntax,
                         model=model,
                         credentials=credentials,

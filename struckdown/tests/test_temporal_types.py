@@ -7,7 +7,7 @@ import unittest
 from datetime import date, datetime, time, timedelta
 from unittest.mock import Mock, patch
 
-from struckdown import chatter
+from struckdown import complete
 from struckdown.parsing import parse_syntax
 from struckdown.return_type_models import (date_response_model,
                                            datetime_response_model,

@@ -21,7 +21,7 @@ from rich.progress import (BarColumn, Progress, SpinnerColumn,
                            TaskProgressColumn, TextColumn, TimeRemainingColumn)
 
 from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, LLMError,
-               TemplateError, __version__, chatter, chatter_async,
+               TemplateError, __version__, complete, complete_async,
                get_embedding, progress_tracking, structured_chat)
 from .actions import discover_actions, load_actions
 from .output_formatters import render_template, write_output
@@ -104,7 +104,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     # Read template
     template_text = prompt_file.read_text()
 
-    # Configure search paths (same as chatter)
+    # Configure search paths (same as complete)
     search_paths = [
         prompt_file.parent,
         prompt_file.parent / "templates",
@@ -197,7 +197,7 @@ async def _run_chat_incremental(
     show_context: bool,
     stream: bool = True,
     strict_params: bool = False,
-) -> tuple["ChatterResult", Optional["SegmentResult"]]:
+) -> tuple["StruckdownResult", Optional["SlotResult"]]:
     """Process prompt incrementally, printing results as slots complete.
 
     When stream=True, free-text slots are streamed word-by-word to the console.
@@ -208,18 +208,18 @@ async def _run_chat_incremental(
         2 (-vv): detailed slot info (timing, segment) + messages + outputs
         3+ (-vvv): all above + response schema
     """
-    from . import chatter_incremental_async
+    from . import complete_incremental_async
     from .incremental import (CheckpointReached, ProcessingComplete,
                               ProcessingError, SlotCompleted,
                               SlotStreamStart, TokenDelta)
-    from .results import ChatterResult
+    from .results import StruckdownResult
 
     break_result = None
     final_result = None
     slot_count = 0
     streaming_slot = None  # track which slot is currently streaming
 
-    async for event in chatter_incremental_async(
+    async for event in complete_incremental_async(
         multipart_prompt=prompt_str,
         model=model,
         credentials=credentials,
@@ -368,7 +368,7 @@ async def _run_chat_interactive(
     History is saved to .struckdown-chat-history on exit and resumed
     automatically if no --history file is specified.
     """
-    from . import chatter_incremental_async
+    from . import complete_incremental_async
     from .incremental import ProcessingComplete, ProcessingError, SlotCompleted
 
     # Determine which history file to use
@@ -388,7 +388,7 @@ async def _run_chat_interactive(
             final_result = None
             break_result = None
 
-            async for event in chatter_incremental_async(
+            async for event in complete_incremental_async(
                 multipart_prompt=prompt_str,
                 model=model,
                 credentials=credentials,
@@ -590,7 +590,7 @@ def chat(
     ),
 ):
     """
-    Run a single chatter prompt (interactive mode).
+    Run a single complete prompt (interactive mode).
 
     Examples:
         sd chat "tell a joke [[joke]]"
@@ -986,8 +986,8 @@ async def batch_async(
     results = [None] * len(input_data)
     errors = []
 
-    # cost tracking - collect all ChatterResults for CostSummary
-    chatter_results = []
+    # cost tracking - collect all StruckdownResults for CostSummary
+    complete_results = []
     cost_lock = anyio.Lock()
 
     # Count slots in prompt to estimate total completions
@@ -1044,10 +1044,10 @@ async def batch_async(
                                             description=f"{api_call_count[0]}/{estimated_completions} completions",
                                         )
 
-                                # Execute chatter_async with progress tracking
+                                # Execute complete_async with progress tracking
                                 # Use strict_undefined to catch column name mismatches
                                 with progress_tracking(on_api_call=on_api_call):
-                                    result = await chatter_async(
+                                    result = await complete_async(
                                         multipart_prompt=prompt,
                                         model=model,
                                         credentials=credentials,
@@ -1060,7 +1060,7 @@ async def batch_async(
 
                                 # collect result for cost tracking
                                 async with cost_lock:
-                                    chatter_results.append(result)
+                                    complete_results.append(result)
 
                                 # Merge input data with extracted results
                                 output_item = _merge_result_with_input(
@@ -1103,10 +1103,10 @@ async def batch_async(
                             def on_api_call():
                                 api_call_count[0] += 1
 
-                            # Execute chatter_async with progress tracking
+                            # Execute complete_async with progress tracking
                             # Use strict_undefined to catch column name mismatches
                             with progress_tracking(on_api_call=on_api_call):
-                                result = await chatter_async(
+                                result = await complete_async(
                                     multipart_prompt=prompt,
                                     model=model,
                                     credentials=credentials,
@@ -1119,7 +1119,7 @@ async def batch_async(
 
                             # collect result for cost tracking
                             async with cost_lock:
-                                chatter_results.append(result)
+                                complete_results.append(result)
 
                             # Merge input data with extracted results
                             output_item = _merge_result_with_input(
@@ -1150,7 +1150,7 @@ async def batch_async(
                 tg.start_soon(run_and_store)
 
     # print cost summary to stderr (always visible)
-    summary = CostSummary.from_results(chatter_results)
+    summary = CostSummary.from_results(complete_results)
     typer.echo(summary.format_summary(), err=True)
 
     # Show cost estimate for full run if --head was used

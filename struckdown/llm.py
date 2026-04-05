@@ -564,7 +564,7 @@ def _messages_to_user_prompt(messages: List[Dict[str, str]]) -> str:
 def _build_completion_dict(
     model_response, messages: List[Dict[str, str]], cost: Optional[float] = None,
 ) -> dict:
-    """Build a completion dict compatible with ChatterResult consumers.
+    """Build a completion dict compatible with StruckdownResult consumers.
 
     The dict structure matches what downstream code expects:
     - usage.prompt_tokens, usage.completion_tokens

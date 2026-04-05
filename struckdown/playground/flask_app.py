@@ -742,7 +742,7 @@ def create_app(
         """
         import asyncio
 
-        from struckdown import LLMCredentials, chatter_incremental_async
+        from struckdown import LLMCredentials, complete_incremental_async
 
         data = get_json_safe()
         syntax = data.get("syntax", "")
@@ -828,7 +828,7 @@ def create_app(
                 """Async generator to collect events."""
                 model = LLM(model_name=model_name) if model_name else LLM()
                 try:
-                    async for event in chatter_incremental_async(
+                    async for event in complete_incremental_async(
                         syntax,
                         model=model,
                         credentials=credentials,
@@ -838,13 +838,13 @@ def create_app(
                         yield event
                 except Exception as e:
                     # Yield error event
-                    from struckdown import ChatterResult, ProcessingError
+                    from struckdown import StruckdownResult, ProcessingError
 
                     yield ProcessingError(
                         segment_index=0,
                         slot_key=None,
                         error_message=safe_error_message(e, remote_mode),
-                        partial_results=ChatterResult(),
+                        partial_results=StruckdownResult(),
                     )
 
             # Run the async generator synchronously
@@ -887,7 +887,7 @@ def create_app(
         """
         import asyncio
 
-        from struckdown import LLMCredentials, chatter_incremental_async
+        from struckdown import LLMCredentials, complete_incremental_async
 
         data = get_json_safe()
         syntax = data.get("syntax", "")
@@ -979,7 +979,7 @@ def create_app(
                 """Async generator to collect events."""
                 model = LLM(model_name=model_name) if model_name else LLM()
                 try:
-                    async for event in chatter_incremental_async(
+                    async for event in complete_incremental_async(
                         syntax,
                         model=model,
                         credentials=credentials,
@@ -989,13 +989,13 @@ def create_app(
                         yield event
                 except Exception as e:
                     # Yield error event
-                    from struckdown import ChatterResult, ProcessingError
+                    from struckdown import StruckdownResult, ProcessingError
 
                     yield ProcessingError(
                         segment_index=0,
                         slot_key=None,
                         error_message=safe_error_message(e, remote_mode),
-                        partial_results=ChatterResult(),
+                        partial_results=StruckdownResult(),
                     )
 
             # Run the async generator synchronously

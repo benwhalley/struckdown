@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 from pydantic import BaseModel
 
-from struckdown import _call_llm_cached, chatter
+from struckdown import _call_llm_cached, complete
 from struckdown.cache import clear_cache, hash_return_type, memory
 
 
@@ -431,10 +431,10 @@ class TestCacheIntegration:
 
 
 class TestCacheEndToEnd:
-    """End-to-end cache tests using the chatter() function"""
+    """End-to-end cache tests using the complete() function"""
 
-    def test_chatter_uses_cache(self, mock_llm):
-        """Test that chatter() function benefits from caching"""
+    def test_complete_uses_cache(self, mock_llm):
+        """Test that complete() function benefits from caching"""
         llm, call_count = mock_llm
 
         template = "What is 2+2?"
@@ -456,11 +456,11 @@ class TestCacheEndToEnd:
             mock_structured.side_effect = mock_call
 
             # First call
-            result1 = chatter(template)
+            result1 = complete(template)
             first_call_count = call_count["count"]
 
             # Second call with same template - should be cached
-            result2 = chatter(template)
+            result2 = complete(template)
             second_call_count = call_count["count"]
 
             # Verify responses are the same

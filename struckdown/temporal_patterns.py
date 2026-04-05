@@ -30,14 +30,14 @@ async def expand_temporal_pattern(
         action_type: Either "date" or "datetime"
         is_single_value: True if expecting single value, False for list
         quantifier: Optional (min_items, max_items) tuple for validation
-        llm: LLM instance for chatter call
+        llm: LLM instance for complete call
         credentials: LLM credentials
         accumulated_context: Context dict with temporal information
 
     Returns:
         Tuple of (final_result, interim_steps) where:
         - final_result: Single date/datetime if is_single_value=True, otherwise list of dates/datetimes
-        - interim_steps: List of SegmentResults from intermediate LLM calls
+        - interim_steps: List of SlotResults from intermediate LLM calls
 
     Raises:
         ValueError: If pattern cannot be expanded or doesn't meet constraints
@@ -45,16 +45,16 @@ async def expand_temporal_pattern(
     logger.debug(f"Detected {action_type} pattern: {pattern_string}")
 
     # Import at function level to avoid circular dependency
-    from struckdown import SegmentResult
-    from struckdown import chatter as chatter_func
+    from struckdown import SlotResult
+    from struckdown import complete as complete_func
 
     # Track interim steps
     interim_steps = []
 
-    # Call chatter recursively to convert pattern to RRULE dict
+    # Call complete recursively to convert pattern to RRULE dict
     rule_prompt = f"{pattern_string} [[date_rule:rule]]"
     rule_result = await anyio.to_thread.run_sync(
-        lambda: chatter_func(
+        lambda: complete_func(
             rule_prompt,
             model=llm,
             credentials=credentials,

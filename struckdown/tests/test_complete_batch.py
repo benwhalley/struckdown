@@ -1,11 +1,11 @@
-"""Tests for chatter/chatter_async with list contexts -- the parallel batch processing layer."""
+"""Tests for complete/complete_async with list contexts -- the parallel batch processing layer."""
 
 import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
-from struckdown import (LLM, ChatterResult, SegmentResult, chatter,
-                        chatter_async)
+from struckdown import (LLM, StruckdownResult, SlotResult, complete,
+                        complete_async)
 
 
 def _make_mock_chat(delay=0, fail_for_contexts=None):
@@ -48,7 +48,7 @@ def test_results_preserve_input_order():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "hello {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -58,7 +58,7 @@ def test_results_preserve_input_order():
 
     assert len(results) == 6
     for i, r in enumerate(results):
-        assert isinstance(r, ChatterResult)
+        assert isinstance(r, StruckdownResult)
         assert f"ctx_{i}" in r.response
 
 
@@ -72,7 +72,7 @@ def test_each_context_receives_its_own_variables():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -100,7 +100,7 @@ def test_single_failure_does_not_block_others():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -108,12 +108,12 @@ def test_single_failure_does_not_block_others():
 
     results = asyncio.run(run())
 
-    assert isinstance(results[0], ChatterResult)
+    assert isinstance(results[0], StruckdownResult)
     assert "alice" in results[0].response
 
     assert isinstance(results[1], (Exception, ValueError))
 
-    assert isinstance(results[2], ChatterResult)
+    assert isinstance(results[2], StruckdownResult)
     assert "carol" in results[2].response
 
 
@@ -124,7 +124,7 @@ def test_all_failures_returns_all_exceptions():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -148,7 +148,7 @@ def test_on_complete_called_for_each_context():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -160,7 +160,7 @@ def test_on_complete_called_for_each_context():
     indices = sorted(idx for idx, _ in completions)
     assert indices == [0, 1, 2]
     for _, res in completions:
-        assert isinstance(res, ChatterResult)
+        assert isinstance(res, StruckdownResult)
 
 
 def test_on_complete_called_for_errors_too():
@@ -171,7 +171,7 @@ def test_on_complete_called_for_errors_too():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -181,7 +181,7 @@ def test_on_complete_called_for_errors_too():
     asyncio.run(run())
 
     completions.sort(key=lambda x: x[0])
-    assert completions[0] == (0, ChatterResult)
+    assert completions[0] == (0, StruckdownResult)
     assert completions[1] == (1, ValueError)
 
 
@@ -190,19 +190,19 @@ def test_on_complete_called_for_errors_too():
 
 def test_max_concurrent_limits_parallelism():
     """With max_concurrent=1, contexts should run one at a time."""
-    from struckdown import _chatter_single_async
+    from struckdown import _complete_single_async
 
     timestamps = {}
     mock_chat, _ = _make_mock_chat()
 
-    async def recording_chatter_async(
+    async def recording_complete_async(
         multipart_prompt, context, model=None, credentials=None, **kw
     ):
         name = context["name"]
         timestamps[name] = {"start": time.monotonic()}
         await asyncio.sleep(0.05)
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            result = await _chatter_single_async(
+            result = await _complete_single_async(
                 multipart_prompt,
                 model=model,
                 credentials=credentials,
@@ -216,9 +216,9 @@ def test_max_concurrent_limits_parallelism():
 
     async def run():
         with patch(
-            "struckdown._chatter_single_async", side_effect=recording_chatter_async
+            "struckdown._complete_single_async", side_effect=recording_complete_async
         ):
-            return await chatter_async(
+            return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(),
@@ -243,7 +243,7 @@ def test_max_concurrent_limits_parallelism():
 
 def test_empty_contexts_returns_empty_list():
     async def run():
-        return await chatter_async("hello [[reply]]", [], model=LLM())
+        return await complete_async("hello [[reply]]", [], model=LLM())
 
     results = asyncio.run(run())
     assert results == []
@@ -256,7 +256,7 @@ def test_kwargs_forwarded_to_internal_processor():
     """Extra kwargs like extra_kwargs should reach the internal processor."""
     received_kwargs = {}
 
-    async def spy_chatter_async(
+    async def spy_complete_async(
         multipart_prompt,
         context,
         model=None,
@@ -267,13 +267,13 @@ def test_kwargs_forwarded_to_internal_processor():
         received_kwargs["multipart_prompt"] = multipart_prompt
         received_kwargs["context"] = context
         received_kwargs["extra_kwargs"] = extra_kwargs
-        r = ChatterResult()
-        r["reply"] = SegmentResult(name="reply", output="ok", prompt="")
+        r = StruckdownResult()
+        r["reply"] = SlotResult(name="reply", output="ok", prompt="")
         return r
 
     async def run():
-        with patch("struckdown._chatter_single_async", side_effect=spy_chatter_async):
-            return await chatter_async(
+        with patch("struckdown._complete_single_async", side_effect=spy_complete_async):
+            return await complete_async(
                 "hello [[reply]]",
                 [{"name": "test"}],
                 model=LLM(),
@@ -290,20 +290,20 @@ def test_kwargs_forwarded_to_internal_processor():
 # -- sync wrapper -------------------------------------------------------------
 
 
-def test_chatter_sync_with_list():
-    """The sync chatter with list should produce the same results."""
+def test_complete_sync_with_list():
+    """The sync complete with list should produce the same results."""
     mock_chat, _ = _make_mock_chat()
     contexts = [{"name": "x"}, {"name": "y"}]
 
     with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-        results = chatter(
+        results = complete(
             "greet {{name}} [[reply]]",
             contexts,
             model=LLM(),
         )
 
     assert len(results) == 2
-    assert isinstance(results[0], ChatterResult)
-    assert isinstance(results[1], ChatterResult)
+    assert isinstance(results[0], StruckdownResult)
+    assert isinstance(results[1], StruckdownResult)
     assert "x" in results[0].response
     assert "y" in results[1].response

@@ -13,7 +13,7 @@ from typing import Optional
 
 import pytest
 
-from struckdown import chatter
+from struckdown import complete
 from struckdown.llm import LLM, LLMCredentials
 
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
@@ -70,7 +70,7 @@ class TestOllamaStruckdown:
 
     def test_simple_text_completion(self, llm, creds):
         """Basic text slot."""
-        result = chatter(
+        result = complete(
             "What is the capital of France? [[answer]]",
             model=llm,
             credentials=creds,
@@ -80,7 +80,7 @@ class TestOllamaStruckdown:
     def test_bool_slot(self, llm, creds):
         """Boolean slot -- exercises tool-to-prompted fallback on models that
         return text instead of a tool call for simple yes/no questions."""
-        result = chatter(
+        result = complete(
             "Is the Earth round? [[bool:is_round]]",
             model=llm,
             credentials=creds,
@@ -89,7 +89,7 @@ class TestOllamaStruckdown:
 
     def test_int_slot(self, llm, creds):
         """Integer slot extraction."""
-        result = chatter(
+        result = complete(
             "How many legs does a dog have? [[int:legs]]",
             model=llm,
             credentials=creds,
@@ -98,7 +98,7 @@ class TestOllamaStruckdown:
 
     def test_pick_slot(self, llm, creds):
         """Pick from options (enum-like)."""
-        result = chatter(
+        result = complete(
             "Classify the sentiment: 'I absolutely love this product!' "
             "[[pick:sentiment|positive,negative,neutral]]",
             model=llm,
@@ -108,7 +108,7 @@ class TestOllamaStruckdown:
 
     def test_pick_list_extraction(self, llm, creds):
         """Extract a list of items using quantifier syntax."""
-        result = chatter(
+        result = complete(
             "Name 3 primary colours used in painting: "
             "[[pick{3}:colours|red,blue,yellow,green,orange,purple]]",
             model=llm,
@@ -126,13 +126,13 @@ class TestOllamaStruckdown:
             "<checkpoint>\n\n"
             "In one word, what colour is {{planet}} when viewed from space? [[colour]]"
         )
-        result = chatter(template, model=llm, credentials=creds)
+        result = complete(template, model=llm, credentials=creds)
         assert "jupiter" in str(result.outputs.planet).lower()
         assert len(str(result.outputs.colour)) > 0
 
     def test_context_variable_with_pick(self, llm, creds):
         """Template with Jinja2 context variables and pick slot."""
-        result = chatter(
+        result = complete(
             "{{text}}\n\nWhat is the overall sentiment of this text? "
             "[[pick:sentiment|positive,negative,neutral,mixed]]",
             context={"text": "The weather was absolutely terrible and I hated every minute."},
@@ -143,7 +143,7 @@ class TestOllamaStruckdown:
 
     def test_system_message(self, llm, creds):
         """Template with <system> tag."""
-        result = chatter(
+        result = complete(
             "<system>You are a helpful assistant. Always respond in one word.</system>\n\n"
             "What colour is grass? [[answer]]",
             model=llm,
@@ -153,7 +153,7 @@ class TestOllamaStruckdown:
 
     def test_number_slot(self, llm, creds):
         """Numeric slot extraction."""
-        result = chatter(
+        result = complete(
             "How many continents are there on Earth? [[int:count]]",
             model=llm,
             credentials=creds,
@@ -162,7 +162,7 @@ class TestOllamaStruckdown:
 
     def test_two_picks_in_one_segment(self, llm, creds):
         """Two pick slots in a single segment (parallel extraction)."""
-        result = chatter(
+        result = complete(
             "'I bought a red dress.'\n\n"
             "What colour is mentioned? [[pick:colour|red,blue,green,yellow]]\n"
             "What item is mentioned? [[pick:item|hat,dress,shoes,bag]]",

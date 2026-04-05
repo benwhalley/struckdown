@@ -358,7 +358,7 @@ class TestTogetherConversationHistory:
 
     def test_together_tags_not_exposed_to_llm(self):
         """<together> and </together> tags should never appear in LLM messages."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         messages_sent = []
 
@@ -383,7 +383,7 @@ class TestTogetherConversationHistory:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -396,7 +396,7 @@ class TestTogetherConversationHistory:
 
     def test_slot_after_together_sees_qa_history(self):
         """A slot after </together> should see Q&A pairs in its messages."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         # Track messages passed to each LLM call
         call_messages = []
@@ -422,7 +422,7 @@ class TestTogetherConversationHistory:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -457,7 +457,7 @@ class TestParallelSegmentGlobals:
 
     def test_parallel_segments_see_system_message(self):
         """Segments in same parallel batch should all see segment 0's system message."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         messages_per_call = []
 
@@ -490,7 +490,7 @@ class TestParallelSegmentGlobals:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -520,7 +520,7 @@ class TestParallelExecutionTiming:
 
     def test_together_slots_start_within_20ms(self):
         """All slots in a together block should start within 20ms of each other."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         # Track when each LLM call starts
         call_times = []
@@ -559,7 +559,7 @@ class TestParallelExecutionTiming:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -575,7 +575,7 @@ class TestParallelExecutionTiming:
 
     def test_independent_segments_start_within_20ms(self):
         """Independent checkpoint segments should start within 20ms of each other."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         call_times = []
 
@@ -604,7 +604,7 @@ class TestParallelExecutionTiming:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
@@ -620,7 +620,7 @@ class TestParallelExecutionTiming:
 
     def test_dependent_segments_run_sequentially(self):
         """Segments with dependencies should NOT start simultaneously."""
-        from struckdown import LLM, chatter_async
+        from struckdown import LLM, complete_async
 
         call_times = []
 
@@ -647,7 +647,7 @@ class TestParallelExecutionTiming:
             with patch(
                 "struckdown.llm.structured_chat", side_effect=mock_structured_chat
             ):
-                return await chatter_async(template, model=LLM())
+                return await complete_async(template, model=LLM())
 
         asyncio.run(run_test())
 
