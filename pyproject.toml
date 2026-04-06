@@ -13,7 +13,7 @@ authors = [
 license = "MIT"
 
 readme = "README_PYPI.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"       
 dependencies = [
     "certifi>=2023.0.0",
     "asgiref>=3.7.0",
