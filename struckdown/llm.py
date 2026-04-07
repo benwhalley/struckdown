@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, U
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import Model as PydanticAIModel, infer_model, parse_model_id
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -280,6 +281,56 @@ def _classify_http_error_body(error_msg: str) -> Optional[str]:
     return None
 
 
+def _list_provider_models(model_name: str) -> Optional[list[str]]:
+    """Try to fetch available model names from the provider's API.
+
+    Returns a list of model ID strings, or None if listing is not possible.
+    """
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        provider_prefix, _ = parse_model_id(model_name)
+
+    credentials = LLMCredentials()
+    api_key = credentials.api_key_for_provider(provider_prefix)
+    if not api_key:
+        return None
+
+    endpoints: dict[str, tuple[str, str]] = {
+        "openai": ("https://api.openai.com/v1/models", "Bearer"),
+        "openai-chat": ("https://api.openai.com/v1/models", "Bearer"),
+        "mistral": ("https://api.mistral.ai/v1/models", "Bearer"),
+    }
+    # google uses query param auth
+    google_prefixes = ("google", "google-gla", "google-vertex")
+
+    try:
+        import httpx
+        if provider_prefix in google_prefixes:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            resp = httpx.get(url, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m["name"].removeprefix("models/") for m in data.get("models", [])
+                      if "generateContent" in m.get("supportedGenerationMethods", [])]
+            return sorted(models)
+        elif provider_prefix in endpoints:
+            url, auth_scheme = endpoints[provider_prefix]
+            resp = httpx.get(url, headers={"Authorization": f"{auth_scheme} {api_key}"}, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            return sorted(m["id"] for m in data.get("data", []))
+        elif credentials.base_url:
+            url = credentials.base_url.rstrip("/") + "/models"
+            resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            return sorted(m["id"] for m in data.get("data", []))
+    except Exception as e:
+        logger.debug(f"Failed to list models for {provider_prefix}: {e}")
+    return None
+
+
 def _make_struckdown_error(
     error: Exception, prompt: str, model_name: str
 ) -> LLMError:
@@ -304,7 +355,15 @@ def _make_struckdown_error(
         if status in (400, 422):
             return SDBadRequestError(error, prompt, model_name)
         if status == 404:
-            return AuthError(error, prompt, model_name)
+            # model not found -- try to list available models
+            models = _list_provider_models(model_name)
+            if models:
+                hint = "\n  Available models:\n    " + "\n    ".join(models[:30])
+                if len(models) > 30:
+                    hint += f"\n    ... and {len(models) - 30} more"
+                wrapped = Exception(f"{error}{hint}")
+                return SDBadRequestError(wrapped, prompt, model_name)
+            return SDBadRequestError(error, prompt, model_name)
 
         return LLMError(error, prompt, model_name)
 
@@ -394,6 +453,22 @@ class LC:
     RESET = "\033[0m"
 
 
+_PROVIDER_KEY_ENV_VARS: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "openai-chat": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "google-gla": "GEMINI_API_KEY",
+    "google-vertex": "GOOGLE_API_KEY",
+    "azure": "AZURE_OPENAI_API_KEY",
+}
+
+_PROVIDER_ENDPOINT_ENV_VARS: dict[str, str] = {
+    "azure": "AZURE_OPENAI_ENDPOINT",
+}
+
+
 class LLMCredentials(BaseModel):
     api_key: Optional[str] = Field(
         default_factory=lambda: env_config("LLM_API_KEY", None), repr=False
@@ -401,6 +476,19 @@ class LLMCredentials(BaseModel):
     base_url: Optional[str] = Field(
         default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
     )
+
+    def api_key_for_provider(self, provider_name: str) -> Optional[str]:
+        """Return the best API key for a given provider.
+
+        Checks provider-specific env vars (e.g. MISTRAL_API_KEY) first,
+        then falls back to the generic LLM_API_KEY.
+        """
+        env_var = _PROVIDER_KEY_ENV_VARS.get(provider_name)
+        if env_var:
+            provider_key = os.environ.get(env_var)
+            if provider_key:
+                return provider_key
+        return self.api_key
 
 
 KNOWN_MODEL_SETTINGS = frozenset({
@@ -457,30 +545,154 @@ def _merge_llm_config_defaults(extra_kwargs: Optional[dict], return_type) -> dic
     return call_kwargs
 
 
+def _obfuscate_key(key: Optional[str]) -> str:
+    """Show first 4 and last 4 chars of an API key, masking the rest."""
+    if not key:
+        return "(none)"
+    if len(key) <= 10:
+        return key[:2] + "***" + key[-2:]
+    return key[:4] + "***" + key[-4:]
+
+
+def _print_routing_debug(llm: "LLM", credentials: "LLMCredentials"):
+    """Print debug info about how the LLM call will be routed."""
+    import sys
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        provider_prefix, bare_name = parse_model_id(llm.model_name)
+
+    provider_env_var = _PROVIDER_KEY_ENV_VARS.get(provider_prefix)
+    has_provider_key = bool(provider_env_var and os.environ.get(provider_env_var))
+    resolved_key = credentials.api_key_for_provider(provider_prefix)
+    endpoint_var = _PROVIDER_ENDPOINT_ENV_VARS.get(provider_prefix)
+    endpoint_val = os.environ.get(endpoint_var) if endpoint_var else None
+
+    if credentials.base_url and not has_provider_key:
+        print(f"[DEBUG] Mode: proxy", file=sys.stderr)
+        print(f"[DEBUG] Model: {bare_name} (from {llm.model_name})", file=sys.stderr)
+        print(f"[DEBUG] Endpoint: {credentials.base_url}", file=sys.stderr)
+        print(f"[DEBUG] API key: {_obfuscate_key(credentials.api_key)} (LLM_API_KEY)", file=sys.stderr)
+    elif resolved_key:
+        key_source = provider_env_var if has_provider_key else "LLM_API_KEY"
+        print(f"[DEBUG] Mode: native provider", file=sys.stderr)
+        print(f"[DEBUG] Provider: {provider_prefix}", file=sys.stderr)
+        print(f"[DEBUG] Model: {llm.model_name}", file=sys.stderr)
+        print(f"[DEBUG] API key: {_obfuscate_key(resolved_key)} ({key_source})", file=sys.stderr)
+        if endpoint_val:
+            print(f"[DEBUG] Endpoint: {endpoint_val} ({endpoint_var})", file=sys.stderr)
+    else:
+        print(f"[DEBUG] Mode: native provider (env var auto-detection)", file=sys.stderr)
+        print(f"[DEBUG] Model: {llm.model_name}", file=sys.stderr)
+
+
+def _create_provider_with_credentials(provider_name: str, credentials: "LLMCredentials"):
+    """Create a pydantic-ai provider, injecting explicit api_key from credentials.
+
+    Uses provider-specific env vars (e.g. MISTRAL_API_KEY) when available,
+    falling back to the generic LLM_API_KEY.
+    """
+    api_key = credentials.api_key_for_provider(provider_name)
+    if provider_name in ("openai", "openai-chat"):
+        return OpenAIProvider(api_key=api_key)
+    elif provider_name == "anthropic":
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+        return AnthropicProvider(api_key=api_key)
+    elif provider_name in ("google", "google-gla", "google-vertex"):
+        from pydantic_ai.providers.google import GoogleProvider
+        return GoogleProvider(api_key=api_key)
+    elif provider_name == "mistral":
+        from pydantic_ai.providers.mistral import MistralProvider
+        return MistralProvider(api_key=api_key)
+    elif provider_name == "ollama":
+        return OpenAIProvider(
+            base_url=credentials.base_url or "http://localhost:11434/v1",
+            api_key=api_key or "ollama",
+        )
+    elif provider_name == "azure":
+        from pydantic_ai.providers.azure import AzureProvider
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or credentials.base_url
+        if not endpoint:
+            raise Exception(
+                "Azure requires AZURE_OPENAI_ENDPOINT (or LLM_API_BASE) to be set"
+            )
+        api_version = os.environ.get("OPENAI_API_VERSION", "2024-10-21")
+        return AzureProvider(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version=api_version,
+        )
+    else:
+        # unknown provider -- try OpenAI-compatible
+        kwargs = {"api_key": api_key}
+        if credentials.base_url:
+            kwargs["base_url"] = credentials.base_url
+        return OpenAIProvider(**kwargs)
+
+
 class LLM(BaseModel):
     model_name: Optional[str] = Field(
         default_factory=lambda: env_config("DEFAULT_LLM", "gpt-4.1-mini"),
         exclude=True,
     )
 
-    def get_pydantic_model(self, credentials: Optional[LLMCredentials] = None) -> OpenAIChatModel:
-        """Create a pydantic-ai model instance for this LLM + credentials."""
+    def get_pydantic_model(self, credentials: Optional[LLMCredentials] = None) -> PydanticAIModel:
+        """Create a pydantic-ai model instance for this LLM + credentials.
+
+        Supports two modes:
+
+        1. **Proxy mode** (when credentials.base_url is set): all requests are sent
+           through an OpenAI-compatible proxy (e.g. LiteLLM). The provider prefix is
+           stripped from the model name before sending to the proxy. This preserves
+           backward compatibility with existing LLM_API_KEY + LLM_API_BASE setups.
+
+        2. **Native provider mode** (no base_url): uses pydantic-ai's infer_model()
+           with the ``provider:model_name`` convention (e.g. ``anthropic:claude-sonnet-4-20250514``).
+           If credentials.api_key is set, it is injected into the provider; otherwise
+           pydantic-ai reads the standard env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.).
+        """
         import httpx
 
         if credentials is None:
             credentials = LLMCredentials()
-        if not credentials.api_key or not credentials.base_url:
-            raise Exception("Set LLM_API_KEY and LLM_API_BASE environment variables")
-        # use httpx client with redirect-following enabled -- many litellm
-        # proxies redirect HTTP→HTTPS and httpx doesn't follow 308 for POST
-        # by default
-        http_client = httpx.AsyncClient(follow_redirects=True)
-        provider = OpenAIProvider(
-            api_key=credentials.api_key,
-            base_url=credentials.base_url,
-            http_client=http_client,
-        )
-        return OpenAIChatModel(self.model_name, provider=provider)
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            provider_prefix, bare_name = parse_model_id(self.model_name)
+
+        # Check if this provider has its own API key set, which takes
+        # precedence over the generic LLM_API_KEY / LLM_API_BASE.
+        provider_env_var = _PROVIDER_KEY_ENV_VARS.get(provider_prefix)
+        has_provider_key = bool(provider_env_var and os.environ.get(provider_env_var))
+
+        # Proxy mode: base_url is set -- route through OpenAI-compatible proxy,
+        # UNLESS this provider has its own dedicated API key configured
+        # or is Azure (which needs AzureProvider, not OpenAI-compatible).
+        is_azure = provider_prefix == "azure"
+        if credentials.base_url and not has_provider_key and not is_azure:
+            if not credentials.api_key:
+                raise Exception(
+                    "LLM_API_KEY must be set when using a proxy (LLM_API_BASE)"
+                )
+            # strip provider prefix for proxy -- proxy expects bare model name
+            http_client = httpx.AsyncClient(follow_redirects=True)
+            provider = OpenAIProvider(
+                api_key=credentials.api_key,
+                base_url=credentials.base_url,
+                http_client=http_client,
+            )
+            return OpenAIChatModel(bare_name, provider=provider)
+
+        # Native provider mode: use pydantic-ai's provider:model convention
+        resolved_key = credentials.api_key_for_provider(provider_prefix)
+        if resolved_key:
+            def provider_factory(provider_name: str):
+                return _create_provider_with_credentials(provider_name, credentials)
+            return infer_model(self.model_name, provider_factory=provider_factory)
+
+        # no explicit credentials -- let pydantic-ai read env vars
+        return infer_model(self.model_name)
 
 
 # Marker for cached errors - stored in cache, re-raised on cache hit
@@ -562,7 +774,10 @@ def _messages_to_user_prompt(messages: List[Dict[str, str]]) -> str:
 
 
 def _build_completion_dict(
-    model_response, messages: List[Dict[str, str]], cost: Optional[float] = None,
+    model_response,
+    messages: List[Dict[str, str]],
+    cost: Optional[float] = None,
+    model_name: str = "",
 ) -> dict:
     """Build a completion dict compatible with StruckdownResult consumers.
 
@@ -578,14 +793,9 @@ def _build_completion_dict(
     cache_read = getattr(usage, "cache_read_tokens", 0) if usage else 0
     cache_write = getattr(usage, "cache_write_tokens", 0) if usage else 0
 
-    # try to get cost from pydantic-ai's genai-prices integration
     response_cost = cost
     if response_cost is None and model_response is not None:
-        try:
-            price_calc = model_response.cost()
-            response_cost = price_calc.total if price_calc else None
-        except Exception:
-            response_cost = None
+        response_cost = _calc_cost_from_usage(model_response, model_name)
 
     # extract thinking content from model response (empty string -> None)
     thinking = None
@@ -610,16 +820,119 @@ def _build_completion_dict(
     }
 
 
+def _extract_total_price(price_calc) -> Optional[float]:
+    """Extract a numeric total from a price calculation object."""
+    if price_calc is None:
+        return None
+    total = getattr(price_calc, "total_price", None)
+    if total is None:
+        total = getattr(price_calc, "total", None)
+    return float(total) if total is not None else None
+
+
+def _normalise_pricing_model(model_name: str) -> tuple[str, Optional[str]]:
+    """Return (model_ref, provider_id) suitable for genai-prices."""
+    if not model_name:
+        return "", None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            provider_id, bare_name = parse_model_id(model_name)
+            return bare_name, provider_id
+        except Exception:
+            return model_name, None
+
+
+def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
+    """Compute USD cost from a model response's usage data."""
+    usage = getattr(model_response, "usage", None)
+    if not usage:
+        return None
+
+    # PydanticAI already knows how to price a ModelResponse using usage plus
+    # provider metadata; prefer that path over our local reconstruction.
+    response_cost = getattr(model_response, "cost", None)
+    if callable(response_cost):
+        try:
+            return _extract_total_price(response_cost())
+        except Exception:
+            pass
+
+    try:
+        import genai_prices
+
+        model_ref, provider_id = _normalise_pricing_model(model_name)
+        response_model_name = getattr(model_response, "model_name", "") or ""
+        if not model_ref and response_model_name:
+            model_ref, provider_id = _normalise_pricing_model(response_model_name)
+
+        provider_name = getattr(model_response, "provider_name", None)
+        provider_url = getattr(model_response, "provider_url", None)
+
+        if not model_ref:
+            return None
+
+        gp_usage = genai_prices.Usage(
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_read_tokens=getattr(usage, "cache_read_tokens", 0) or 0,
+            cache_write_tokens=getattr(usage, "cache_write_tokens", 0) or 0,
+        )
+        price = genai_prices.calc_price(
+            gp_usage,
+            model_ref,
+            provider_id=provider_name or provider_id,
+            provider_api_url=provider_url,
+        )
+        return _extract_total_price(price)
+    except Exception:
+        return None
+
+
+def _store_in_cache(
+    messages, model_name, max_retries, extra_kwargs, return_type, result, strict_params,
+):
+    """Manually store a result in joblib's cache (used after streaming)."""
+    from struckdown import __version__
+
+    try:
+        cache_args = dict(
+            messages=messages,
+            model_name=model_name,
+            max_retries=max_retries,
+            max_tokens=None,
+            extra_kwargs=extra_kwargs or {},
+            return_type_hash=hash_return_type(return_type),
+            cache_version=__version__,
+        )
+        # ignored params still needed for args_id computation exclusion
+        kwargs = {
+            **cache_args,
+            "return_type": return_type,
+            "llm": None,
+            "credentials": None,
+            "strict_params": strict_params,
+        }
+        args_id = _call_llm_cached._get_args_id(**kwargs)
+        call_id = (_call_llm_cached.func_id, args_id)
+        _call_llm_cached.store_backend.dump_item(call_id, result)
+        _call_llm_cached._persist_input(0.0, call_id, (), kwargs)
+        logger.debug(f"Cached streaming result for {model_name}")
+    except Exception as e:
+        logger.debug(f"Failed to cache streaming result: {e}")
+
+
 def _run_agent_sync(agent: Agent, user_prompt: str, settings: ModelSettings):
-    """Run a pydantic-ai agent synchronously. Returns (output_dict, completion_dict)."""
+    """Run a pydantic-ai agent synchronously. Returns (output, model_response, cost)."""
     result = agent.run_sync(user_prompt, model_settings=settings)
-    # get the last model response for usage/cost
+    # get the last model response for usage
     last_response = None
     for msg in reversed(result.all_messages()):
         if hasattr(msg, "usage"):
             last_response = msg
             break
-    return result.output, last_response
+    cost = _calc_cost_from_usage(last_response, agent.model.model_name)
+    return result.output, last_response, cost
 
 
 @memory.cache(ignore=["return_type", "llm", "credentials", "strict_params"])
@@ -672,7 +985,7 @@ def _call_llm_cached(
     for mode in ("tool", "prompted"):
         agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
         try:
-            output, model_response = _run_agent_sync(agent, user_prompt, settings)
+            output, model_response, run_cost = _run_agent_sync(agent, user_prompt, settings)
             break
         except ModelHTTPError as e:
             _log_error_details(e, model_name, f"(HTTP {e.status_code})")
@@ -702,7 +1015,12 @@ def _call_llm_cached(
 
     logger.debug(f"\n\n{LC.GREEN}Response: {output}{LC.RESET}\n")
 
-    com_dict = _build_completion_dict(model_response, messages)
+    com_dict = _build_completion_dict(
+        model_response,
+        messages,
+        cost=run_cost,
+        model_name=agent.model.model_name,
+    )
 
     # mark that we made a fresh API call (this code only runs on cache miss)
     _cache_miss_marker.set(True)
@@ -765,6 +1083,9 @@ def structured_chat(
         f"Using model {llm.model_name}, max_retries {max_retries}, max_tokens: {max_tokens}"
     )
     logger.debug(f"LLM kwargs: {extra_kwargs}")
+
+    if _debug_api_requests:
+        _print_routing_debug(llm, credentials)
 
     start_time = time.monotonic()
     logger.debug(f"{LC.CYAN}LLM CALL START{call_hint}{LC.RESET}")
@@ -885,6 +1206,9 @@ async def structured_chat_async(
         yield (res, com, True)
         return
 
+    if _debug_api_requests:
+        _print_routing_debug(llm, credentials)
+
     # streaming path: check if result is already cached (without computing)
     from struckdown import __version__
 
@@ -935,6 +1259,8 @@ async def structured_chat_async(
                 )
             res = return_type.model_validate(res_dict)
             com_dict["_cached"] = True
+            # emit intermediate yield so streaming consumers display the text
+            yield (res, None, False)
             yield (res, Box(com_dict), True)
             return
     except LLMError:
@@ -951,11 +1277,13 @@ async def structured_chat_async(
     debounce_s = (extra_kwargs or {}).get("stream_debounce_ms", 200) / 1000.0
 
     # try tool mode first, fall back to prompted mode
+    streaming_failed = False
     for mode in ("tool", "prompted"):
         agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
         prev_text = ""
         final_output = None
         last_response = None
+        stream_cost = None
         try:
             async with agent.run_stream(user_prompt, model_settings=settings) as stream:
                 async for partial in stream.stream_output(debounce_by=debounce_s):
@@ -972,6 +1300,7 @@ async def structured_chat_async(
                     if hasattr(msg, "usage"):
                         last_response = msg
                         break
+                stream_cost = _calc_cost_from_usage(last_response, llm.model_name)
             break
         except UnexpectedModelBehavior as e:
             if mode == "tool":
@@ -980,11 +1309,42 @@ async def structured_chat_async(
                     f"retrying with prompted mode: {e}"
                 )
                 continue
-            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+            # prompted mode also failed -- fall back to non-streaming
+            logger.info(
+                f"Streaming failed for {llm.model_name} in both modes, "
+                f"falling back to non-streaming: {e}"
+            )
+            streaming_failed = True
+            break
         except ModelHTTPError as e:
             raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
         except Exception as e:
             raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+
+    # non-streaming fallback: use run_sync which supports retries
+    if streaming_failed:
+        res_dict, com_dict = await anyio.to_thread.run_sync(
+            lambda: structured_chat(
+                messages=messages,
+                return_type=return_type,
+                llm=llm,
+                credentials=credentials,
+                max_retries=3,
+                extra_kwargs=extra_kwargs,
+                strict_params=strict_params,
+            )
+        )
+        com_dict["_cached"] = False
+        # reconstruct the output as a pydantic model for consistency
+        if hasattr(return_type, "model_validate"):
+            final_output = return_type.model_validate(res_dict)
+        else:
+            final_output = res_dict
+        # yield the complete text as an intermediate so streaming consumers
+        # (e.g. the CLI) display it before the final yield
+        yield (final_output, None, False)
+        yield (final_output, Box(com_dict), True)
+        return
 
     if final_output is None:
         raise LLMError(
@@ -993,8 +1353,27 @@ async def structured_chat_async(
             llm.model_name,
         )
 
-    com_dict = _build_completion_dict(last_response, messages)
+    com_dict = _build_completion_dict(
+        last_response,
+        messages,
+        cost=stream_cost,
+        model_name=llm.model_name,
+    )
     com_dict["_cached"] = False
+
+    # store the streamed result into joblib's cache so subsequent calls hit cache
+    res_dict = final_output.model_dump() if hasattr(final_output, "model_dump") else final_output
+    res_dict = _strip_null_bytes(res_dict)
+    _store_in_cache(
+        messages=messages,
+        model_name=llm.model_name,
+        max_retries=max_retries,
+        extra_kwargs=extra_kwargs,
+        return_type=return_type,
+        result=(res_dict, com_dict),
+        strict_params=strict_params,
+    )
+
     yield (final_output, Box(com_dict), True)
 
 

@@ -73,7 +73,7 @@ def mock_llm():
         content = user_prompt[:50] if user_prompt else ""
         response_text = f"Mock response to: {content}"
         mock_response = SimpleResponse(response=response_text)
-        return mock_response, MockModelResponse()
+        return mock_response, MockModelResponse(), None
 
     mock_llm_obj = Mock()
     mock_llm_obj.model_name = "test-model"

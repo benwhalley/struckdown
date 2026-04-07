@@ -519,7 +519,8 @@ def chat(
     ),
     model_name: Optional[str] = typer.Option(
         env_config("DEFAULT_LLM", default=None, cast=str),
-        help="LLM model name (overrides DEFAULT_LLM env var)",
+        help="Model name as provider:model (e.g. openai:gpt-4o, anthropic:claude-sonnet-4-20250514). "
+        "Bare names work with LLM_API_BASE proxy or default to OpenAI.",
     ),
     seed: Optional[int] = typer.Option(
         None,
@@ -583,6 +584,16 @@ def chat(
         "--dump",
         help="Directory to save API call JSON files (one per slot, named {slot_name}.json)",
     ),
+    thinking: Optional[str] = typer.Option(
+        None,
+        "--thinking",
+        help="Thinking/reasoning mode: on, off, minimal, low, medium, high, xhigh",
+    ),
+    no_stream: bool = typer.Option(
+        False,
+        "--no-stream",
+        help="Disable streaming output (useful for models that struggle with structured streaming)",
+    ),
     strict_params: bool = typer.Option(
         False,
         "--strict-params",
@@ -592,8 +603,17 @@ def chat(
     """
     Run a single complete prompt (interactive mode).
 
+    Model names use the provider:model format (pydantic-ai convention):
+
+        openai:gpt-4o, anthropic:claude-sonnet-4-20250514, google-gla:gemini-2.0-flash,
+        mistral:mistral-large-latest, ollama:llama3, azure:gpt-4o
+
+    When LLM_API_BASE is set, all requests go through that proxy and provider
+    prefixes are stripped. Bare model names (no prefix) default to OpenAI.
+
     Examples:
         sd chat "tell a joke [[joke]]"
+        sd chat "joke [[joke]]" --model-name anthropic:claude-sonnet-4-20250514
         cat prompt.sd | sd chat
         sd chat -p prompt.sd
         sd chat -p prompt.sd -s input.txt       # {{source}} available in template
@@ -668,6 +688,20 @@ def chat(
     extra_kwargs = {}
     if seed is not None:
         extra_kwargs["seed"] = seed
+    if thinking is not None:
+        val = thinking.lower().strip()
+        if val in ("on", "true", "yes"):
+            extra_kwargs["thinking"] = True
+        elif val in ("off", "false", "no"):
+            extra_kwargs["thinking"] = False
+        elif val in ("minimal", "low", "medium", "high", "xhigh"):
+            extra_kwargs["thinking"] = val
+        else:
+            typer.echo(
+                "Error: --thinking must be on, off, minimal, low, medium, high, or xhigh",
+                err=True,
+            )
+            raise typer.Exit(1)
 
     # build context from source file/URL and context variables
     context = {}
@@ -789,7 +823,7 @@ def chat(
                     all_include_paths if all_include_paths else None,
                     verbose,
                     show_context,
-                    stream=True,
+                    stream=not no_stream,
                     strict_params=strict_params,
                 )
             )
