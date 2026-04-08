@@ -463,7 +463,7 @@ async def process_segment_with_delta_incremental(
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat, structured_chat_async
     from .results import SlotResult, get_progress_callback
-    from .return_type_models import SlotCategory, classify_slot, compute_optimal_max_tokens
+    from .return_type_models import SlotCategory, classify_slot
 
     # template_str is the body only (system already extracted by caller)
     body_template = template_str
@@ -621,17 +621,6 @@ async def process_segment_with_delta_incremental(
             # merge per-slot LLM overrides (temperature, thinking, model, etc.)
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
-
-            # inject tight max_tokens for constrained slots
-            slot_options = (
-                [opt.value for opt in slot_info.options]
-                if slot_info.options else []
-            )
-            optimal_max = compute_optimal_max_tokens(
-                slot_info.action_type, return_type, slot_options,
-            )
-            if optimal_max and "max_tokens" not in call_kwargs:
-                call_kwargs["max_tokens"] = optimal_max
 
             should_stream = (
                 stream

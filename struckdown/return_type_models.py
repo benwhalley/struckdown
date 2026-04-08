@@ -1372,29 +1372,3 @@ def build_prefix_resolver(options: List[str]) -> Dict[str, str]:
     return resolver
 
 
-def compute_optimal_max_tokens(
-    action_type: Optional[str],
-    return_type,
-    options: Optional[List[str]] = None,
-) -> Optional[int]:
-    """Return a tight max_tokens for constrained slots, or None for free-form.
-
-    Reduces wasted completion tokens for slots with predictable output length.
-    Token counts include overhead for tool/function calling format used by
-    pydantic-ai (function name + argument JSON structure).
-    """
-    # pydantic-ai uses tool calling which has ~30-40 tokens of overhead
-    # (function name, argument key, JSON wrapping)
-    TOOL_CALL_OVERHEAD = 40
-
-    if action_type in ("bool", "boolean", "decide"):
-        return 10 + TOOL_CALL_OVERHEAD
-    if action_type == "pick" and options:
-        resolver = build_prefix_resolver(options)
-        max_prefix = max(len(p) for p in resolver) if resolver else 1
-        return max_prefix + 25 + TOOL_CALL_OVERHEAD
-    if action_type in ("int", "number"):
-        return 20 + TOOL_CALL_OVERHEAD
-    if action_type in ("date", "datetime", "time", "duration"):
-        return 40 + TOOL_CALL_OVERHEAD
-    return None

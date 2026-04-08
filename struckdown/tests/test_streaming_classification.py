@@ -7,7 +7,6 @@ from struckdown.return_type_models import (
     SlotCategory,
     build_prefix_resolver,
     classify_slot,
-    compute_optimal_max_tokens,
 )
 
 
@@ -95,33 +94,6 @@ def test_prefix_resolver_single_option():
 
 def test_prefix_resolver_empty():
     assert build_prefix_resolver([]) == {}
-
-
-# --- compute_optimal_max_tokens ---
-
-
-def test_max_tokens_bool():
-    result = compute_optimal_max_tokens("bool", None)
-    assert result == 50  # 10 + 40 tool call overhead
-
-
-def test_max_tokens_pick_with_options():
-    result = compute_optimal_max_tokens("pick", None, ["apple", "orange", "banana"])
-    assert result is not None
-    assert result > 0
-    assert result < 100  # should be tight even with tool call overhead
-
-
-def test_max_tokens_int():
-    assert compute_optimal_max_tokens("int", None) == 60  # 20 + 40 tool call overhead
-
-
-def test_max_tokens_free_text_returns_none():
-    assert compute_optimal_max_tokens("respond", None) is None
-
-
-def test_max_tokens_none_type_returns_none():
-    assert compute_optimal_max_tokens(None, None) is None
 
 
 # --- event types ---
