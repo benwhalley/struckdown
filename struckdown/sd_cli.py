@@ -2226,7 +2226,10 @@ def edit(
 
 @app.command()
 def serve(
-    port: int = typer.Option(8000, "-p", "--port", help="Port to run server on"),
+    port: int = typer.Option(
+        int(os.environ.get("PORT", 8000)), "-p", "--port",
+        help="Port to run server on (default: PORT env var or 8000)",
+    ),
     host: str = typer.Option("0.0.0.0", "-h", "--host", help="Host to bind to"),
     api_key: Optional[str] = typer.Option(
         None,

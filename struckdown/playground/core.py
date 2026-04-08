@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import anyio
-import pandas as pd
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken
 
 from struckdown import (LLM, LLMCredentials, complete_async,
@@ -174,6 +173,8 @@ def load_xlsx_data(file_path: Path) -> Dict:
         columns: list of column names
         row_count: number of rows
     """
+    import pandas as pd
+
     path = Path(file_path)
     if path.suffix.lower() == ".csv":
         df = pd.read_csv(path)

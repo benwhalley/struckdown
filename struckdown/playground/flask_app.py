@@ -23,10 +23,9 @@ from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from litellm.exceptions import (APIConnectionError, AuthenticationError,
-                                ContentPolicyViolationError,
-                                ContextWindowExceededError, RateLimitError,
-                                Timeout)
+from struckdown.errors import (AuthError, ConnectionError as LLMConnectionError,
+                               ContentFilterError, ContextWindowError,
+                               LLMError, RateLimitError)
 from werkzeug.utils import secure_filename
 
 from . import core, prompt_cache
@@ -118,17 +117,17 @@ def safe_error_message(e: Exception, remote_mode: bool) -> str:
         return str(e)
 
     # Map specific exceptions to user-friendly messages
-    if isinstance(e, AuthenticationError):
+    if isinstance(e, AuthError):
         return "Invalid API key. Please check your credentials."
     elif isinstance(e, RateLimitError):
         return "Rate limited by API provider. Please try again later."
-    elif isinstance(e, ContextWindowExceededError):
+    elif isinstance(e, ContextWindowError):
         return (
             "Prompt too long for this model. Try a shorter prompt or different model."
         )
-    elif isinstance(e, ContentPolicyViolationError):
+    elif isinstance(e, ContentFilterError):
         return "Content blocked by API provider's content policy."
-    elif isinstance(e, (APIConnectionError, Timeout)):
+    elif isinstance(e, LLMConnectionError):
         return "Could not connect to API. Please check your API base URL and try again."
     elif isinstance(e, ValueError) and "API key" in str(e).lower():
         return "API key and API base URL are required."
@@ -847,20 +846,36 @@ def create_app(
                         partial_results=StruckdownResult(),
                     )
 
-            # Run the async generator synchronously
-            loop = asyncio.new_event_loop()
-            try:
-                gen = stream_events()
-                while True:
-                    try:
-                        event = loop.run_until_complete(gen.__anext__())
-                        # Serialise and yield as SSE
-                        event_data = event.model_dump_json()
-                        yield f"event: {event.type}\ndata: {event_data}\n\n"
-                    except StopAsyncIteration:
-                        break
-            finally:
-                loop.close()
+            # Bridge async generator to sync using a queue + background thread.
+            # Using anyio.run in a thread avoids cancel-scope issues that occur
+            # with asyncio.new_event_loop() + run_until_complete per item.
+            import queue
+            import threading
+
+            q = queue.Queue()
+            _sentinel = object()
+
+            def _run_async():
+                import anyio
+
+                async def _collect():
+                    async for event in stream_events():
+                        q.put(event)
+                    q.put(_sentinel)
+
+                anyio.run(_collect)
+
+            t = threading.Thread(target=_run_async, daemon=True)
+            t.start()
+
+            while True:
+                event = q.get()
+                if event is _sentinel:
+                    break
+                event_data = event.model_dump_json()
+                yield f"event: {event.type}\ndata: {event_data}\n\n"
+
+            t.join()
 
         return Response(
             stream_with_context(generate()),
@@ -998,20 +1013,36 @@ def create_app(
                         partial_results=StruckdownResult(),
                     )
 
-            # Run the async generator synchronously
-            loop = asyncio.new_event_loop()
-            try:
-                gen = stream_events()
-                while True:
-                    try:
-                        event = loop.run_until_complete(gen.__anext__())
-                        # Serialise and yield as SSE
-                        event_data = event.model_dump_json()
-                        yield f"event: {event.type}\ndata: {event_data}\n\n"
-                    except StopAsyncIteration:
-                        break
-            finally:
-                loop.close()
+            # Bridge async generator to sync using a queue + background thread.
+            # Using anyio.run in a thread avoids cancel-scope issues that occur
+            # with asyncio.new_event_loop() + run_until_complete per item.
+            import queue
+            import threading
+
+            q = queue.Queue()
+            _sentinel = object()
+
+            def _run_async():
+                import anyio
+
+                async def _collect():
+                    async for event in stream_events():
+                        q.put(event)
+                    q.put(_sentinel)
+
+                anyio.run(_collect)
+
+            t = threading.Thread(target=_run_async, daemon=True)
+            t.start()
+
+            while True:
+                event = q.get()
+                if event is _sentinel:
+                    break
+                event_data = event.model_dump_json()
+                yield f"event: {event.type}\ndata: {event_data}\n\n"
+
+            t.join()
 
         return Response(
             stream_with_context(generate()),

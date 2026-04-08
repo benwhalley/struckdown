@@ -611,7 +611,7 @@ def _create_provider_with_credentials(provider_name: str, credentials: "LLMCrede
         )
     elif provider_name == "azure":
         from pydantic_ai.providers.azure import AzureProvider
-        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or credentials.base_url
+        endpoint = credentials.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
         if not endpoint:
             raise Exception(
                 "Azure requires AZURE_OPENAI_ENDPOINT (or LLM_API_BASE) to be set"
