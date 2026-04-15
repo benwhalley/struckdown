@@ -1,6 +1,19 @@
 
 # Changelog
 
+### 0.7.2
+
+**New: Django contrib app (`struckdown.contrib.django`)**
+- `AvailableModel` -- stores LLM/embedding model credentials (API key, base URL, data residency)
+- `ModelSet` -- groups models into named sets with a default flag
+- `EncryptedCharField` for API key storage
+- Admin site registration with list filters and search
+- `sd_seed_models` management command -- idempotent seeding of common model stubs
+
+**Removed:**
+- Removed premature `compute_optimal_max_tokens` optimisation from slot processing
+- Removed `return_type_models.py` (unused after above removal)
+
 ### 0.3.5
 
 **New Syntax:**

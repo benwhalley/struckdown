@@ -55,6 +55,7 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
                           make_strict_undefined, mark_struckdown_safe,
                           struckdown_finalize)
 # Re-export from llm module
+from .model_spec import PROVIDERS, ModelRegistry, ModelSpec, ProviderInfo
 from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   MAX_EMBEDDING_TOKENS_PER_BATCH, MAX_LLM_CONCURRENCY,
                   EmbeddingCostCallback, EmbeddingResult, EmbeddingResultList,
@@ -77,6 +78,25 @@ from .segment_processor import (process_segment_with_delta,
                                 process_segment_with_delta_incremental)
 from .validation import (ParsedOptions, parse_options,
                          validate_number_constraints)
+
+
+def _resolve_spec_kwargs(
+    model: Optional[LLM],
+    credentials: Optional[LLMCredentials],
+    spec: Optional[ModelSpec],
+    registry: Optional[ModelRegistry],
+):
+    """Resolve spec/registry kwargs to model + credentials, for backwards compat."""
+    if spec is not None and model is None:
+        model = spec.as_llm()
+        if credentials is None:
+            credentials = spec.as_credentials()
+    elif registry is not None and model is None:
+        resolved = registry.resolve()
+        model = resolved.as_llm()
+        if credentials is None:
+            credentials = resolved.as_credentials()
+    return model, credentials
 
 
 async def _complete_single_async(
@@ -352,6 +372,8 @@ async def complete_async(
     *,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[ModelRegistry] = None,
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
@@ -381,6 +403,8 @@ async def complete_async(
         context: Single context dict OR list of context dicts
         model: LLM configuration (default: from environment)
         credentials: API credentials (default: from environment)
+        spec: ModelSpec combining model + credentials (alternative to model/credentials)
+        registry: ModelRegistry for alias resolution (alternative to model/credentials)
         extra_kwargs: Additional LLM parameters
         template_path: Path to template file (for includes)
         include_paths: Additional directories to search for <include> files
@@ -391,6 +415,8 @@ async def complete_async(
     Returns:
         StruckdownResult for single context, List[StruckdownResult] for list of contexts.
     """
+    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
+
     if isinstance(context, list):
         # Multiple contexts - process in parallel
         sem = anyio.Semaphore(max_concurrent) if max_concurrent else get_llm_semaphore()
@@ -446,6 +472,8 @@ def complete(
     *,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[ModelRegistry] = None,
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
@@ -462,6 +490,8 @@ def complete(
             context,
             model=model,
             credentials=credentials,
+            spec=spec,
+            registry=registry,
             extra_kwargs=extra_kwargs,
             template_path=template_path,
             include_paths=include_paths,
@@ -484,6 +514,9 @@ async def complete_incremental_async(
     strict_undefined: bool = False,
     stream: bool = True,
     strict_params: bool = False,
+    *,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[ModelRegistry] = None,
 ) -> AsyncGenerator[IncrementalEvent, None]:
     """
     Process a struckdown template, yielding events as slots complete.
@@ -518,6 +551,8 @@ async def complete_incremental_async(
 
     from .segment_processor import (extract_header_message,
                                     extract_system_message)
+
+    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
 
     if model is None:
         model = LLM()
@@ -858,6 +893,9 @@ def complete_incremental(
     strict_undefined: bool = False,
     stream: bool = False,
     strict_params: bool = False,
+    *,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[ModelRegistry] = None,
 ) -> Generator[IncrementalEvent, None, None]:
     """Synchronous wrapper for complete_incremental_async.
 
@@ -866,6 +904,8 @@ def complete_incremental(
     Streaming is disabled by default since it provides no benefit
     when events are collected synchronously.
     """
+    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
+
     if model is None:
         model = LLM()
 

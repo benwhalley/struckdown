@@ -453,19 +453,14 @@ class LC:
     RESET = "\033[0m"
 
 
+from .model_spec import PROVIDERS
+
 _PROVIDER_KEY_ENV_VARS: dict[str, str] = {
-    "openai": "OPENAI_API_KEY",
-    "openai-chat": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-    "google": "GOOGLE_API_KEY",
-    "google-gla": "GEMINI_API_KEY",
-    "google-vertex": "GOOGLE_API_KEY",
-    "azure": "AZURE_OPENAI_API_KEY",
+    k: v.key_env_var for k, v in PROVIDERS.items() if v.key_env_var
 }
 
 _PROVIDER_ENDPOINT_ENV_VARS: dict[str, str] = {
-    "azure": "AZURE_OPENAI_ENDPOINT",
+    k: v.endpoint_env_var for k, v in PROVIDERS.items() if v.endpoint_env_var
 }
 
 
