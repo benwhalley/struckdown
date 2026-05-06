@@ -33,5 +33,21 @@ Struckdown: markdown-like syntax for structured LLM conversations. Uses `[[slot]
 
 ## Environment
 
-- `LLM_API_KEY`, `LLM_API_BASE`, `DEFAULT_LLM` -- LLM configuration
+- `LLM_API_KEY`, `LLM_API_BASE`, `DEFAULT_LLM` -- CLI defaults for interactive `sd` use only
 - `STRUCKDOWN_CACHE=0` -- disable caching; `STRUCKDOWN_CACHE=/path` -- custom location
+
+## Credential handling
+
+Env vars (`LLM_API_KEY`, `LLM_API_BASE`, `DEFAULT_LLM`) are convenience defaults for the `sd` CLI.
+When struckdown is used as a library or via Django, credentials should be passed explicitly via
+`ModelSpec` / `LLMCredentials` -- not read from the environment. The Django contrib models
+(`Credential`, `AvailableModel`, `ModelSet`) store credentials in the database (encrypted at rest)
+and resolve them through `AvailableModel.resolve_credential()`.
+
+## Django contrib models (`struckdown.contrib.django`)
+
+- `Credential` -- API key + base_url, encrypted at rest, with `is_active` flag and `pricing_source`
+- `AvailableModel` -- model_name + pricing + credential FK; resolves credentials via
+  own FK > caller-supplied default > ModelSet default (active credentials only)
+- `ModelSet` -- groups models with aliases, default LLM/embedding, default credential;
+  `to_registry()` builds a `ModelRegistry` passing its own `default_credential` to each model

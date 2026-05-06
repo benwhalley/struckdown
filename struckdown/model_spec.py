@@ -86,7 +86,12 @@ class ModelSpec(BaseModel):
     """Complete specification for a model endpoint.
 
     Combines identity (model_name), credentials (api_key, base_url),
-    and metadata (type, residency) into a single portable object.
+    pricing, and metadata (type, residency) into a single portable object.
+
+    When pricing fields are set, struckdown uses them for cost calculation
+    instead of looking up prices via pydantic-ai or genai-prices. This
+    allows callers to supply known-correct pricing (e.g. from OpenRouter)
+    regardless of whether struckdown is used standalone or via Django.
     """
 
     model_name: str = Field(description="Model identifier in provider:model format")
@@ -95,6 +100,16 @@ class ModelSpec(BaseModel):
     base_url: Optional[str] = None
     data_residency: Optional[str] = None
     display_name: Optional[str] = None
+
+    # pricing (USD per million tokens) -- when set, used for cost calculation
+    input_cost_per_mtok: Optional[float] = Field(
+        default=None,
+        description="Input cost per million tokens (USD). Used for cost calculation if set.",
+    )
+    output_cost_per_mtok: Optional[float] = Field(
+        default=None,
+        description="Output cost per million tokens (USD). Used for cost calculation if set.",
+    )
 
     @computed_field
     @property
@@ -160,7 +175,7 @@ class ModelRegistry(BaseModel):
         2. Exact alias match -> follow to model_name
         3. Exact model_name match in registry
         4. Bare name match (strip provider prefix from registered models)
-        5. Return a minimal spec with just the name (env-var credential resolution)
+        5. Return a minimal spec with just the name (caller must supply credentials)
         """
         if name_or_alias is None:
             name_or_alias = self.default_llm

@@ -63,10 +63,11 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   disable_api_debug, enable_api_debug,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
                   get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
-                  structured_chat, structured_chat_async)
+                  set_model_pricing, structured_chat, structured_chat_async)
 from pydantic_ai.models import parse_model_id
-from .parsing import (_add_default_completion_if_needed,
-                      extract_slot_variable_refs, parser, parser_with_state,
+from .parsing import (SlotInfo, _add_default_completion_if_needed,
+                      extract_slot_variable_refs, extract_slots,
+                      format_parse_error, parser, parser_with_state,
                       resolve_includes, split_by_checkpoint)
 from .response_types import ResponseTypes
 # Re-export from results module
@@ -86,16 +87,28 @@ def _resolve_spec_kwargs(
     spec: Optional[ModelSpec],
     registry: Optional[ModelRegistry],
 ):
-    """Resolve spec/registry kwargs to model + credentials, for backwards compat."""
+    """Resolve spec/registry kwargs to model + credentials, for backwards compat.
+
+    Also sets pricing context var if the resolved spec has pricing fields.
+    """
+    resolved_spec = None
     if spec is not None and model is None:
+        resolved_spec = spec
         model = spec.as_llm()
         if credentials is None:
             credentials = spec.as_credentials()
     elif registry is not None and model is None:
-        resolved = registry.resolve()
-        model = resolved.as_llm()
+        resolved_spec = registry.resolve()
+        model = resolved_spec.as_llm()
         if credentials is None:
-            credentials = resolved.as_credentials()
+            credentials = resolved_spec.as_credentials()
+
+    # set pricing context var if spec has pricing
+    if resolved_spec is not None:
+        set_model_pricing(
+            resolved_spec.input_cost_per_mtok, resolved_spec.output_cost_per_mtok
+        )
+
     return model, credentials
 
 
@@ -988,6 +1001,10 @@ __all__ = [
     "ParsedOptions",
     "parse_options",
     "validate_number_constraints",
+    # Template introspection
+    "SlotInfo",
+    "extract_slots",
+    "format_parse_error",
     # Internal (for advanced use)
     "SegmentDependencyGraph",
     "merge_contexts",

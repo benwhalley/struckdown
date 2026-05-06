@@ -260,26 +260,26 @@ print(summary)  # "Total cost: $0.0012 (5 calls, 2 cached)"
 
 ### LLM
 
-Model configuration.
+Model configuration. Defaults are read from environment variables for CLI convenience but should be passed explicitly when using struckdown as a library.
 
 ```python
 from struckdown import LLM
 
-llm = LLM(model_name="gpt-4")
+llm = LLM(model_name="openai:gpt-4o")
 result = chatter("...", model=llm)
 ```
 
 **Fields:**
 
-| Field | Type | Default |
-|-------|------|---------|
-| `model_name` | `str` | `DEFAULT_LLM` env var |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model_name` | `str` | `DEFAULT_LLM` env var, or `gpt-4.1-mini` | Model identifier in `provider:model` format |
 
 ---
 
 ### LLMCredentials
 
-API credentials.
+API credentials for LLM calls. Defaults are read from environment variables for CLI convenience. When embedding struckdown in a web application, always pass credentials explicitly (e.g. from a database-stored `Credential` via `ModelSpec.as_credentials()`).
 
 ```python
 from struckdown import LLMCredentials
@@ -293,10 +293,89 @@ result = chatter("...", credentials=creds)
 
 **Fields:**
 
-| Field | Type | Default |
-|-------|------|---------|
-| `api_key` | `str` | `LLM_API_KEY` env var |
-| `base_url` | `str` | `LLM_API_BASE` env var |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `api_key` | `str` | `LLM_API_KEY` env var | API key for the provider |
+| `base_url` | `str` | `LLM_API_BASE` env var | Base URL (set for proxies, leave empty for direct provider access) |
+
+---
+
+### ModelSpec
+
+Portable, self-contained specification for a model endpoint. Combines identity, credentials, pricing, and metadata. Preferred over passing `LLM` + `LLMCredentials` separately.
+
+```python
+from struckdown.model_spec import ModelSpec
+
+spec = ModelSpec(
+    model_name="openai:gpt-4o",
+    api_key="sk-...",
+    input_cost_per_mtok=2.50,
+    output_cost_per_mtok=10.0,
+)
+
+# Convert to LLM + credentials for chatter/structured_chat
+llm = spec.as_llm()
+credentials = spec.as_credentials()
+```
+
+**Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model_name` | `str` | (required) | Model identifier in `provider:model` format |
+| `model_type` | `"llm"` or `"embedding"` | `"llm"` | Model type |
+| `api_key` | `SecretStr` | `None` | API key (masked in repr) |
+| `base_url` | `str` | `None` | Base URL for proxies |
+| `data_residency` | `str` | `None` | Data residency region |
+| `display_name` | `str` | `None` | Human-readable name |
+| `input_cost_per_mtok` | `float` | `None` | Input cost per million tokens (USD) |
+| `output_cost_per_mtok` | `float` | `None` | Output cost per million tokens (USD) |
+
+**Computed fields:** `provider` (extracted from model_name), `bare_name` (model name without provider prefix), `provider_display` (human-readable provider name).
+
+When pricing fields are set, struckdown uses them for cost calculation instead of looking up prices via pydantic-ai or genai-prices.
+
+---
+
+### ModelRegistry
+
+Collection of `ModelSpec` instances with alias resolution. Used by pipeline systems (e.g. soaking) to manage multiple models.
+
+```python
+from struckdown.model_spec import ModelSpec, ModelRegistry
+
+registry = ModelRegistry(
+    models={
+        "openai:gpt-4o": ModelSpec(model_name="openai:gpt-4o", api_key="sk-..."),
+        "openai:gpt-4o-mini": ModelSpec(model_name="openai:gpt-4o-mini", api_key="sk-..."),
+    },
+    aliases={"default": "openai:gpt-4o-mini", "best": "openai:gpt-4o"},
+    default_llm="openai:gpt-4o-mini",
+)
+
+spec = registry.resolve("best")  # returns the gpt-4o spec
+```
+
+**Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `models` | `Dict[str, ModelSpec]` | `{}` | Registered models keyed by model_name |
+| `aliases` | `Dict[str, str]` | `{}` | Alias to model_name mappings |
+| `default_llm` | `str` | `None` | Default LLM model name |
+| `default_embedding` | `str` | `None` | Default embedding model name |
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `resolve(name_or_alias)` | Resolve a name or alias to a `ModelSpec` |
+| `resolve_embedding(name)` | Resolve an embedding model |
+| `register(spec)` | Add a `ModelSpec` to the registry |
+| `llms()` | List all LLM specs |
+| `embeddings()` | List all embedding specs |
+| `from_env()` | Build a minimal registry from `DEFAULT_LLM` / `LLM_API_KEY` / `LLM_API_BASE` env vars (CLI convenience) |
 
 ---
 

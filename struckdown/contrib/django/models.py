@@ -1,19 +1,27 @@
 """LLM and embedding model configuration.
 
-Two models:
-- AvailableModel: a model with its API credentials, ready to use
+Three models:
+- Credential: API credentials for an LLM provider (shared across models)
+- AvailableModel: a model with pricing, linked to a credential
 - ModelSet: a collection of models available to users
 
 Provider is derived from the model_name prefix (pydantic-ai convention).
 """
 
+import logging
 import uuid
+from decimal import Decimal
+from typing import Optional
+from urllib.parse import urlparse
 
 from django.db import models
+from django.utils import timezone
 
 from struckdown.model_spec import PROVIDERS, ModelRegistry, ModelSpec
 
 from .fields import EncryptedCharField
+
+logger = logging.getLogger(__name__)
 
 
 def generate_short_id():
@@ -27,15 +35,83 @@ class DataResidency(models.TextChoices):
     OTHER = "other", "Other"
 
 
+class PricingSource(models.TextChoices):
+    GENAI_PRICES = "genai_prices", "genai-prices"
+    OPENROUTER = "openrouter", "OpenRouter API"
+
+
+class Credential(models.Model):
+    """API credentials for an LLM provider.
+
+    Multiple AvailableModels can share a single Credential (e.g. all OpenAI
+    models use one API key). ModelSets can have a default Credential as fallback.
+    """
+
+    id = models.CharField(
+        max_length=50,
+        primary_key=True,
+        default=generate_short_id,
+        editable=False,
+    )
+    name = models.CharField(
+        max_length=100,
+        help_text="Human-readable label, e.g. 'OpenAI Production' or 'OpenRouter'",
+    )
+    api_key = EncryptedCharField(
+        max_length=500,
+        blank=True,
+        help_text="API key for this provider (encrypted at rest).",
+    )
+    base_url = models.URLField(
+        blank=True,
+        help_text=(
+            "Leave blank for direct provider access (OpenAI, Anthropic, Google, Mistral). "
+            "Set for proxies (OpenRouter, LiteLLM), Azure endpoints, or Ollama."
+        ),
+    )
+    pricing_source = models.CharField(
+        max_length=20,
+        choices=PricingSource.choices,
+        default=PricingSource.GENAI_PRICES,
+        help_text="Where to look up model pricing for auto-updates.",
+    )
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "llm_credential"
+        ordering = ["name"]
+
+    def __str__(self):
+        masked = self._mask_key()
+        url_hint = f" @ {urlparse(self.base_url).hostname}" if self.base_url else ""
+        return f"{self.name} ({masked}{url_hint})"
+
+    def _mask_key(self) -> str:
+        if not self.api_key:
+            return "no key"
+        k = self.api_key
+        if len(k) <= 10:
+            return k[:2] + "***" + k[-2:]
+        return k[:4] + "***" + k[-4:]
+
+    @property
+    def has_key(self) -> bool:
+        return bool(self.api_key)
+
+
 class AvailableModel(models.Model):
-    """An LLM or embedding model, ready to use.
+    """An LLM or embedding model with stored pricing, linked to a credential.
 
     model_name uses the pydantic-ai ``provider:model`` convention for direct
     provider access (e.g. ``openai:gpt-4o``, ``anthropic:claude-sonnet-4-20250514``).
-    Bare names (no prefix) are used for models behind a proxy -- set base_url.
+    Bare names (no prefix) are used for models behind a proxy -- set base_url
+    on the credential.
 
-    Each model stores its own API key and base_url. No separate credential
-    model -- everything needed to call the model is right here.
+    Credentials are resolved via: model's own credential > model set default
+    credential. Models without a resolvable credential will not be usable.
     """
 
     class ModelType(models.TextChoices):
@@ -61,18 +137,14 @@ class AvailableModel(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
 
-    # credentials -- everything needed to call this model
-    api_key = EncryptedCharField(
-        max_length=500,
+    # credential link -- replaces inline api_key/base_url
+    credential = models.ForeignKey(
+        Credential,
+        null=True,
         blank=True,
-        help_text="API key for this model's provider (encrypted at rest).",
-    )
-    base_url = models.URLField(
-        blank=True,
-        help_text=(
-            "Leave blank for direct provider access (OpenAI, Anthropic, Google, Mistral). "
-            "Set only for proxies (LiteLLM), Azure endpoints, or Ollama."
-        ),
+        on_delete=models.SET_NULL,
+        related_name="models",
+        help_text="API credential for this model. Falls back to model set default if blank.",
     )
 
     data_residency = models.CharField(
@@ -80,6 +152,31 @@ class AvailableModel(models.Model):
         choices=DataResidency.choices,
         default=DataResidency.US,
         help_text="Where data is processed: EU, US, or Other",
+    )
+
+    # stored pricing (replaces live genai-prices lookups)
+    input_cost_per_mtok = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Input cost per million tokens (USD).",
+    )
+    output_cost_per_mtok = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Output cost per million tokens (USD).",
+    )
+    prices_updated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When pricing was last auto-updated.",
+    )
+    prices_updated_manually = models.BooleanField(
+        default=False,
+        help_text="If True, auto-update will not overwrite these prices.",
     )
 
     is_active = models.BooleanField(default=True)
@@ -91,7 +188,10 @@ class AvailableModel(models.Model):
         ordering = ["name"]
 
     def __str__(self):
-        return f"{self.name} ({self.provider_display})"
+        cred_hint = ""
+        if self.credential_id:
+            cred_hint = f" via {self.credential.name}"
+        return f"{self.name} ({self.provider_display}{cred_hint})"
 
     # -- provider properties derived from model_name --
 
@@ -116,35 +216,133 @@ class AvailableModel(models.Model):
         return self.model_name
 
     @property
+    def display_name_with_provider(self) -> str:
+        """Unambiguous display name including provider source."""
+        cred = self.resolve_credential()
+        if cred and cred.base_url:
+            host = urlparse(cred.base_url).hostname or cred.base_url
+            return f"{self.name} via {host}"
+        return f"{self.name} ({self.provider_display})"
+
+    # -- credential resolution --
+
+    def resolve_credential(
+        self, default_credential: Optional[Credential] = None
+    ) -> Optional[Credential]:
+        """Return the effective Credential for this model.
+
+        Resolution order:
+        1. This model's own credential FK
+        2. Explicit default_credential passed by caller (e.g. from a ModelSet)
+        3. Default credential from any active ModelSet this model belongs to
+        4. None (no credentials available)
+
+        Only active credentials are returned.
+        """
+        if self.credential_id:
+            cred = self.credential
+            if cred.is_active:
+                return cred
+        if default_credential is not None and default_credential.is_active:
+            return default_credential
+        for ms in self.model_sets.filter(
+            is_active=True,
+            default_credential__isnull=False,
+            default_credential__is_active=True,
+        ):
+            return ms.default_credential
+        return None
+
+    @property
+    def api_key(self) -> str:
+        """Resolve API key from credential chain. Backwards compatible."""
+        cred = self.resolve_credential()
+        if cred and cred.api_key:
+            return cred.api_key
+        return ""
+
+    @property
+    def base_url(self) -> str:
+        """Resolve base_url from credential chain. Backwards compatible."""
+        cred = self.resolve_credential()
+        if cred and cred.base_url:
+            return cred.base_url
+        return ""
+
+    @property
     def has_credentials(self) -> bool:
-        return bool(self.api_key)
+        """True if this model can resolve an API key."""
+        cred = self.resolve_credential()
+        return bool(cred and cred.api_key)
 
     # -- conversion to struckdown types --
 
-    def to_spec(self) -> ModelSpec:
-        """Convert to a portable ModelSpec."""
+    def to_spec(
+        self, default_credential: Optional[Credential] = None
+    ) -> ModelSpec:
+        """Convert to a portable ModelSpec, including stored pricing."""
+        cred = self.resolve_credential(default_credential=default_credential)
         return ModelSpec(
             model_name=self.model_name,
             model_type=self.model_type,
-            api_key=self.api_key or None,
-            base_url=self.base_url or None,
+            api_key=(cred.api_key if cred else None) or None,
+            base_url=(cred.base_url if cred else None) or None,
             data_residency=self.data_residency or None,
             display_name=self.name or None,
+            input_cost_per_mtok=(
+                float(self.input_cost_per_mtok)
+                if self.input_cost_per_mtok is not None
+                else None
+            ),
+            output_cost_per_mtok=(
+                float(self.output_cost_per_mtok)
+                if self.output_cost_per_mtok is not None
+                else None
+            ),
         )
 
     def get_llm_and_credentials(self):
         """Return (LLM, LLMCredentials) tuple ready for struckdown calls.
 
-        Convenience method -- prefer to_spec() for new code.
+        Also sets the pricing context var so struckdown uses the stored
+        per-mtok rates for cost calculation. Prefer to_spec() for new code.
         """
-        from struckdown.llm import LLM, LLMCredentials
+        from struckdown.llm import LLM, LLMCredentials, set_model_pricing
 
+        cred = self.resolve_credential()
+        set_model_pricing(
+            float(self.input_cost_per_mtok) if self.input_cost_per_mtok is not None else None,
+            float(self.output_cost_per_mtok) if self.output_cost_per_mtok is not None else None,
+        )
         return (
             LLM(model_name=self.model_name),
-            LLMCredentials(api_key=self.api_key, base_url=self.base_url or None),
+            LLMCredentials(
+                api_key=(cred.api_key if cred else None),
+                base_url=(cred.base_url if cred else None) or None,
+            ),
         )
 
-    # -- optional pricing properties (require genai-prices) --
+    # -- pricing --
+
+    @property
+    def input_cost_per_token(self) -> Optional[float]:
+        """Input cost per token (USD). Reads from stored pricing."""
+        if self.input_cost_per_mtok is not None:
+            return float(self.input_cost_per_mtok / 1_000_000)
+        return None
+
+    @property
+    def output_cost_per_token(self) -> Optional[float]:
+        """Output cost per token (USD). Reads from stored pricing."""
+        if self.output_cost_per_mtok is not None:
+            return float(self.output_cost_per_mtok / 1_000_000)
+        return None
+
+    @property
+    def context_window(self) -> Optional[int]:
+        """Context window from genai-prices (cheap lookup, no API call)."""
+        m = self._get_genai_model()
+        return m.context_window if m else None
 
     def _get_genai_model(self):
         """Look up model in genai-prices database."""
@@ -171,28 +369,36 @@ class AvailableModel(models.Model):
         except Exception:
             return None
 
-    @property
-    def context_window(self):
-        m = self._get_genai_model()
-        return m.context_window if m else None
+    def update_prices(self, force: bool = False) -> bool:
+        """Look up and store pricing from the credential's pricing source.
 
-    @property
-    def input_cost_per_token(self):
-        m = self._get_genai_model()
-        if m and m.prices and m.prices.input_mtok is not None:
-            from decimal import Decimal
+        Returns True if prices were updated, False otherwise.
+        Skips update if prices_updated_manually is True (unless force=True).
+        """
+        from struckdown.pricing import get_price_source
 
-            return float(Decimal(str(m.prices.input_mtok)) / 1_000_000)
-        return None
+        if self.prices_updated_manually and not force:
+            return False
 
-    @property
-    def output_cost_per_token(self):
-        m = self._get_genai_model()
-        if m and m.prices and m.prices.output_mtok is not None:
-            from decimal import Decimal
+        cred = self.resolve_credential()
+        source_name = cred.pricing_source if cred else PricingSource.GENAI_PRICES
+        source = get_price_source(source_name)
 
-            return float(Decimal(str(m.prices.output_mtok)) / 1_000_000)
-        return None
+        result = source.lookup(self.model_name, provider=self.provider)
+        if result is None:
+            return False
+
+        self.input_cost_per_mtok = result.input_cost_per_mtok
+        self.output_cost_per_mtok = result.output_cost_per_mtok
+        self.prices_updated_at = timezone.now()
+        self.save(
+            update_fields=[
+                "input_cost_per_mtok",
+                "output_cost_per_mtok",
+                "prices_updated_at",
+            ]
+        )
+        return True
 
 
 class ModelSet(models.Model):
@@ -237,6 +443,15 @@ class ModelSet(models.Model):
         on_delete=models.SET_NULL,
         related_name="+",
         limit_choices_to={"model_type": AvailableModel.ModelType.EMBEDDING},
+    )
+
+    default_credential = models.ForeignKey(
+        Credential,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="default_for_model_sets",
+        help_text="Default credential for models in this set that don't have their own.",
     )
 
     # optional alias definitions: {"default": "gpt-5-mini", "best": "gpt-5"}
@@ -299,7 +514,7 @@ class ModelSet(models.Model):
     def to_registry(self) -> ModelRegistry:
         """Convert this ModelSet to a ModelRegistry for use in pipelines."""
         specs = {
-            m.model_name: m.to_spec()
+            m.model_name: m.to_spec(default_credential=self.default_credential)
             for m in self.available_models.filter(is_active=True)
         }
         return ModelRegistry(

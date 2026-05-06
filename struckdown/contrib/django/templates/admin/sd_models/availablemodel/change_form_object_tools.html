@@ -1,0 +1,39 @@
+{% extends "admin/change_form_object_tools.html" %}
+{% load i18n admin_urls %}
+
+{% block object-tools-items %}
+{{ block.super }}
+{% if original.has_credentials %}
+<li>
+    <a href="{{ test_connection_url }}" class="historylink">
+        Test Connection
+    </a>
+</li>
+{% else %}
+<li>
+    <span style="color: #999; cursor: not-allowed;" title="Add an API key first">
+        Test Connection (no API key)
+    </span>
+</li>
+{% endif %}
+<li>
+    <a href="{{ update_prices_url }}" class="historylink">
+        Update Prices
+    </a>
+</li>
+{% if test_structured_output_url %}
+{% if original.has_credentials %}
+<li>
+    <a href="{{ test_structured_output_url }}" class="historylink">
+        Test Structured Output
+    </a>
+</li>
+{% else %}
+<li>
+    <span style="color: #999; cursor: not-allowed;" title="Add an API key first">
+        Test Structured Output (no API key)
+    </span>
+</li>
+{% endif %}
+{% endif %}
+{% endblock %}

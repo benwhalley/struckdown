@@ -128,6 +128,8 @@ Note: per-slot model overrides use the same `provider:model` format. The provide
 
 ## Python API
 
+When using struckdown as a library, always pass credentials explicitly. Do not rely on environment variables -- they are a convenience for the `sd` CLI only.
+
 ```python
 from struckdown import LLM, LLMCredentials, complete
 
@@ -143,3 +145,24 @@ credentials = LLMCredentials(api_key="proxy-key", base_url="http://proxy:8000/v1
 
 result = complete("Tell a joke [[joke]]", model=llm, credentials=credentials)
 ```
+
+### Using ModelSpec (preferred for applications)
+
+`ModelSpec` bundles model identity, credentials, and pricing into a single portable object:
+
+```python
+from struckdown.model_spec import ModelSpec
+
+spec = ModelSpec(
+    model_name="openai:gpt-4o",
+    api_key="sk-...",
+    input_cost_per_mtok=2.50,
+    output_cost_per_mtok=10.0,
+)
+
+result = complete("Tell a joke [[joke]]", spec=spec)
+```
+
+### Django integration
+
+When using struckdown with Django, credentials are stored in the database via `struckdown.contrib.django` models (`Credential`, `AvailableModel`, `ModelSet`). See the Django contrib documentation for details. Environment variables are not used for credentials in this context.

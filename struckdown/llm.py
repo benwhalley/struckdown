@@ -401,6 +401,27 @@ logger = logging.getLogger(__name__)
 # Marker to detect cache misses - set to True inside _call_llm_cached (only runs on miss)
 _cache_miss_marker: ContextVar[bool] = ContextVar("cache_miss", default=False)
 
+# Per-call pricing override from ModelSpec. When set, _calc_cost_from_usage()
+# uses these values instead of pydantic-ai or genai-prices.
+# Tuple of (input_cost_per_mtok, output_cost_per_mtok).
+_model_pricing: ContextVar[Optional[Tuple[float, float]]] = ContextVar(
+    "model_pricing", default=None
+)
+
+
+def set_model_pricing(
+    input_cost_per_mtok: Optional[float], output_cost_per_mtok: Optional[float]
+) -> None:
+    """Set pricing for the current context (used by cost calculation).
+
+    When both values are provided, _calc_cost_from_usage() uses them instead of
+    pydantic-ai or genai-prices. Pass None to clear.
+    """
+    if input_cost_per_mtok is not None and output_cost_per_mtok is not None:
+        _model_pricing.set((input_cost_per_mtok, output_cost_per_mtok))
+    else:
+        _model_pricing.set(None)
+
 # Shared concurrency control for all LLM calls
 # This limits concurrent API calls across templates AND within together blocks
 MAX_LLM_CONCURRENCY = env_config("SD_MAX_CONCURRENCY", default=20, cast=int)
@@ -839,12 +860,30 @@ def _normalise_pricing_model(model_name: str) -> tuple[str, Optional[str]]:
 
 
 def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
-    """Compute USD cost from a model response's usage data."""
+    """Compute USD cost from a model response's usage data.
+
+    Priority:
+    1. ModelSpec pricing (via _model_pricing context var) -- caller-supplied per-mtok rates
+    2. pydantic-ai's built-in .cost() method
+    3. genai-prices library fallback
+    """
     usage = getattr(model_response, "usage", None)
     if not usage:
         return None
 
-    # PydanticAI already knows how to price a ModelResponse using usage plus
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+    # 1. Check for caller-supplied pricing from ModelSpec
+    pricing = _model_pricing.get()
+    if pricing is not None:
+        input_per_mtok, output_per_mtok = pricing
+        cost = (input_tokens * input_per_mtok / 1_000_000) + (
+            output_tokens * output_per_mtok / 1_000_000
+        )
+        return cost
+
+    # 2. PydanticAI already knows how to price a ModelResponse using usage plus
     # provider metadata; prefer that path over our local reconstruction.
     response_cost = getattr(model_response, "cost", None)
     if callable(response_cost):
@@ -853,6 +892,7 @@ def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
         except Exception:
             pass
 
+    # 3. Fall back to genai-prices library
     try:
         import genai_prices
 
@@ -868,8 +908,8 @@ def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
             return None
 
         gp_usage = genai_prices.Usage(
-            input_tokens=getattr(usage, "input_tokens", 0) or 0,
-            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             cache_read_tokens=getattr(usage, "cache_read_tokens", 0) or 0,
             cache_write_tokens=getattr(usage, "cache_write_tokens", 0) or 0,
         )

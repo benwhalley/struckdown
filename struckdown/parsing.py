@@ -1,6 +1,7 @@
 import re
 import warnings
 from collections import OrderedDict, namedtuple
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
@@ -381,6 +382,58 @@ def find_slots_with_positions(text: str) -> list:
         (extract_slot_key(m.group(1)), m.start(), m.end(), m.group(1))
         for m in SLOT_PATTERN.finditer(text)
     ]
+
+
+@dataclass(frozen=True)
+class SlotInfo:
+    """Structured representation of a parsed slot from a struckdown template."""
+
+    name: str
+    type: str
+    options: list[str] = field(default_factory=list)
+    is_action: bool = False
+    line_number: int = 0
+    raw: str = ""
+
+
+def extract_slots(template: str) -> list[SlotInfo]:
+    """Extract all slots from a struckdown template with typed metadata.
+
+    Parses each ``[[...]]`` slot and returns structured info. Action slots
+    (``[[@action]]``) are excluded by default since they don't produce
+    user-visible extraction fields.
+
+    Args:
+        template: Struckdown template text.
+
+    Returns:
+        List of SlotInfo for each non-action slot.
+    """
+    slots = []
+    for match in SLOT_PATTERN.finditer(template):
+        inner = match.group(1)
+        line_number = template[: match.start()].count("\n") + 1
+        try:
+            parsed = parse_slot_body(inner)
+        except Exception:
+            continue
+        if parsed.get("is_action"):
+            continue
+        name = parsed.get("key") or parsed.get("type")
+        slot_type = parsed.get("type", "default")
+        options = [
+            o.value for o in parsed.get("options", []) if not o.is_variable_ref
+        ]
+        slots.append(
+            SlotInfo(
+                name=name,
+                type=slot_type,
+                options=options,
+                line_number=line_number,
+                raw=inner,
+            )
+        )
+    return slots
 
 
 class NamedSegment(OrderedDict):
@@ -1721,8 +1774,8 @@ def get_slot_names(syntax):
     return {key for segment in parsed for key in segment.keys()}
 
 
-def _format_parse_error(error_str, template_text):
-    """Convert technical Lark parsing errors into user-friendly messages"""
+def format_parse_error(error_str: str, template_text: str) -> str:
+    """Convert technical Lark parsing errors into user-friendly messages."""
     line_match = re.search(r"line (\d+)", error_str)
     col_match = re.search(r"column (\d+)", error_str)
 
@@ -1788,7 +1841,7 @@ def extract_placeholders(template_text):
         return user_input_placeholders
 
     except Exception as e:
-        friendly_error = _format_parse_error(str(e), template_text)
+        friendly_error = format_parse_error(str(e), template_text)
         raise Exception(f"Template parsing failed: {friendly_error}")
 
 
@@ -1803,7 +1856,7 @@ def extract_template_tags(template_text):
         return m
 
     except Exception as e:
-        friendly_error = _format_parse_error(str(e), template_text)
+        friendly_error = format_parse_error(str(e), template_text)
         raise Exception(f"Template parsing failed: {friendly_error}")
 
 

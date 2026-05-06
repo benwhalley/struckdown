@@ -63,7 +63,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"
