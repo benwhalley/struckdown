@@ -49,7 +49,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-django = ["django>=5.0", "django-fernet-encrypted-fields>=0.4.0"]
+django = ["django>=5.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0"]
 dev = ["playwright>=1.40.0"]
 local = ["sentence-transformers>=2.2.0"]
 docs = [
@@ -63,7 +63,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/fixtures/*.json"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"

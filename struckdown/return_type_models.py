@@ -99,8 +99,11 @@ class ResponseModel(BaseModel):
             if extra.get("exclude_from_completion"):
                 continue
 
-            # Get the type annotation
-            annotation = cls.__annotations__.get(name)
+            # Use FieldInfo.annotation so inherited fields are picked up
+            # (cls.__annotations__ is class-local and misses parent fields,
+            # which silently drops e.g. Code.name/description from dynamic
+            # subclasses built via create_model(__base__=Code, ...)).
+            annotation = field_info.annotation
             if annotation is None:
                 continue
 
@@ -162,6 +165,43 @@ class ResponseModel(BaseModel):
         are not included in the schema sent to the LLM.
         """
         return cls.schema_class().model_json_schema(*args, **kwargs)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        """Strip ``exclude_from_completion`` fields from the JSON schema.
+
+        Tools that build schemas via ``TypeAdapter(SomeResponseModel)``
+        (notably pydantic-ai when constructing Agent output tools) bypass
+        the classmethod ``model_json_schema`` override above. Implementing
+        this hook ensures post-processed fields (``llm_config``,
+        ``resolved_quotes``, ``resolved_code_refs``, ``slug``, etc.) are
+        also stripped along the TypeAdapter path -- otherwise the LLM
+        sees them in the tool schema, fills them in with arbitrary
+        shapes, and downstream code that re-validates those values
+        (e.g. ``Theme.resolved_codes`` doing ``Code(**c)``) blows up.
+        """
+        json_schema = handler(core_schema)
+
+        excluded = {
+            name
+            for name, field_info in cls.model_fields.items()
+            if (field_info.json_schema_extra or {}).get("exclude_from_completion")
+        }
+        if not excluded:
+            return json_schema
+
+        properties = json_schema.get("properties")
+        if isinstance(properties, dict):
+            for name in list(excluded):
+                properties.pop(name, None)
+
+        required = json_schema.get("required")
+        if isinstance(required, list):
+            json_schema["required"] = [r for r in required if r not in excluded]
+            if not json_schema["required"]:
+                json_schema.pop("required", None)
+
+        return json_schema
 
 
 @ResponseTypes.register("poem")

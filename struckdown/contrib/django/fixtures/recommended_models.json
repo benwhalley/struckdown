@@ -1,0 +1,145 @@
+[
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_xai_grok_4_3",
+    "fields": {
+      "model_name": "x-ai/grok-4.3",
+      "model_type": "llm",
+      "name": "Grok 4.3",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_mistral_medium_3_5",
+    "fields": {
+      "model_name": "mistralai/mistral-medium-3-5",
+      "model_type": "llm",
+      "name": "Mistral Medium 3.5",
+      "data_residency": "eu",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_qwen_3_6_35b_a3b",
+    "fields": {
+      "model_name": "qwen/qwen3.6-35b-a3b",
+      "model_type": "llm",
+      "name": "Qwen 3.6 35B A3B",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_deepseek_v4_pro",
+    "fields": {
+      "model_name": "deepseek/deepseek-v4-pro",
+      "model_type": "llm",
+      "name": "DeepSeek V4 Pro",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_deepseek_v4_flash",
+    "fields": {
+      "model_name": "deepseek/deepseek-v4-flash",
+      "model_type": "llm",
+      "name": "DeepSeek V4 Flash",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_anthropic_opus_4_7",
+    "fields": {
+      "model_name": "anthropic/claude-opus-4.7",
+      "model_type": "llm",
+      "name": "Claude Opus 4.7",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_google_gemma_4_31b",
+    "fields": {
+      "model_name": "google/gemma-4-31b-it",
+      "model_type": "llm",
+      "name": "Gemma 4 31B IT",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_openai_gpt_5_4",
+    "fields": {
+      "model_name": "openai/gpt-5.4",
+      "model_type": "llm",
+      "name": "GPT-5.4",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_mistral_small_2603",
+    "fields": {
+      "model_name": "mistralai/mistral-small-2603",
+      "model_type": "llm",
+      "name": "Mistral Small 2603",
+      "data_residency": "eu",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_zai_glm_4_7_flash",
+    "fields": {
+      "model_name": "z-ai/glm-4.7-flash",
+      "model_type": "llm",
+      "name": "GLM 4.7 Flash",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_zai_glm_4_7",
+    "fields": {
+      "model_name": "z-ai/glm-4.7",
+      "model_type": "llm",
+      "name": "GLM 4.7",
+      "data_residency": "us",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_mistral_large_2512",
+    "fields": {
+      "model_name": "mistralai/mistral-large-2512",
+      "model_type": "llm",
+      "name": "Mistral Large 2512",
+      "data_residency": "eu",
+      "is_active": true
+    }
+  },
+  {
+    "model": "sd_models.availablemodel",
+    "pk": "rec_anthropic_claude_3_haiku",
+    "fields": {
+      "model_name": "anthropic/claude-3-haiku",
+      "model_type": "llm",
+      "name": "Claude 3 Haiku",
+      "data_residency": "us",
+      "is_active": true
+    }
+  }
+]

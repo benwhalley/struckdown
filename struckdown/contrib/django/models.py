@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from django.db import models
 from django.utils import timezone
+from django_lifecycle import AFTER_SAVE, LifecycleModelMixin, hook
 
 from struckdown.model_spec import PROVIDERS, ModelRegistry, ModelSpec
 
@@ -102,7 +103,7 @@ class Credential(models.Model):
         return bool(self.api_key)
 
 
-class AvailableModel(models.Model):
+class AvailableModel(LifecycleModelMixin, models.Model):
     """An LLM or embedding model with stored pricing, linked to a credential.
 
     model_name uses the pydantic-ai ``provider:model`` convention for direct
@@ -368,6 +369,15 @@ class AvailableModel(models.Model):
             return None
         except Exception:
             return None
+
+    @hook(AFTER_SAVE)
+    def _autofill_prices_on_save(self):
+        if self.input_cost_per_mtok is not None or self.output_cost_per_mtok is not None:
+            return
+        try:
+            self.update_prices()
+        except Exception:
+            logger.exception("update_prices failed for %s", self.model_name)
 
     def update_prices(self, force: bool = False) -> bool:
         """Look up and store pricing from the credential's pricing source.

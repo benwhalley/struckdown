@@ -53,6 +53,8 @@ class AvailableModelAdmin(admin.ModelAdmin):
         "test_link",
     ]
     list_filter = ["model_type", "data_residency", "is_active", "credential"]
+    list_editable = ["credential"]
+    autocomplete_fields = ["credential"]
     search_fields = ["id", "name", "model_name"]
     readonly_fields = ["id", "created_at", "updated_at", "prices_updated_at"]
     actions = ["update_prices_action"]

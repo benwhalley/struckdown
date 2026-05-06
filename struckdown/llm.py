@@ -13,7 +13,17 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, U
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
-from pydantic_ai.models import Model as PydanticAIModel, infer_model, parse_model_id
+from pydantic_ai.models import Model as PydanticAIModel, infer_model
+
+try:
+    from pydantic_ai.models import parse_model_id
+except ImportError:
+    def parse_model_id(model_id: str) -> tuple[str, str]:
+        """Shim for pydantic-ai>=1.0 which removed parse_model_id."""
+        if ":" in model_id:
+            provider, name = model_id.split(":", 1)
+            return provider, name
+        return "openai", model_id
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.providers.openai import OpenAIProvider

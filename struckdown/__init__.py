@@ -64,7 +64,14 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
                   get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
                   set_model_pricing, structured_chat, structured_chat_async)
-from pydantic_ai.models import parse_model_id
+try:
+    from pydantic_ai.models import parse_model_id
+except ImportError:
+    def parse_model_id(model_id: str) -> tuple:
+        if ":" in model_id:
+            provider, name = model_id.split(":", 1)
+            return provider, name
+        return "openai", model_id
 from .parsing import (SlotInfo, _add_default_completion_if_needed,
                       extract_slot_variable_refs, extract_slots,
                       format_parse_error, parser, parser_with_state,
