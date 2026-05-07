@@ -152,11 +152,13 @@ You send 500 fewer tokens to the LLM!
 Both execute in the same segment, results available to next segment.
 
 ### Conditional Search
+{% raw %}
 ```python
 {% if needs_context %}
 [[@search:docs|query=query]]
 {% endif %}
 ```
+{% endraw %}
 
 ## See Also
 

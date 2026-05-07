@@ -123,14 +123,17 @@ sd chat 'Postcode: [[extract:postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]
 
 Reference extracted values or input data:
 
+{% raw %}
 ```
 {{variable}}            # Reference extracted variable
 {{variable.field}}      # Access nested JSON field
 {{input}}               # Reference input data (batch processing)
 ```
+{% endraw %}
 
 ### Example
 
+{% raw %}
 ```
 Extract the name: [[extract:name]]
 
@@ -138,6 +141,7 @@ Extract the name: [[extract:name]]
 
 Hello {{name}}, tell me about yourself: [[response]]
 ```
+{% endraw %}
 
 ## System Messages
 
@@ -151,6 +155,7 @@ Control LLM behaviour with system messages:
 
 ### Example
 
+{% raw %}
 ```
 <system>
 You are an experienced data analyst.
@@ -162,11 +167,13 @@ Analyse this data: {{input}}
 
 [[analysis]]
 ```
+{% endraw %}
 
 ## Checkpoints (Memory Boundaries)
 
 Use `<checkpoint>` to create memory boundaries and save tokens:
 
+{% raw %}
 ```
 First, read this document carefully:
 {{document}}
@@ -182,8 +189,9 @@ Based on these points: {{key_points}}
 
 Provide recommendations: [[recommendations]]
 ```
+{% endraw %}
 
-**Critical**: Variables from before a checkpoint must be included as `{{variable}}` to remain visible in subsequent sections.
+**Critical**: Variables from before a checkpoint must be included as `{% raw %}{{variable}}{% endraw %}` to remain visible in subsequent sections.
 
 ## Parallelisation
 
@@ -204,6 +212,7 @@ Full Jinja2 syntax is supported:
 
 ### Conditionals
 
+{% raw %}
 ```jinja
 {% if include_examples %}
 Here are some examples:
@@ -214,9 +223,11 @@ Here are some examples:
 Analyse: {{content}}
 [[analysis]]
 ```
+{% endraw %}
 
 ### Loops
 
+{% raw %}
 ```jinja
 Review these items:
 {% for item in items %}
@@ -225,19 +236,23 @@ Review these items:
 
 [[review]]
 ```
+{% endraw %}
 
 ### Filters
 
+{% raw %}
 ```jinja
 {{text | upper}}
 {{items | join(", ")}}
 {{content | truncate(100)}}
 ```
+{% endraw %}
 
 ## File Includes
 
 Include other template files:
 
+{% raw %}
 ```jinja
 {% include 'system-prompt.sd' %}
 
@@ -245,6 +260,7 @@ User: {{question}}
 
 [[answer]]
 ```
+{% endraw %}
 
 Include paths are resolved relative to the template file, then common locations like `templates/` and `~/.struckdown/includes/`.
 
@@ -252,6 +268,7 @@ Include paths are resolved relative to the template file, then common locations 
 
 Comments are removed before processing:
 
+{% raw %}
 ```jinja
 {# Jinja2 comment - not sent to LLM #}
 
@@ -260,6 +277,7 @@ Comments are removed before processing:
 Actual prompt content here.
 [[response]]
 ```
+{% endraw %}
 
 ## Built-in Actions
 
@@ -317,7 +335,7 @@ class Person(BaseModel):
     occupation: str
 
 result = chatter("""
-Extract person info from: {{text}}
+Extract person info from: {% raw %}{{text}}{% endraw %}
 [[Person:person]]
 """, context={
     "text": "John is a 30-year-old engineer",
