@@ -417,21 +417,23 @@ fields:
             # make it optional (simulates [[type:x]] without !)
             optional_model = loader._make_optional(base_model, "ConstrainedOptional")
 
-            # verify schema includes constraints after making optional
+            # verify schema includes constraints after making optional.
+            # optional fields use Pydantic's native ``anyOf`` form: the
+            # typed branch carries constraints, the null branch is bare.
             schema = optional_model.model_json_schema()
-            # optional fields are flattened to {"type": ["<t>", "null"], ...}
-            # so OpenAI strict tool calling accepts them; constraints sit
-            # alongside the nullable type rather than inside an ``anyOf`` arm
             age_schema = schema["properties"]["age"]
-            assert age_schema.get("type") == ["integer", "null"]
-            assert age_schema.get("minimum") == 18
-            assert age_schema.get("maximum") == 100
+            age_typed = next(
+                s for s in age_schema["anyOf"] if s.get("type") == "integer"
+            )
+            assert age_typed.get("minimum") == 18
+            assert age_typed.get("maximum") == 100
 
-            # check string constraints too
             name_schema = schema["properties"]["name"]
-            assert name_schema.get("type") == ["string", "null"]
-            assert name_schema.get("minLength") == 2
-            assert name_schema.get("maxLength") == 50
+            name_typed = next(
+                s for s in name_schema["anyOf"] if s.get("type") == "string"
+            )
+            assert name_typed.get("minLength") == 2
+            assert name_typed.get("maxLength") == 50
         finally:
             path.unlink()
 

@@ -47,61 +47,6 @@ class LLMConfig(BaseModel):
 _schema_class_cache: Dict[Type, Type[BaseModel]] = {}
 
 
-def _flatten_nullable_anyof(prop: dict) -> None:
-    """Flatten ``anyOf: [<typed>, {"type": "null"}]`` into a strict-compliant
-    nullable property.
-
-    Pydantic v2 emits ``Optional[Literal[...]]`` (and other ``Optional[T]``)
-    as ``{"anyOf": [<typed>, {"type": "null"}]}`` with no top-level ``type``
-    key. OpenAI strict tool calling rejects that with::
-
-        Invalid schema for function 'final_result':
-        In context=('properties', '<name>'), schema must have a 'type' key.
-
-    Rewrite the property in place to ``{"type": [<t>, "null"], ...typed}``,
-    which is valid JSON Schema and accepted by strict mode.
-    """
-    any_of = prop.get("anyOf")
-    if not isinstance(any_of, list) or len(any_of) != 2:
-        return
-    null_part = next((s for s in any_of if isinstance(s, dict) and s.get("type") == "null"), None)
-    typed_part = next((s for s in any_of if isinstance(s, dict) and s.get("type") != "null"), None)
-    if null_part is None or typed_part is None:
-        return
-    typed_type = typed_part.get("type")
-    # only flatten primitive/array/object types -- $ref-based unions are left alone
-    if not isinstance(typed_type, str):
-        return
-    del prop["anyOf"]
-    prop["type"] = [typed_type, "null"]
-    for k, v in typed_part.items():
-        if k == "type":
-            continue
-        prop.setdefault(k, v)
-
-
-def _flatten_nullable_anyof_in_schema(schema: dict) -> dict:
-    """Recursively flatten nullable ``anyOf`` patterns throughout a schema."""
-    if not isinstance(schema, dict):
-        return schema
-    properties = schema.get("properties")
-    if isinstance(properties, dict):
-        for prop in properties.values():
-            if isinstance(prop, dict):
-                _flatten_nullable_anyof(prop)
-                _flatten_nullable_anyof_in_schema(prop)
-    items = schema.get("items")
-    if isinstance(items, dict):
-        _flatten_nullable_anyof(items)
-        _flatten_nullable_anyof_in_schema(items)
-    defs = schema.get("$defs") or schema.get("definitions")
-    if isinstance(defs, dict):
-        for sub in defs.values():
-            if isinstance(sub, dict):
-                _flatten_nullable_anyof_in_schema(sub)
-    return schema
-
-
 class ResponseModel(BaseModel):
     """Base class for all Struckdown response models with LLM parameter defaults.
 
@@ -219,8 +164,7 @@ class ResponseModel(BaseModel):
         This ensures fields marked with exclude_from_completion=True
         are not included in the schema sent to the LLM.
         """
-        schema = cls.schema_class().model_json_schema(*args, **kwargs)
-        return _flatten_nullable_anyof_in_schema(schema)
+        return cls.schema_class().model_json_schema(*args, **kwargs)
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema, handler):
@@ -257,7 +201,7 @@ class ResponseModel(BaseModel):
             if not json_schema["required"]:
                 json_schema.pop("required", None)
 
-        return _flatten_nullable_anyof_in_schema(json_schema)
+        return json_schema
 
 
 @ResponseTypes.register("poem")
@@ -1349,7 +1293,7 @@ def duration_response_model(options=None, quantifier=None, required_prefix=False
 class JsonResponse(ResponseModel):
     """Return arbitrary valid JSON data."""
 
-    response: Any = Field(
+    response: Union[Dict[str, Any], List[Any], str, int, float, bool, None] = Field(
         ...,
         description="Valid JSON data. Can be an object, array, string, number, boolean, or null.",
     )

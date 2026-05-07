@@ -108,11 +108,12 @@ def test_pick_required_false():
     assert instance.response == "option1"
 
 
-def test_optional_pick_schema_is_openai_strict_compatible():
-    """Optional picks must emit a top-level ``type`` key on the response
-    property. Without this, OpenAI strict tool-calling rejects the schema
-    with: ``In context=('properties', 'response'), schema must have a 'type'
-    key.`` See selection_response_model() and _flatten_nullable_anyof().
+def test_optional_pick_schema_uses_native_anyof():
+    """Optional picks emit Pydantic's native ``anyOf`` form for nullables.
+
+    OpenAI's strict-mode transformer (in pydantic-ai) accepts ``anyOf``,
+    Anthropic accepts it, and Azure accepts it -- whereas the previous
+    flattened form ``type: [<t>, "null"]`` was rejected by Azure.
     """
     from pydantic import TypeAdapter
 
@@ -120,13 +121,12 @@ def test_optional_pick_schema_is_openai_strict_compatible():
         ["respond", "reaction", "skip"], required_prefix=False
     )
 
-    # both schema-generation paths (classmethod override and TypeAdapter
-    # via __get_pydantic_json_schema__) must produce a valid schema
     for schema in (model.model_json_schema(), TypeAdapter(model).json_schema()):
         prop = schema["properties"]["response"]
-        assert "anyOf" not in prop, (
-            "Optional pick schema still uses anyOf; OpenAI strict mode "
-            "rejects properties without a top-level 'type' key."
-        )
-        assert prop.get("type") == ["string", "null"]
-        assert prop.get("enum") == ["respond", "reaction", "skip"]
+        any_of = prop.get("anyOf")
+        assert isinstance(any_of, list) and len(any_of) == 2
+        types = sorted(s.get("type") for s in any_of)
+        assert types == ["null", "string"]
+        # the typed branch carries the enum
+        typed = next(s for s in any_of if s.get("type") == "string")
+        assert typed.get("enum") == ["respond", "reaction", "skip"]
