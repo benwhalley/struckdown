@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.8.0"
+version = "0.9.1"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -52,6 +52,7 @@ dependencies = [
 django = ["django>=5.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0"]
 dev = ["playwright>=1.40.0"]
 local = ["sentence-transformers>=2.2.0"]
+extract = ["kreuzberg>=4.9"]
 docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.0",
@@ -63,7 +64,7 @@ where = ["."]
 include = ["struckdown*",]
 
 [tool.setuptools.package-data]
-struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/fixtures/*.json"]
+struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/fixtures/*.json", "contrib/django/test_audio.mp3"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"
