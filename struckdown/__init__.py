@@ -64,6 +64,12 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
                   get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
                   set_model_pricing, structured_chat, structured_chat_async)
+from .audio import (TranscriptionResult, set_audio_pricing, transcribe,
+                    transcribe_async)
+from .audio_probe import (AudioValidation, probe_audio_duration,
+                          validate_audio_for_transcription)
+from .extract import (ExtractionError, extract_rows, extract_text,
+                      is_spreadsheet, is_supported)
 try:
     from pydantic_ai.models import parse_model_id
 except ImportError:
@@ -421,8 +427,9 @@ async def complete_async(
     Args:
         multipart_prompt: Struckdown template string
         context: Single context dict OR list of context dicts
-        model: LLM configuration (default: from environment)
-        credentials: API credentials (default: from environment)
+        model: LLM configuration (default: LLM() reads DEFAULT_LLM)
+        credentials: API credentials -- required; pass explicitly, or via spec/registry,
+            or use LLMCredentials.from_env() for env-based config
         spec: ModelSpec combining model + credentials (alternative to model/credentials)
         registry: ModelRegistry for alias resolution (alternative to model/credentials)
         extra_kwargs: Additional LLM parameters
@@ -552,8 +559,9 @@ async def complete_incremental_async(
 
     Args:
         multipart_prompt: Struckdown template string
-        model: LLM configuration (default: from environment)
-        credentials: API credentials (default: from environment)
+        model: LLM configuration (default: LLM() reads DEFAULT_LLM)
+        credentials: API credentials -- required; pass explicitly, or via spec/registry,
+            or use LLMCredentials.from_env() for env-based config
         context: Initial context variables
         extra_kwargs: Additional LLM parameters
         template_path: Path to template file (for includes)
@@ -967,6 +975,20 @@ __all__ = [
     "get_cross_encoder_scores",
     "EmbeddingResult",
     "EmbeddingResultList",
+    # Transcription / STT
+    "transcribe",
+    "transcribe_async",
+    "TranscriptionResult",
+    "set_audio_pricing",
+    "probe_audio_duration",
+    "validate_audio_for_transcription",
+    "AudioValidation",
+    # Document extraction
+    "extract_text",
+    "extract_rows",
+    "is_spreadsheet",
+    "is_supported",
+    "ExtractionError",
     # Incremental events
     "IncrementalEvent",
     "SlotCompleted",

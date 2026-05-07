@@ -681,7 +681,7 @@ def chat(
             err=True,
         )
         raise typer.Exit(1)
-    credentials = LLMCredentials()
+    credentials = LLMCredentials.from_env()
     model = LLM(model_name=model_name)
 
     # build extra_kwargs for API parameters
@@ -1015,7 +1015,7 @@ async def batch_async(
     Async implementation of batch processing with concurrent execution.
     """
     # Process each input
-    credentials = LLMCredentials()
+    credentials = LLMCredentials.from_env()
     model = LLM(model_name=model_name)
     results = [None] * len(input_data)
     errors = []

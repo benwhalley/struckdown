@@ -357,7 +357,7 @@ def run_tests(verbose=False, stop_on_error=False):
         stop_on_error: If True, stop on first failure
     """
     model = LLM()
-    credentials = LLMCredentials()
+    credentials = LLMCredentials.from_env()
 
     results = {
         "passed": [],

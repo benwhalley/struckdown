@@ -5,7 +5,9 @@ Projects using a custom admin site should subclass these and register on
 their own site.
 """
 
+import io
 import logging
+from pathlib import Path
 
 from django.contrib import admin, messages
 from django.urls import path, reverse
@@ -14,6 +16,14 @@ from django.utils.html import format_html
 from .models import AvailableModel, Credential, ModelSet
 
 logger = logging.getLogger(__name__)
+
+
+_TEST_AUDIO_PATH = Path(__file__).parent / "test_audio.mp3"
+
+
+def _load_test_audio() -> tuple[str, bytes]:
+    """Return (filename, bytes) of the bundled speech clip used for transcription tests."""
+    return _TEST_AUDIO_PATH.name, _TEST_AUDIO_PATH.read_bytes()
 
 
 class CredentialAdmin(admin.ModelAdmin):
@@ -49,6 +59,7 @@ class AvailableModelAdmin(admin.ModelAdmin):
         "data_residency",
         "input_cost_per_mtok",
         "output_cost_per_mtok",
+        "cost_per_audio_minute",
         "is_active",
         "test_link",
     ]
@@ -185,6 +196,30 @@ class AvailableModelAdmin(admin.ModelAdmin):
                         f"(cost: ${result['cost']:.6f})",
                         messages.SUCCESS,
                     )
+                elif model.model_type == AvailableModel.ModelType.TRANSCRIPTION:
+                    duration = result.get("duration_s")
+                    estimated = result.get("estimated_duration_s")
+                    cost = result.get("cost")
+                    parts = [f'Transcription: "{result["response"]}"']
+                    if duration is not None:
+                        parts.append(f"({duration:.1f}s")
+                        if cost is not None:
+                            parts[-1] += f", est. ${cost:.6f}"
+                        parts[-1] += ")"
+                    if (
+                        estimated is not None
+                        and duration is not None
+                        and abs(estimated - duration) > 0.5
+                    ):
+                        parts.append(
+                            f"[warning: probed {estimated:.1f}s, API reported {duration:.1f}s]"
+                        )
+                    self.message_user(
+                        request,
+                        "Connection successful! "
+                        f"{connection_debug} " + " ".join(parts),
+                        messages.SUCCESS,
+                    )
                 else:
                     self.message_user(
                         request,
@@ -230,7 +265,12 @@ class AvailableModelAdmin(admin.ModelAdmin):
 
         llm_obj = LLM(model_name=model.model_name)
         creds = LLMCredentials(api_key=model.api_key, base_url=model.base_url or None)
-        pydantic_model = llm_obj.get_pydantic_model(creds)
+
+        # Only LLMs go through pydantic-ai's chat-model resolution; embedding
+        # and transcription models would fail validation there.
+        pydantic_model = None
+        if model.model_type == AvailableModel.ModelType.LLM:
+            pydantic_model = llm_obj.get_pydantic_model(creds)
 
         return {
             "creds": creds,
@@ -294,11 +334,27 @@ class AvailableModelAdmin(admin.ModelAdmin):
                 "cost": getattr(embeddings, "total_cost", 0) or 0,
             }
 
-        fn = (
-            _run_llm
-            if model.model_type == AvailableModel.ModelType.LLM
-            else _run_embedding
-        )
+        def _run_transcription():
+            from struckdown import transcribe
+
+            filename, audio_bytes = _load_test_audio()
+            buf = io.BytesIO(audio_bytes)
+            buf.name = filename
+            result = transcribe(buf, model=llm.model_name, credentials=credentials)
+            return {
+                "success": True,
+                "response": str(result.text)[:200],
+                "duration_s": result.duration_s,
+                "estimated_duration_s": result.estimated_duration_s,
+                "cost": result.cost,
+            }
+
+        fn_map = {
+            AvailableModel.ModelType.LLM: _run_llm,
+            AvailableModel.ModelType.EMBEDDING: _run_embedding,
+            AvailableModel.ModelType.TRANSCRIPTION: _run_transcription,
+        }
+        fn = fn_map.get(model.model_type, _run_llm)
         with ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(fn).result(timeout=30)
 

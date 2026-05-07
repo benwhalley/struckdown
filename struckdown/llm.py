@@ -301,7 +301,7 @@ def _list_provider_models(model_name: str) -> Optional[list[str]]:
         warnings.simplefilter("ignore", DeprecationWarning)
         provider_prefix, _ = parse_model_id(model_name)
 
-    credentials = LLMCredentials()
+    credentials = LLMCredentials.from_env()
     api_key = credentials.api_key_for_provider(provider_prefix)
     if not api_key:
         return None
@@ -496,12 +496,26 @@ _PROVIDER_ENDPOINT_ENV_VARS: dict[str, str] = {
 
 
 class LLMCredentials(BaseModel):
-    api_key: Optional[str] = Field(
-        default_factory=lambda: env_config("LLM_API_KEY", None), repr=False
-    )
-    base_url: Optional[str] = Field(
-        default_factory=lambda: env_config("LLM_API_BASE", None), repr=False
-    )
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+    def __repr_args__(self):
+        # mask api_key so secrets don't leak into logs/tracebacks, but still
+        # show whether it's set -- a fully empty repr was a debugging footgun
+        yield "api_key", _obfuscate_key(self.api_key) if self.api_key else None
+        yield "base_url", self.base_url
+
+    @classmethod
+    def from_env(cls) -> "LLMCredentials":
+        """Build credentials from LLM_API_KEY / LLM_API_BASE env vars.
+
+        Library and Django callers should pass credentials explicitly;
+        env vars are intended for CLI use only.
+        """
+        return cls(
+            api_key=env_config("LLM_API_KEY", None),
+            base_url=env_config("LLM_API_BASE", None),
+        )
 
     def api_key_for_provider(self, provider_name: str) -> Optional[str]:
         """Return the best API key for a given provider.
@@ -680,7 +694,10 @@ class LLM(BaseModel):
         import httpx
 
         if credentials is None:
-            credentials = LLMCredentials()
+            raise ValueError(
+                "credentials are required: pass credentials=... explicitly, "
+                "or use LLMCredentials.from_env() for env-based config"
+            )
 
         import warnings
         with warnings.catch_warnings():
@@ -1105,7 +1122,10 @@ def structured_chat(
     if llm is None:
         llm = LLM()
     if credentials is None:
-        credentials = LLMCredentials()
+        raise ValueError(
+            "credentials are required: pass credentials=... explicitly, "
+            "or use LLMCredentials.from_env() for env-based config"
+        )
 
     if prompt is not None and messages is None:
         messages = [{"role": "user", "content": prompt}]
@@ -1232,7 +1252,10 @@ async def structured_chat_async(
     if llm is None:
         llm = LLM()
     if credentials is None:
-        credentials = LLMCredentials()
+        raise ValueError(
+            "credentials are required: pass credentials=... explicitly, "
+            "or use LLMCredentials.from_env() for env-based config"
+        )
 
     if not stream:
         # non-streaming: wrap existing sync path in a thread
@@ -1860,9 +1883,11 @@ async def get_embedding_async(
         # API embeddings
         logger.debug(f"Using API embeddings: {model}")
 
-        # Get credentials (use default if not provided)
         if credentials is None:
-            credentials = LLMCredentials()
+            raise ValueError(
+                "credentials are required for API embeddings: "
+                "pass credentials=... explicitly, or use LLMCredentials.from_env()"
+            )
 
         missing_embeddings, total_tokens, total_cost = await _compute_embeddings_async(
             missing_texts,

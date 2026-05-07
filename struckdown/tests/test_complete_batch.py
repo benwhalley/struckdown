@@ -4,8 +4,10 @@ import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
-from struckdown import (LLM, StruckdownResult, SlotResult, complete,
-                        complete_async)
+from struckdown import (LLM, LLMCredentials, StruckdownResult, SlotResult,
+                        complete, complete_async)
+
+_DUMMY_CREDS = LLMCredentials(api_key="test", base_url="http://test")
 
 
 def _make_mock_chat(delay=0, fail_for_contexts=None):
@@ -51,7 +53,7 @@ def test_results_preserve_input_order():
             return await complete_async(
                 "hello {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
             )
 
     results = asyncio.run(run())
@@ -75,7 +77,7 @@ def test_each_context_receives_its_own_variables():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
             )
 
     results = asyncio.run(run())
@@ -103,7 +105,7 @@ def test_single_failure_does_not_block_others():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
             )
 
     results = asyncio.run(run())
@@ -127,7 +129,7 @@ def test_all_failures_returns_all_exceptions():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
             )
 
     results = asyncio.run(run())
@@ -151,7 +153,7 @@ def test_on_complete_called_for_each_context():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
                 on_complete=lambda idx, res: completions.append((idx, res)),
             )
 
@@ -174,7 +176,7 @@ def test_on_complete_called_for_errors_too():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
                 on_complete=lambda idx, res: completions.append((idx, type(res))),
             )
 
@@ -221,7 +223,7 @@ def test_max_concurrent_limits_parallelism():
             return await complete_async(
                 "greet {{name}} [[reply]]",
                 contexts,
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
                 max_concurrent=1,
             )
 
@@ -243,7 +245,7 @@ def test_max_concurrent_limits_parallelism():
 
 def test_empty_contexts_returns_empty_list():
     async def run():
-        return await complete_async("hello [[reply]]", [], model=LLM())
+        return await complete_async("hello [[reply]]", [], model=LLM(), credentials=_DUMMY_CREDS)
 
     results = asyncio.run(run())
     assert results == []
@@ -276,7 +278,7 @@ def test_kwargs_forwarded_to_internal_processor():
             return await complete_async(
                 "hello [[reply]]",
                 [{"name": "test"}],
-                model=LLM(),
+                model=LLM(), credentials=_DUMMY_CREDS,
                 extra_kwargs={"temperature": 0.5},
             )
 
@@ -299,7 +301,7 @@ def test_complete_sync_with_list():
         results = complete(
             "greet {{name}} [[reply]]",
             contexts,
-            model=LLM(),
+            model=LLM(), credentials=_DUMMY_CREDS,
         )
 
     assert len(results) == 2

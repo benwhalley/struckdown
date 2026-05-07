@@ -118,6 +118,13 @@ class AvailableModel(LifecycleModelMixin, models.Model):
     class ModelType(models.TextChoices):
         LLM = "llm", "Language Model"
         EMBEDDING = "embedding", "Embedding Model"
+        TRANSCRIPTION = "transcription", "Speech-to-Text"
+        # not yet wired through struckdown -- enable when supported:
+        # TTS = "tts", "Text-to-Speech"
+        # VISION = "vision", "Vision (Image Understanding)"
+        # IMAGE = "image", "Image Generation"
+        # RERANKER = "reranker", "Reranker"
+        # MODERATION = "moderation", "Moderation"
 
     id = models.CharField(
         max_length=50,
@@ -169,6 +176,13 @@ class AvailableModel(LifecycleModelMixin, models.Model):
         null=True,
         blank=True,
         help_text="Output cost per million tokens (USD).",
+    )
+    cost_per_audio_minute = models.DecimalField(
+        max_digits=10,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="USD per minute of audio (for transcription / STT models). Manually set.",
     )
     prices_updated_at = models.DateTimeField(
         null=True,
@@ -308,12 +322,18 @@ class AvailableModel(LifecycleModelMixin, models.Model):
         Also sets the pricing context var so struckdown uses the stored
         per-mtok rates for cost calculation. Prefer to_spec() for new code.
         """
+        from struckdown.audio import set_audio_pricing
         from struckdown.llm import LLM, LLMCredentials, set_model_pricing
 
         cred = self.resolve_credential()
         set_model_pricing(
             float(self.input_cost_per_mtok) if self.input_cost_per_mtok is not None else None,
             float(self.output_cost_per_mtok) if self.output_cost_per_mtok is not None else None,
+        )
+        set_audio_pricing(
+            float(self.cost_per_audio_minute)
+            if self.cost_per_audio_minute is not None
+            else None
         )
         return (
             LLM(model_name=self.model_name),

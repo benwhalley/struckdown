@@ -2,8 +2,16 @@
 # SHORT TERM
 
 
-test evidence and bm25 search
+get_cross_encoder_scores
+we need to add cross encoder models to  Available models
+and test/validate this.
 
+
+
+Add a Pricing info for speech to text models? might require migration to support audio minutes.
+perhaps do some validation on audio inputs to make sure it's sent in the right format? would it be worth pre-processing the audio to remove silence and normalise volume?
+
+test evidence and bm25 search
 
 
 # LONGER TERM
