@@ -419,23 +419,19 @@ fields:
 
             # verify schema includes constraints after making optional
             schema = optional_model.model_json_schema()
-            # optional fields use anyOf with the constrained type and null
+            # optional fields are flattened to {"type": ["<t>", "null"], ...}
+            # so OpenAI strict tool calling accepts them; constraints sit
+            # alongside the nullable type rather than inside an ``anyOf`` arm
             age_schema = schema["properties"]["age"]
-            assert "anyOf" in age_schema
-            # find the non-null type in anyOf
-            int_schema = next(
-                s for s in age_schema["anyOf"] if s.get("type") == "integer"
-            )
-            assert int_schema.get("minimum") == 18
-            assert int_schema.get("maximum") == 100
+            assert age_schema.get("type") == ["integer", "null"]
+            assert age_schema.get("minimum") == 18
+            assert age_schema.get("maximum") == 100
 
             # check string constraints too
             name_schema = schema["properties"]["name"]
-            str_schema = next(
-                s for s in name_schema["anyOf"] if s.get("type") == "string"
-            )
-            assert str_schema.get("minLength") == 2
-            assert str_schema.get("maxLength") == 50
+            assert name_schema.get("type") == ["string", "null"]
+            assert name_schema.get("minLength") == 2
+            assert name_schema.get("maxLength") == 50
         finally:
             path.unlink()
 
