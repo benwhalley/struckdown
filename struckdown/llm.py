@@ -681,15 +681,19 @@ class LLM(BaseModel):
 
         Supports two modes:
 
-        1. **Proxy mode** (when credentials.base_url is set): all requests are sent
-           through an OpenAI-compatible proxy (e.g. LiteLLM). The provider prefix is
-           stripped from the model name before sending to the proxy. This preserves
-           backward compatibility with existing LLM_API_KEY + LLM_API_BASE setups.
+        1. **Proxy mode** (when credentials.base_url is set and is not a direct
+           Azure endpoint): all requests are sent through an OpenAI-compatible
+           proxy (LiteLLM, Helicone, etc.). The provider prefix is stripped from
+           the model name (e.g. ``openai:gpt-4o`` -> ``gpt-4o``). To use a
+           prefixed model name with the proxy (e.g. LiteLLM's ``azure/gpt-5-mini``),
+           write it without the colon -- bare names pass through unchanged.
 
-        2. **Native provider mode** (no base_url): uses pydantic-ai's infer_model()
-           with the ``provider:model_name`` convention (e.g. ``anthropic:claude-sonnet-4-20250514``).
-           If credentials.api_key is set, it is injected into the provider; otherwise
-           pydantic-ai reads the standard env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.).
+        2. **Native provider mode** (no base_url, or base_url is a real Azure
+           endpoint): uses pydantic-ai's infer_model() with the
+           ``provider:model_name`` convention (e.g. ``anthropic:claude-sonnet-4-20250514``).
+           If credentials.api_key is set, it is injected into the provider;
+           otherwise pydantic-ai reads the standard env vars (OPENAI_API_KEY,
+           ANTHROPIC_API_KEY, etc.).
         """
         import httpx
 
@@ -704,30 +708,34 @@ class LLM(BaseModel):
             warnings.simplefilter("ignore", DeprecationWarning)
             provider_prefix, bare_name = parse_model_id(self.model_name)
 
-        # Check if this provider has its own API key set, which takes
-        # precedence over the generic LLM_API_KEY / LLM_API_BASE.
-        provider_env_var = _PROVIDER_KEY_ENV_VARS.get(provider_prefix)
-        has_provider_key = bool(provider_env_var and os.environ.get(provider_env_var))
+        # An explicit base_url is a deliberate routing choice: send everything
+        # through it as an OpenAI-compatible proxy (LiteLLM, Helicone, etc.).
+        # The exception is a real Azure endpoint, which uses a different wire
+        # protocol and needs AzureProvider. Detect that by hostname.
+        base_url = credentials.base_url
+        is_azure_endpoint = bool(
+            base_url and ".openai.azure.com" in base_url.lower()
+        )
 
-        # Proxy mode: base_url is set -- route through OpenAI-compatible proxy,
-        # UNLESS this provider has its own dedicated API key configured
-        # or is Azure (which needs AzureProvider, not OpenAI-compatible).
-        is_azure = provider_prefix == "azure"
-        if credentials.base_url and not has_provider_key and not is_azure:
+        if base_url and not is_azure_endpoint:
             if not credentials.api_key:
                 raise Exception(
-                    "LLM_API_KEY must be set when using a proxy (LLM_API_BASE)"
+                    "api_key is required when base_url is set (proxy mode)"
                 )
-            # strip provider prefix for proxy -- proxy expects bare model name
+            # Send bare_name to the proxy. If the user wrote a bare model name
+            # (no `:` prefix), bare_name == self.model_name, so e.g. an explicit
+            # "azure/gpt-5-mini" passes through unchanged for LiteLLM-style
+            # routing. With "openai:gpt-4o", the prefix is stripped to "gpt-4o".
             http_client = httpx.AsyncClient(follow_redirects=True)
             provider = OpenAIProvider(
                 api_key=credentials.api_key,
-                base_url=credentials.base_url,
+                base_url=base_url,
                 http_client=http_client,
             )
             return OpenAIChatModel(bare_name, provider=provider)
 
-        # Native provider mode: use pydantic-ai's provider:model convention
+        # Native provider mode: pydantic-ai's provider:model convention,
+        # used for direct provider access (no base_url) or Azure direct.
         resolved_key = credentials.api_key_for_provider(provider_prefix)
         if resolved_key:
             def provider_factory(provider_name: str):
