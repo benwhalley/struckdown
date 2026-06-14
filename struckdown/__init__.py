@@ -135,6 +135,7 @@ async def _complete_single_async(
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
+    stop_at: Optional[str] = None,
 ) -> StruckdownResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
@@ -190,11 +191,20 @@ async def _complete_single_async(
             }
         )
 
+    # stop_at: find the segment that produces the requested slot; drop every later
+    # segment so its slots are never scheduled (segment order == document order).
+    stop_seg_idx = None
+    if stop_at is not None:
+        for data in segment_data:
+            if stop_at in {s.key for s in data["analysis"].slots}:
+                stop_seg_idx = data["idx"]
+                break
+
     # Build dependency graph from raw segments (only those with slots)
     # Map: parsed_idx -> raw_idx for segments that have slots
     slots_by_raw_idx = {}
     for data in segment_data:
-        if data["has_slots"]:
+        if data["has_slots"] and (stop_seg_idx is None or data["idx"] <= stop_seg_idx):
             # analysis.slots is a list of SlotDependency namedtuples
             slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
 
@@ -287,6 +297,7 @@ async def _complete_single_async(
             global_header_messages=local_header_globals,
             strict_undefined=strict_undefined,
             strict_params=strict_params,
+            stop_at=stop_at,
             **(extra_kwargs or {}),
         )
         return seg_idx, result, data["system_template"], data["header_template"]
@@ -388,6 +399,10 @@ async def _complete_single_async(
             logger.error(f"Batch {batch} error: {e}")
             raise
 
+        # stop_at: the requested final slot is done -> skip any later segments entirely
+        if stop_at and stop_at in final.results:
+            break
+
     logger.debug(f"\n\n{LC.GREEN}Chatter Response: {final.response}{LC.RESET}\n\n")
     return final
 
@@ -407,6 +422,7 @@ async def complete_async(
     strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
+    stop_at: Optional[str] = None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """
     Process a struckdown template with one or more contexts.
@@ -465,6 +481,7 @@ async def complete_async(
                                 include_paths=include_paths,
                                 strict_undefined=strict_undefined,
                                 strict_params=strict_params,
+                                stop_at=stop_at,
                             )
                             results[index] = result
                             if on_complete:
@@ -490,6 +507,7 @@ async def complete_async(
             include_paths=include_paths,
             strict_undefined=strict_undefined,
             strict_params=strict_params,
+            stop_at=stop_at,
         )
 
 
@@ -508,6 +526,7 @@ def complete(
     strict_params: bool = False,
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
+    stop_at: Optional[str] = None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
     return anyio.run(
@@ -526,6 +545,7 @@ def complete(
             strict_params=strict_params,
             max_concurrent=max_concurrent,
             on_complete=on_complete,
+            stop_at=stop_at,
         )
     )
 
@@ -541,6 +561,7 @@ async def complete_incremental_async(
     strict_undefined: bool = False,
     stream: bool = True,
     strict_params: bool = False,
+    stop_at: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -631,10 +652,19 @@ async def complete_incremental_async(
             }
         )
 
+    # stop_at: find the segment that produces the requested slot; drop every later
+    # segment so its slots are never scheduled (segment order == document order).
+    stop_seg_idx = None
+    if stop_at is not None:
+        for data in segment_data:
+            if stop_at in {s.key for s in data["analysis"].slots}:
+                stop_seg_idx = data["idx"]
+                break
+
     # Build dependency graph from raw segments (only those with slots)
     slots_by_raw_idx = {}
     for data in segment_data:
-        if data["has_slots"]:
+        if data["has_slots"] and (stop_seg_idx is None or data["idx"] <= stop_seg_idx):
             slots_by_raw_idx[data["idx"]] = {s.key for s in data["analysis"].slots}
 
     # Build dependency graph
@@ -742,6 +772,7 @@ async def complete_incremental_async(
             segment_index=seg_idx,
             strict_undefined=strict_undefined,
             strict_params=strict_params,
+            stop_at=stop_at,
             **(extra_kwargs or {}),
         ):
             events.append(event)
@@ -823,6 +854,7 @@ async def complete_incremental_async(
                     strict_undefined=strict_undefined,
                     stream=stream,
                     strict_params=strict_params,
+                    stop_at=stop_at,
                     **(extra_kwargs or {}),
                 ):
                     yield event
@@ -894,6 +926,10 @@ async def complete_incremental_async(
                     )
                     accumulated_context[event.slot_key] = escaped_value
 
+            # stop_at: requested final slot done -> don't process later segments
+            if stop_at and stop_at in all_results.results:
+                break
+
     except Exception as e:
         logger.error(f"Incremental processing error: {e}")
         yield ProcessingError(
@@ -921,6 +957,7 @@ def complete_incremental(
     strict_undefined: bool = False,
     stream: bool = False,
     strict_params: bool = False,
+    stop_at: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -951,6 +988,7 @@ def complete_incremental(
                 strict_undefined,
                 stream=stream,
                 strict_params=strict_params,
+                stop_at=stop_at,
             )
         ]
 

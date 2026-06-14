@@ -434,6 +434,7 @@ async def process_segment_with_delta_incremental(
     strict_undefined: bool = False,
     stream: bool = False,
     strict_params: bool = False,
+    stop_at: Optional[str] = None,
     **extra_kwargs,
 ) -> AsyncGenerator:
     """Process a template segment, yielding SlotCompleted events as each slot is filled.
@@ -508,6 +509,11 @@ async def process_segment_with_delta_incremental(
 
         if not unfilled_slots:
             # No more slots - we're done
+            break
+
+        # stop_at: once the requested final slot is filled, don't make LLM calls for
+        # any later slots (they simply never run -> no cost). Hit by every loop path.
+        if stop_at and stop_at in filled_slots:
             break
 
         slot_key, slot_start, slot_end, slot_inner = unfilled_slots[0]
@@ -752,6 +758,7 @@ async def process_segment_with_delta(
     global_header_messages: Optional[List[str]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
+    stop_at: Optional[str] = None,
     **extra_kwargs,
 ):
     """Process a template segment using delta-based re-rendering.
@@ -787,6 +794,7 @@ async def process_segment_with_delta(
         segment_index=0,
         strict_undefined=strict_undefined,
         strict_params=strict_params,
+        stop_at=stop_at,
         **extra_kwargs,
     ):
         results[event.slot_key] = event.result
