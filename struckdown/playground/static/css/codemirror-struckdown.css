@@ -99,3 +99,23 @@
     color: #1565C0;
     font-weight: bold;
 }
+
+/* Alignment guard: the highlight <pre> and the editing <textarea> are
+   overlaid, so their box metrics must be pixel-identical or the caret drifts
+   from the highlighted text. Force the same values with !important so host
+   CSS (e.g. the Django admin styling textarea/pre) can't shift one layer. */
+.sd-editor-highlight,
+.sd-editor-textarea {
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    border: 0 !important;
+    padding: 10px !important;
+    font-size: 16px !important;
+    line-height: 1.5 !important;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace !important;
+    letter-spacing: normal !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    tab-size: 4 !important;
+}

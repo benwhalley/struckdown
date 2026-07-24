@@ -136,6 +136,15 @@ function highlightSyntax(text) {
         result += escapeHtml(text.slice(pos));
     }
 
+    // A single trailing newline inside a white-space:pre element is dropped
+    // by the browser, but the <textarea> keeps it as a real (empty) last
+    // line -- so without this the caret on that line sits one row below the
+    // highlighted text. Re-add the collapsed newline to keep the two layers
+    // row-aligned.
+    if (text.length === 0 || text[text.length - 1] === '\n') {
+        result += '\n';
+    }
+
     return result;
 }
 
@@ -255,16 +264,17 @@ function createStruckdownEditor(container, initialContent = '', options = {}) {
         }
     });
 
-    // Double-click on {{var}} to open inputs panel and focus the field
+    // Double-click on {{var}} to open inputs panel and focus the field.
+    // The inputs panel + Bootstrap are playground-only; guard so the editor
+    // can be embedded elsewhere (e.g. the Django admin) without throwing.
     textarea.addEventListener('dblclick', (e) => {
         const position = textarea.selectionStart;
         const varName = getVariableAtPosition(textarea.value, position);
+        const panel = document.getElementById('inputs-offcanvas');
 
-        if (varName) {
+        if (varName && panel && typeof bootstrap !== 'undefined' && bootstrap.Offcanvas) {
             // Open inputs panel
-            const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(
-                document.getElementById('inputs-offcanvas')
-            );
+            const offcanvas = bootstrap.Offcanvas.getOrCreateInstance(panel);
             offcanvas.show();
 
             // Focus the corresponding input field after panel opens
