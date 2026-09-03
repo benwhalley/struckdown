@@ -76,9 +76,9 @@ class TestTranslateKwargs:
         settings = _translate_kwargs({"thinking": "high"})
         assert settings["thinking"] == "high"
 
-    def test_thinking_off_passes_through(self):
+    def test_thinking_off_maps_to_false(self):
         settings = _translate_kwargs({"thinking": "off"})
-        assert settings["thinking"] == "off"
+        assert settings["thinking"] is False
 
     def test_thinking_none_omitted(self):
         """When thinking is None, it should not appear in settings."""

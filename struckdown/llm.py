@@ -96,6 +96,7 @@ import numpy as np
 from more_itertools import chunked
 from pydantic import BaseModel, Field
 
+from . import reasoning
 from .cache import hash_return_type, memory
 
 
@@ -534,6 +535,9 @@ class LLMCredentials(BaseModel):
 KNOWN_MODEL_SETTINGS = frozenset({
     "temperature", "max_tokens", "seed", "top_p", "timeout",
     "thinking", "presence_penalty", "frequency_penalty",
+    # provider-specific knobs, passed through untouched for callers that
+    # want to bypass the unified `thinking` setting
+    "openai_reasoning_effort", "anthropic_thinking", "extra_body",
 })
 
 # internal keys consumed elsewhere in the pipeline, not model settings
@@ -541,13 +545,17 @@ _INTERNAL_KEYS = frozenset({"stream_debounce_ms", "model"})
 
 
 def _translate_kwargs(
-    extra_kwargs: Optional[dict], strict: bool = False
+    extra_kwargs: Optional[dict], strict: bool = False, model_name: str = ""
 ) -> ModelSettings:
     """Map struckdown's extra_kwargs to pydantic-ai ModelSettings.
 
     Unknown params are logged as warnings by default. With strict=True,
     a ValueError is raised instead -- useful for catching typos or
     params unsupported by the current provider.
+
+    ``thinking`` is translated into pydantic-ai's vocabulary here (see
+    :mod:`struckdown.reasoning`): ``"off"`` is ours, not theirs, and
+    "as little as possible" is a different word on each model generation.
     """
     if not extra_kwargs:
         return ModelSettings()
@@ -565,7 +573,44 @@ def _translate_kwargs(
         if strict:
             raise ValueError(msg)
         logger.warning(msg)
+    if "thinking" in settings:
+        settings["thinking"] = reasoning.resolve_thinking(settings["thinking"])
+        _apply_off_effort(settings, model_name)
     return ModelSettings(**settings)
+
+
+def _apply_off_effort(settings: dict, model_name: str) -> None:
+    """Name the "don't think" value explicitly for OpenAI-style models.
+
+    pydantic-ai maps ``thinking=False`` to ``reasoning_effort='none'`` from
+    a static table; whether a given model takes ``none`` or ``minimal``
+    depends on its generation, and behind a proxy the name it is asked
+    under may not even be the model's own. The provider-specific key wins
+    over the unified one, so once a model has told us what it accepts, say
+    it outright.
+    """
+    if settings.get("thinking") is not False:
+        return
+    if "openai_reasoning_effort" in settings:
+        return  # caller was explicit; leave it alone
+    if reasoning.learned(model_name):
+        settings["openai_reasoning_effort"] = reasoning.off_effort(model_name)
+
+
+def _retry_effort(exc: Exception, model_name: str, settings: ModelSettings) -> bool:
+    """Rewrite ``settings`` in place for one retry, or return False.
+
+    True means the model rejected the reasoning effort and named what it
+    would take instead -- so the same call is worth making again.
+    """
+    if settings.get("thinking") is not False:
+        return False
+    tried = settings.get("openai_reasoning_effort") or reasoning.rejected_value(str(exc))
+    replacement = reasoning.learn_from_error(model_name, str(exc), tried)
+    if replacement is None:
+        return False
+    settings["openai_reasoning_effort"] = replacement
+    return True
 
 
 def _merge_llm_config_defaults(extra_kwargs: Optional[dict], return_type) -> dict:
@@ -1035,7 +1080,7 @@ def _call_llm_cached(
     call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
     if max_tokens and "max_tokens" not in call_kwargs:
         call_kwargs["max_tokens"] = max_tokens
-    settings = _translate_kwargs(call_kwargs, strict=strict_params)
+    settings = _translate_kwargs(call_kwargs, strict=strict_params, model_name=model_name)
 
     if _debug_api_requests:
         import sys
@@ -1052,36 +1097,47 @@ def _call_llm_cached(
 
     # try tool mode first, fall back to prompted mode if the model can't
     # handle tool calling (e.g. returns text instead of a tool call)
+    effort_retried = False
     for mode in ("tool", "prompted"):
         agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
-        try:
-            output, model_response, run_cost = _run_agent_sync(agent, user_prompt, settings)
+        mode_succeeded = False
+        while True:
+            try:
+                output, model_response, run_cost = _run_agent_sync(
+                    agent, user_prompt, settings
+                )
+                mode_succeeded = True
+                break
+            except ModelHTTPError as e:
+                if not effort_retried and _retry_effort(e, model_name, settings):
+                    effort_retried = True
+                    continue
+                _log_error_details(e, model_name, f"(HTTP {e.status_code})")
+                if _is_cacheable_error(e):
+                    logger.debug(
+                        f"Cacheable error for model {model_name} (will be cached): "
+                        f"{type(e).__name__}"
+                    )
+                    return _create_cached_error(e, model_name), None
+                raise _make_struckdown_error(e, prompt_repr, model_name) from e
+            except UnexpectedModelBehavior as e:
+                if mode == "tool":
+                    logger.info(
+                        f"Tool-mode structured output failed for {model_name}, "
+                        f"retrying with prompted mode: {e}"
+                    )
+                    break
+                _log_error_details(e, model_name, "(unexpected model behavior, prompted mode)")
+                raise _make_struckdown_error(e, prompt_repr, model_name) from e
+            except Exception as e:
+                _log_error_details(e, model_name, "(unknown)")
+                if _is_cacheable_error(e):
+                    return _create_cached_error(e, model_name), None
+                full_traceback = traceback.format_exc()
+                logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
+                raise _make_struckdown_error(e, prompt_repr, model_name) from e
+        if mode_succeeded:
             break
-        except ModelHTTPError as e:
-            _log_error_details(e, model_name, f"(HTTP {e.status_code})")
-            if _is_cacheable_error(e):
-                logger.debug(
-                    f"Cacheable error for model {model_name} (will be cached): "
-                    f"{type(e).__name__}"
-                )
-                return _create_cached_error(e, model_name), None
-            raise _make_struckdown_error(e, prompt_repr, model_name) from e
-        except UnexpectedModelBehavior as e:
-            if mode == "tool":
-                logger.info(
-                    f"Tool-mode structured output failed for {model_name}, "
-                    f"retrying with prompted mode: {e}"
-                )
-                continue
-            _log_error_details(e, model_name, "(unexpected model behavior, prompted mode)")
-            raise _make_struckdown_error(e, prompt_repr, model_name) from e
-        except Exception as e:
-            _log_error_details(e, model_name, "(unknown)")
-            if _is_cacheable_error(e):
-                return _create_cached_error(e, model_name), None
-            full_traceback = traceback.format_exc()
-            logger.debug(f"Unknown error calling LLM {model_name}: {e}\n{full_traceback}")
-            raise _make_struckdown_error(e, prompt_repr, model_name) from e
 
     logger.debug(f"\n\n{LC.GREEN}Response: {output}{LC.RESET}\n")
 
@@ -1344,7 +1400,9 @@ async def structured_chat_async(
 
     # cache miss -- stream via pydantic-ai Agent.run_stream()
     call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
-    settings = _translate_kwargs(call_kwargs, strict=strict_params)
+    settings = _translate_kwargs(
+        call_kwargs, strict=strict_params, model_name=llm.model_name
+    )
 
     user_prompt = _messages_to_user_prompt(messages)
     prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
@@ -1354,48 +1412,57 @@ async def structured_chat_async(
 
     # try tool mode first, fall back to prompted mode
     streaming_failed = False
+    effort_retried = False
     for mode in ("tool", "prompted"):
         agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
-        prev_text = ""
-        final_output = None
-        last_response = None
-        stream_cost = None
-        try:
-            async with agent.run_stream(user_prompt, model_settings=settings) as stream:
-                async for partial in stream.stream_output(debounce_by=debounce_s):
-                    final_output = partial
-                    current = getattr(partial, "response", None)
-                    if current is not None and str(current) != prev_text:
-                        yield (partial, None, False)
-                        prev_text = str(current)
-                # get the final output after stream completes
-                if final_output is None:
-                    final_output = await stream.get_output()
-                # extract model response for usage info
-                for msg in reversed(stream.all_messages()):
-                    if hasattr(msg, "usage"):
-                        last_response = msg
-                        break
-                stream_cost = _calc_cost_from_usage(last_response, llm.model_name)
-            break
-        except UnexpectedModelBehavior as e:
-            if mode == "tool":
+        mode_succeeded = False
+        while True:
+            prev_text = ""
+            final_output = None
+            last_response = None
+            stream_cost = None
+            try:
+                async with agent.run_stream(user_prompt, model_settings=settings) as stream:
+                    async for partial in stream.stream_output(debounce_by=debounce_s):
+                        final_output = partial
+                        current = getattr(partial, "response", None)
+                        if current is not None and str(current) != prev_text:
+                            yield (partial, None, False)
+                            prev_text = str(current)
+                    # get the final output after stream completes
+                    if final_output is None:
+                        final_output = await stream.get_output()
+                    # extract model response for usage info
+                    for msg in reversed(stream.all_messages()):
+                        if hasattr(msg, "usage"):
+                            last_response = msg
+                            break
+                    stream_cost = _calc_cost_from_usage(last_response, llm.model_name)
+                mode_succeeded = True
+                break
+            except UnexpectedModelBehavior as e:
+                if mode == "tool":
+                    logger.info(
+                        f"Tool-mode streaming failed for {llm.model_name}, "
+                        f"retrying with prompted mode: {e}"
+                    )
+                    break
+                # prompted mode also failed -- fall back to non-streaming
                 logger.info(
-                    f"Tool-mode streaming failed for {llm.model_name}, "
-                    f"retrying with prompted mode: {e}"
+                    f"Streaming failed for {llm.model_name} in both modes, "
+                    f"falling back to non-streaming: {e}"
                 )
-                continue
-            # prompted mode also failed -- fall back to non-streaming
-            logger.info(
-                f"Streaming failed for {llm.model_name} in both modes, "
-                f"falling back to non-streaming: {e}"
-            )
-            streaming_failed = True
+                streaming_failed = True
+                break
+            except ModelHTTPError as e:
+                if not effort_retried and _retry_effort(e, llm.model_name, settings):
+                    effort_retried = True
+                    continue
+                raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+            except Exception as e:
+                raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
+        if streaming_failed or mode_succeeded:
             break
-        except ModelHTTPError as e:
-            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
-        except Exception as e:
-            raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
 
     # non-streaming fallback: use run_sync which supports retries
     if streaming_failed:
