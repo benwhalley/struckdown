@@ -771,7 +771,7 @@ class LLM(BaseModel):
             # (no `:` prefix), bare_name == self.model_name, so e.g. an explicit
             # "azure/gpt-5-mini" passes through unchanged for LiteLLM-style
             # routing. With "openai:gpt-4o", the prefix is stripped to "gpt-4o".
-            http_client = httpx.AsyncClient(follow_redirects=True)
+            http_client = _provider_http_client(follow_redirects=True)
             provider = OpenAIProvider(
                 api_key=credentials.api_key,
                 base_url=base_url,
@@ -1037,8 +1037,72 @@ def _store_in_cache(
         logger.debug(f"Failed to cache streaming result: {e}")
 
 
+def _provider_http_client(**kwargs):
+    """AsyncClient for an OpenAI-compatible provider.
+
+    pydantic-ai deprecated httpx clients here in favour of httpx2, which it
+    depends on from v2.42; fall back to httpx for older versions.
+    """
+    try:
+        import httpx2 as client_module
+    except ImportError:
+        import httpx as client_module
+    return client_module.AsyncClient(**kwargs)
+
+
+# sampling knobs a reasoning model ignores while it is reasoning
+_SAMPLING_SETTINGS = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
+
+
+def _profile_flag(profile, key: str) -> bool:
+    """Read a model-profile flag. pydantic-ai exposes the profile as a dataclass
+    in v1 and as a plain dict in v2; unknown flags read as False."""
+    if isinstance(profile, dict):
+        return bool(profile.get(key, False))
+    return bool(getattr(profile, key, False))
+
+
+def _reasoning_is_active(profile, settings: ModelSettings) -> bool:
+    """Whether reasoning will be on for this request. Explicit effort wins,
+    then the unified ``thinking`` setting, then the model's own default."""
+    effort = settings.get("openai_reasoning_effort")
+    if effort is not None:
+        return effort != "none"
+    thinking = settings.get("thinking")
+    if thinking is not None:
+        return thinking is not False
+    return _profile_flag(profile, "openai_reasoning_enabled_by_default")
+
+
+def _without_sampling_params(model: PydanticAIModel, settings: ModelSettings) -> ModelSettings:
+    """Drop sampling params a reasoning model would ignore.
+
+    pydantic-ai drops them itself and warns each time it does. The temperature
+    is usually struckdown's per-return-type default rather than anything the
+    caller chose, so that warning is noise on every call. Where the profile
+    says nothing, send the settings unchanged and let pydantic-ai decide.
+    """
+    profile = getattr(model, "profile", None)
+    if not _profile_flag(profile, "openai_supports_reasoning"):
+        return settings
+    if _profile_flag(
+        profile, "openai_supports_reasoning_effort_none"
+    ) and not _reasoning_is_active(profile, settings):
+        return settings
+    dropped = [k for k in _SAMPLING_SETTINGS if k in settings]
+    if not dropped:
+        return settings
+    logger.debug(
+        f"{model.model_name} is reasoning; not sending {', '.join(dropped)}"
+    )
+    return ModelSettings(
+        **{k: v for k, v in settings.items() if k not in _SAMPLING_SETTINGS}
+    )
+
+
 def _run_agent_sync(agent: Agent, user_prompt: str, settings: ModelSettings):
     """Run a pydantic-ai agent synchronously. Returns (output, model_response, cost)."""
+    settings = _without_sampling_params(agent.model, settings)
     result = agent.run_sync(user_prompt, model_settings=settings)
     # get the last model response for usage
     last_response = None
@@ -1422,7 +1486,10 @@ async def structured_chat_async(
             last_response = None
             stream_cost = None
             try:
-                async with agent.run_stream(user_prompt, model_settings=settings) as stream:
+                async with agent.run_stream(
+                    user_prompt,
+                    model_settings=_without_sampling_params(agent.model, settings),
+                ) as stream:
                     async for partial in stream.stream_output(debounce_by=debounce_s):
                         final_output = partial
                         current = getattr(partial, "response", None)
@@ -1637,7 +1704,7 @@ async def _get_api_embedding_batch_async(
         f"API embedding batch: {len(batch)} texts, model={model_name}, dims={dimensions}"
     )
 
-    http_client = httpx.AsyncClient(follow_redirects=True, timeout=timeout)
+    http_client = _provider_http_client(follow_redirects=True, timeout=timeout)
     provider = OpenAIProvider(
         api_key=api_key,
         base_url=base_url,
