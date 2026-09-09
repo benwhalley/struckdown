@@ -713,7 +713,7 @@ def chat(
         source_path = Path(source)
         if source_path.exists():
             # Treat as local file (prioritise local files over URLs)
-            source_content = source_path.read_text(encoding="utf-8")
+            source_content = _read_document_text(source_path)
             context["source"] = source_content
             context["input"] = source_content
             context["content"] = source_content
@@ -1744,6 +1744,37 @@ def _extract_spreadsheet_rows(path: Path) -> tuple[List[dict], List[str]]:
     return rows, original_columns
 
 
+# formats that are not plain text and so need document extraction
+BINARY_DOCUMENT_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".rtf",
+    ".odt",
+    ".epub",
+    ".pptx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tiff",
+    ".bmp",
+}
+
+
+def _read_document_text(path: Path) -> str:
+    """Read a file as text, extracting markdown from binary document formats.
+
+    PDF/DOCX/RTF/ODT/EPUB/images go through :mod:`struckdown.extract` (which
+    needs the ``extract`` extra); everything else is read as plain text with an
+    encoding fallback chain.
+    """
+    from .extract import extract_text, read_text_file
+
+    if path.suffix.lower() in BINARY_DOCUMENT_EXTENSIONS:
+        return extract_text(path)
+    return read_text_file(path)
+
+
 def _read_input_file(path: Path) -> List[dict]:
     """
     Read an input file and return a list of input items.
@@ -1787,9 +1818,8 @@ def _read_input_file(path: Path) -> List[dict]:
             raise ValueError(f"JSON file must contain dict or list, got {type(data)}")
 
     else:
-        # Treat as text file
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        # text file or document (pdf/docx/rtf/...)
+        content = _read_document_text(path)
 
         return [
             {

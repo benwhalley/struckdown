@@ -45,7 +45,7 @@ def _normalise_whitespace(text: str) -> str:
     return text.strip()
 
 
-def _read_text_file(path: Path) -> str:
+def read_text_file(path: Path) -> str:
     """Read plain text with encoding fallback chain."""
     for encoding in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
         try:
@@ -103,7 +103,7 @@ def extract_text(path: str | Path, *, prefer_pandoc: bool = True) -> str:
         )
 
     if suffix in TEXT_EXTENSIONS:
-        return _normalise_whitespace(_read_text_file(p))
+        return _normalise_whitespace(read_text_file(p))
 
     if prefer_pandoc and suffix in PANDOC_EXTENSIONS:
         text = _pandoc_to_gfm(p)
