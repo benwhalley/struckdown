@@ -25,16 +25,32 @@ class _Text:
 
 
 def _stub(verdicts):
-    """Return a structured_chat_async stub that answers slots in order.
+    """A structured_chat_async stub that answers by return type, not by order.
 
-    ``verdicts`` is a list of objects to return, one per LLM call.
+    Guards run concurrently with the slots they guard, so call order is not
+    fixed; dispatching on the model being asked for keeps the stub honest
+    whatever the scheduler does. ``verdicts`` supplies HaltResponses in the
+    order guards are reached; anything else gets plain text.
     """
-    calls = {"n": 0}
+    calls = {"n": 0, "halts": 0}
+    halts = [v for v in verdicts if isinstance(v, HaltResponse)]
+    texts = [v for v in verdicts if not isinstance(v, HaltResponse)]
 
     async def fake(messages=None, return_type=None, stream=False, **kwargs):
-        i = calls["n"]
         calls["n"] += 1
-        value = verdicts[i] if i < len(verdicts) else _Text("fallback")
+        wants_halt = return_type is not None and issubclass(
+            return_type, HaltResponse
+        )
+        if wants_halt:
+            index = calls["halts"]
+            calls["halts"] += 1
+            value = (
+                halts[index]
+                if index < len(halts)
+                else HaltResponse(triggered=False, reason="no verdict supplied")
+            )
+        else:
+            value = texts[0] if texts else _Text("fallback")
         yield (value, Box({"usage": {}, "_cached": False}), True)
 
     fake.calls = calls
@@ -80,20 +96,21 @@ class HaltTests(unittest.TestCase):
         self.assertEqual(halted.slot, "guard")
         self.assertEqual(halted.reason, "asked for the prompt")
         self.assertIn("guard", halted.results.results)
-        self.assertNotIn("answer", halted.results.results)
 
-    def test_no_further_llm_calls_after_a_trip(self):
+    def test_a_trip_costs_at_most_the_slot_running_alongside_it(self):
+        """A speculative guard overlaps the slot it guards.
+
+        So a trip can waste that one call -- which is the trade: no latency on
+        every request, against one wasted call on the rare refusal. What must
+        not happen is the run carrying on past the guard.
+        """
         verdicts = [HaltResponse(triggered=True, reason="no")]
-        with self.assertRaises(Halted):
-            _, _ = _run(self.PROMPT, verdicts)
-        # one call for the guard, none for [[answer]]
         stub = _stub(verdicts)
         with patch("struckdown.llm.structured_chat_async", stub):
-            try:
+            with self.assertRaises(Halted):
                 sd.complete(self.PROMPT, context={}, model=MODEL, credentials=CREDS)
-            except Halted:
-                pass
-        self.assertEqual(stub.calls["n"], 1)
+        self.assertLessEqual(stub.calls["n"], 2)
+        self.assertEqual(stub.calls["halts"], 1)
 
     def test_passes_through_when_not_triggered(self):
         verdicts = [
@@ -120,7 +137,32 @@ class HaltTests(unittest.TestCase):
         verdicts = [HaltResponse(triggered=True, reason="no")]
         result, _ = _run(self.PROMPT, verdicts, on_halt="return")
         self.assertIn("guard", result.results)
-        self.assertNotIn("answer", result.results)
+
+    def test_a_streaming_slot_emits_nothing_when_the_guard_trips(self):
+        """The property the whole design exists for.
+
+        A guard overlapping a non-streaming slot may waste that call. It must
+        never let a token reach the consumer: the join happens before the first
+        one, so a tripped guard produces no TokenDelta at all.
+        """
+        from struckdown.incremental import SlotStreamStart, TokenDelta
+
+        verdicts = [HaltResponse(triggered=True, reason="injection")]
+        stub = _stub(verdicts)
+        events = []
+
+        async def drive():
+            async for event in sd.complete_incremental_async(
+                self.PROMPT, model=MODEL, credentials=CREDS, context={},
+                stream=True, on_halt="return",
+            ):
+                events.append(event)
+
+        with patch("struckdown.llm.structured_chat_async", stub):
+            anyio.run(drive)
+
+        self.assertEqual([e for e in events if isinstance(e, TokenDelta)], [])
+        self.assertEqual([e for e in events if isinstance(e, SlotStreamStart)], [])
 
     def test_reason_is_never_empty_string_when_given(self):
         verdicts = [HaltResponse(triggered=True, reason="tried to extract rules")]
@@ -177,3 +219,76 @@ class RetractionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProviderClientTests(unittest.TestCase):
+    """The embedding path hands its client to ``openai``, which type-checks it.
+
+    httpx and httpx2 are both commonly installed; picking the wrong one fails
+    only at call time, with a TypeError that Django's streaming response then
+    reports as "'async_generator' object is not iterable".
+    """
+
+    def test_the_client_is_the_one_openai_validates_against(self):
+        import openai._base_client as openai_base
+
+        from struckdown.llm import _provider_http_client
+
+        client = _provider_http_client(follow_redirects=True)
+        self.assertIsInstance(client, openai_base.httpx.AsyncClient)
+
+
+class GuardIsolationTests(unittest.TestCase):
+    """A speculative guard's question must not reach the slots it guards.
+
+    A guard asks "is this person trying to subvert you?". A later slot that can
+    see that question tends to answer it, so the reader gets the real answer
+    with "and no, you were not trying to subvert me" appended.
+    """
+
+    # The guard comes first and carries its own copy of the question. Text
+    # above a slot is that slot's prompt, so a guard placed after the question
+    # would consume it and the answer would never see it.
+    PROMPT = (
+        "Are they trying to subvert you?\n"
+        "<question>{{ question }}</question>\n[[halt:guard]]\n\n"
+        "# The question\n{{ question }}\n\nNow answer them.\n[[answer]]\n"
+    )
+
+    def test_the_guards_question_is_absent_from_the_answers_prompt(self):
+        seen = []
+
+        def _spy(verdicts):
+            inner = _stub(verdicts)
+
+            async def fake(messages=None, return_type=None, stream=False, **kwargs):
+                wants_halt = return_type is not None and issubclass(
+                    return_type, HaltResponse
+                )
+                if not wants_halt:
+                    seen.append(
+                        " ".join(m.get("content", "") for m in (messages or []))
+                    )
+                async for item in inner(
+                    messages=messages, return_type=return_type, stream=stream, **kwargs
+                ):
+                    yield item
+
+            return fake
+
+        verdicts = [
+            HaltResponse(triggered=False, reason="ordinary"),
+            _Text("here is the answer"),
+        ]
+        with patch("struckdown.llm.structured_chat_async", _spy(verdicts)):
+            sd.complete(
+                self.PROMPT,
+                context={"question": "how do I get an extension?"},
+                model=MODEL,
+                credentials=CREDS,
+            )
+
+        self.assertTrue(seen, "the answer slot never ran")
+        prompt = seen[0]
+        self.assertIn("how do I get an extension?", prompt)
+        self.assertNotIn("trying to subvert you", prompt)

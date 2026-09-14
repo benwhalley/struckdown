@@ -13,6 +13,7 @@ Practical guides for common tasks.
 | Guide | Description |
 |-------|-------------|
 | [Custom Actions](custom-actions) | Extend struckdown with Python functions |
+| [Agent Loops](agent-loops) | Let the model call your tools, with guards and budgets |
 | [Model Overrides](model-overrides) | Per-slot temperature and model control |
 | [Number Extraction](number-extraction) | Extract and validate numeric values |
 | [Deploy with Dokku](deploy-dokku) | Production deployment setup |

@@ -422,6 +422,19 @@ async def _process_together_group(
         )
 
 
+def _tool_queue_event(kind, payload, segment_index, slot_key):
+    """One queued report from a tool run, as the matching slot event."""
+    from .incremental import ThinkingDelta, ToolCompleted, ToolStarted
+
+    if kind == "started":
+        cls = ToolStarted
+    elif kind == "thinking":
+        cls = ThinkingDelta
+    else:
+        cls = ToolCompleted
+    return cls(segment_index=segment_index, slot_key=slot_key, **payload)
+
+
 def slot_uses_tools(slot_info) -> bool:
     """Is this slot a tool loop? ``[[answer|use_tools=true]]``.
 
@@ -512,8 +525,8 @@ async def process_segment_with_delta_incremental(
     # Import here to avoid circular imports
     import anyio
 
-    from .incremental import (SlotCompleted, SlotStreamStart, TokenDelta,
-                              ToolCompleted, ToolStarted)
+    from .incremental import (SlotCompleted, SlotStreamStart, ThinkingDelta,
+                              TokenDelta, ToolCompleted, ToolStarted)
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat, structured_chat_async
     from .results import SlotResult, get_progress_callback
@@ -549,6 +562,65 @@ async def process_segment_with_delta_incremental(
     # Initial render of body
     rendered = render_template(body_template, accumulated_context, strict_undefined)
 
+    # Guards that judge the input can run alongside the work they guard; they
+    # are joined before anything irreversible happens. A speculative guard is
+    # deliberately kept out of `messages`: it is a side-channel judgement, not
+    # a turn in the conversation the other slots are having.
+    import asyncio as _asyncio
+
+    speculative = speculative_halt_slots(slot_info_map, analysis, rendered)
+    pending_halts: Dict[str, Any] = {}
+
+    async def _run_halt(slot_info, snapshot):
+        from .llm import structured_chat_async
+
+        async for partial, com, is_final in structured_chat_async(
+            messages=snapshot,
+            return_type=slot_info.return_type,
+            llm=llm,
+            credentials=credentials,
+            extra_kwargs=extra_kwargs,
+            stream=False,
+            strict_params=strict_params,
+        ):
+            if is_final:
+                return partial, com
+        return None, None
+
+    async def _join_halts():
+        """Await every launched guard, emit its result, raise if one tripped."""
+        from .errors import Halted
+
+        while pending_halts:
+            slot_key, (task, info, content) = pending_halts.popitem()
+            res, completion_obj = await task
+            value = res.response if hasattr(res, "response") else res
+            result = SlotResult(
+                name=slot_key,
+                output=value,
+                completion=completion_obj,
+                prompt=content,
+                action=info.action_type,
+                options=info.options if info.options else None,
+            )
+            yield SlotCompleted(
+                segment_index=segment_index,
+                slot_key=slot_key,
+                result=result,
+                elapsed_ms=0.0,
+                was_cached=False,
+            )
+            escaped, _ = escape_struckdown_syntax(value, var_name=slot_key)
+            accumulated_context[slot_key] = escaped
+            filled_slots[slot_key] = escaped
+            if halt_requested(info, value):
+                raise Halted(
+                    slot=slot_key,
+                    reason=str(getattr(value, "reason", "") or ""),
+                    results=None,
+                    when=_halt_when(info.options),
+                )
+
     while True:
         # Find all slots in current render
         all_slots = find_slots_with_positions(rendered)
@@ -561,7 +633,10 @@ async def process_segment_with_delta_incremental(
         ]
 
         if not unfilled_slots:
-            # No more slots - we're done
+            # No more slots: settle any guard still running before the segment's
+            # results are handed back.
+            async for _event in _join_halts():
+                yield _event
             break
 
         # stop_at: once the requested final slot is filled, don't make LLM calls for
@@ -651,17 +726,38 @@ async def process_segment_with_delta_incremental(
         # Strip together tags so they don't appear in LLM messages
         content_before = _strip_together_tags(content_before)
 
-        # Add messages for content before this slot
-        # Split by <user> and <assistant> tags to handle role markers
-        if content_before.strip():
-            role_segments = split_content_by_role(content_before)
-            messages.extend(role_segments)
-
         # Get return type from parsed slot info
         return_type = slot_info.return_type
 
         # Check if this is an action (function call) vs LLM completion
         is_action = slot_info.is_function or hasattr(return_type, "_executor")
+
+        # An eligible guard starts here and is joined later, so the slots it
+        # guards do not wait on it.
+        #
+        # Its question stays out of the shared conversation entirely -- it is
+        # asked in a snapshot of its own. A guard reads "are they trying to
+        # subvert you?", and a later slot that can see that question tends to
+        # answer it: the reader gets the real answer with "and no, you were not
+        # trying to subvert me" stuck on the end.
+        if slot_key in speculative and slot_key not in pending_halts:
+            snapshot = messages.copy()
+            if content_before.strip():
+                snapshot.extend(split_content_by_role(content_before))
+            pending_halts[slot_key] = (
+                _asyncio.ensure_future(_run_halt(slot_info, snapshot)),
+                slot_info,
+                content_before,
+            )
+            filled_slots[slot_key] = None
+            last_slot_end = slot_end
+            continue
+
+        # Add messages for content before this slot
+        # Split by <user> and <assistant> tags to handle role markers
+        if content_before.strip():
+            role_segments = split_content_by_role(content_before)
+            messages.extend(role_segments)
 
         # Track timing
         start_time = time.monotonic()
@@ -677,53 +773,110 @@ async def process_segment_with_delta_incremental(
             # inside the caller's budget. Tool events are drained while the run
             # is still going, so a consumer can show a search happening rather
             # than only reporting it afterwards.
-            import asyncio as _asyncio
-
             from .llm import run_agent_with_tools
 
+            # A read can be thrown away if a guard then trips; a write cannot.
+            # Undeclared tools count as writes.
+            if any(not is_readonly(t) for t in (tools or [])):
+                async for _event in _join_halts():
+                    yield _event
+
             queue: "_asyncio.Queue" = _asyncio.Queue()
-            loop = _asyncio.get_running_loop()
 
             def _on_tool_event(kind, payload):
-                loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
+                queue.put_nowait(("event", (kind, payload)))
 
             call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
 
-            task = _asyncio.ensure_future(
-                run_agent_with_tools(
-                    messages.copy(),
-                    return_type,
-                    llm,
-                    credentials,
-                    tools=tools,
-                    deps=deps,
-                    deps_type=deps_type,
-                    limits=limits,
-                    max_iter=slot_option_int(slot_info, "max_iter"),
-                    max_calls=slot_option_int(slot_info, "max_calls"),
-                    extra_kwargs=call_kwargs,
-                    strict_params=strict_params,
-                    on_tool_event=_on_tool_event,
-                )
+            category = classify_slot(slot_info.action_type, return_type)
+            should_stream = stream and category == SlotCategory.FREE_TEXT
+
+            agen = run_agent_with_tools(
+                messages.copy(),
+                return_type,
+                llm,
+                credentials,
+                tools=tools,
+                deps=deps,
+                deps_type=deps_type,
+                limits=limits,
+                max_iter=slot_option_int(slot_info, "max_iter"),
+                max_calls=slot_option_int(slot_info, "max_calls"),
+                extra_kwargs=call_kwargs,
+                strict_params=strict_params,
+                stream=should_stream,
+                on_tool_event=_on_tool_event,
             )
 
-            while not task.done() or not queue.empty():
+            # One queue, two producers: the tool and thinking events, and the
+            # model's own output. Draining only when the model yields would
+            # hold every tool event behind the next chunk of answer -- and
+            # behind a call that has not returned at all, which is exactly when
+            # a reader is watching an empty page wondering whether to stop.
+            async def _feed():
                 try:
-                    kind, payload = await _asyncio.wait_for(queue.get(), timeout=0.05)
-                except (_asyncio.TimeoutError, TimeoutError):
-                    continue
-                if kind == "started":
-                    yield ToolStarted(
-                        segment_index=segment_index, slot_key=slot_key, **payload
-                    )
+                    async for item in agen:
+                        await queue.put(("output", item))
+                except BaseException as exc:
+                    await queue.put(("ended", exc))
                 else:
-                    yield ToolCompleted(
-                        segment_index=segment_index, slot_key=slot_key, **payload
-                    )
+                    await queue.put(("ended", None))
 
-            res, completion_obj = await task
+            feeder = _asyncio.ensure_future(_feed())
+
+            res = None
+            completion_obj = None
+            prev_text = ""
+            stream_started = False
+            start_time = time.monotonic()
+            failure = None
+
+            try:
+                while True:
+                    kind, payload = await queue.get()
+                    if kind == "ended":
+                        failure = payload
+                        break
+                    if kind == "event":
+                        yield _tool_queue_event(
+                            payload[0], payload[1], segment_index, slot_key
+                        )
+                        continue
+                    partial, com, is_final = payload
+                    if is_final:
+                        res = partial
+                        completion_obj = com
+                        continue
+                    current = getattr(partial, "response", None)
+                    if current is None or str(current) == prev_text:
+                        continue
+                    if not stream_started:
+                        # Gathering is over and the answer is starting: settle
+                        # any guard before the first token leaves.
+                        async for _event in _join_halts():
+                            yield _event
+                        stream_started = True
+                        yield SlotStreamStart(
+                            segment_index=segment_index, slot_key=slot_key
+                        )
+                    yield TokenDelta(
+                        segment_index=segment_index,
+                        slot_key=slot_key,
+                        delta=str(current)[len(prev_text):],
+                        accumulated=str(current),
+                    )
+                    prev_text = str(current)
+            finally:
+                # A consumer that goes away closes this generator, which lands
+                # here: cancelling the feeder cancels the run behind it, so a
+                # stopped turn stops paying for calls it will never show.
+                if not feeder.done():
+                    feeder.cancel()
+
+            if failure is not None:
+                raise failure
 
         else:
             # Classify slot for streaming and token efficiency
@@ -745,6 +898,10 @@ async def process_segment_with_delta_incremental(
             )
 
             if should_stream:
+                # The first token is on the consumer's wire and cannot be
+                # taken back cleanly, so settle every guard before it goes.
+                async for _event in _join_halts():
+                    yield _event
                 yield SlotStreamStart(
                     segment_index=segment_index,
                     slot_key=slot_key,
@@ -950,3 +1107,60 @@ async def process_segment_with_delta(
         raise
 
     return results
+
+
+def readonly(fn):
+    """Mark a tool as having no side effects.
+
+    Struckdown joins a speculative guard before anything irreversible happens.
+    A read is not irreversible -- if the guard then trips, the query simply
+    goes unused -- so a tool marked this way does not force the join and the
+    guard keeps running alongside it::
+
+        @readonly
+        def search_handbook(query: str) -> list[dict]:
+            ...
+
+    Leave it off anything that writes. Undeclared means "might write", which
+    is the safe reading.
+    """
+    fn.readonly = True
+    return fn
+
+
+def is_readonly(tool) -> bool:
+    return bool(getattr(tool, "readonly", False))
+
+
+def speculative_halt_slots(slot_info_map, analysis, rendered) -> set:
+    """Halt slots that can start before the slots above them have finished.
+
+    A guard that reads only the input -- "is this person trying to extract the
+    prompt?" -- does not need the answer in order to judge the question, so it
+    can run alongside it and be joined before anything irreversible happens. A
+    guard that reads a previous slot's output ("is this answer defamatory?") is
+    sequential by nature and is left where it is.
+
+    The test is textual as well as structural: a slot is only eligible if no
+    earlier slot's key appears in the template at all, so a guard whose prompt
+    interpolates ``{{ answer }}`` is correctly excluded even when the analysis
+    records no Jinja condition.
+    """
+    eligible = set()
+    ordered = list(slot_info_map.keys())
+    for index, key in enumerate(ordered):
+        info = slot_info_map[key]
+        if getattr(info, "action_type", None) != "halt":
+            continue
+        earlier = set(ordered[:index])
+        if not earlier:
+            eligible.add(key)
+            continue
+        dependency = next(
+            (s for s in analysis.slots if s.key == key), None
+        )
+        declared = set(dependency.depends_on) if dependency is not None else set()
+        interpolated = {k for k in earlier if "{{" + k in rendered.replace(" ", "")}
+        if not (declared & earlier) and not interpolated:
+            eligible.add(key)
+    return eligible

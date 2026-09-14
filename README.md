@@ -539,6 +539,47 @@ Override per-slot settings:
 [[extract:data|model=gpt-4,temperature=0.0]]
 ```
 
+## Agent loops
+
+A slot marked `use_tools=true` hands the next few round trips to the model:
+it calls the tools you supply until it can answer.
+
+```
+# The question
+{{ question }}
+
+[[!answer|use_tools=true, max_iter=3]]
+```
+
+```python
+def lookup_module(module_code: str) -> str:
+    """Look a module up by its code."""
+    return database.modules.get(module_code)
+
+sd.complete(prompt, context={"question": q}, tools=[lookup_module],
+            limits=UsageLimits(request_limit=4, tool_calls_limit=8),
+            model=model, credentials=credentials)
+```
+
+The signature is the schema and the docstring is the description. The menu
+the model reads and the arguments it may send are the same object. `limits`
+is a ceiling a template may lower but never raise, so a prompt edited by
+someone other than the caller cannot widen a spend cap.
+
+A `[[halt:name]]` slot guards a run: an LLM-evaluated condition that stops
+it and raises `Halted` with whatever was produced. Closing the generator
+cancels the call in flight, so a stop button also ends the spending.
+
+Run the whole thing locally, with no API key:
+
+```bash
+ollama pull qwen3:8b
+uv run python examples/agent_loop_demo.py
+```
+
+See [Agent Loops](docs/how-to/agent-loops.md) for guards, budgets,
+`deps`, streaming and cancellation.
+
 ## Examples
 
 See **[examples/](examples/)** for:

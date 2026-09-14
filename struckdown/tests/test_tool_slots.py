@@ -185,3 +185,159 @@ class ToolLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamingToolSlotTests(unittest.TestCase):
+    """A tool slot streams its answer once the gathering is done."""
+
+    def test_tokens_arrive_after_the_tool_events(self):
+        from struckdown.incremental import SlotStreamStart, TokenDelta
+
+        def lookup_module(module_code: str) -> str:
+            """Look a module up."""
+            return "PSYC605: Research Methods"
+
+        events = []
+
+        async def drive():
+            async for event in sd.complete_incremental_async(
+                PROMPT,
+                model=MODEL,
+                credentials=CREDS,
+                context={},
+                tools=[lookup_module],
+                stream=True,
+            ):
+                events.append(event)
+
+        # TestModel leaves an optional field None by default, which would mean
+        # no text to stream; pin an answer so there is.
+        speaking = TestModel(custom_output_args={"response": "Research Methods"})
+        with patch.object(
+            sd.LLM, "get_pydantic_model", lambda self, creds=None: speaking
+        ):
+            anyio.run(drive)
+
+        kinds = [type(e).__name__ for e in events]
+        self.assertIn("ToolStarted", kinds)
+        self.assertIn("TokenDelta", kinds)
+        # every tool event precedes the first token: the reader sees the
+        # gathering happen, then the answer being written
+        first_token = kinds.index("TokenDelta")
+        last_tool = max(
+            i for i, k in enumerate(kinds) if k in ("ToolStarted", "ToolCompleted")
+        )
+        self.assertLess(last_tool, first_token)
+        self.assertIn("SlotStreamStart", kinds)
+        self.assertLess(kinds.index("SlotStreamStart"), first_token)
+
+
+class ThinkingStreamTests(unittest.TestCase):
+    """Reasoning arrives as ThinkingDelta, between tool calls as well as before
+    the answer.
+
+    The handler is exercised directly: attaching one makes pydantic-ai stream
+    the request, which its own FunctionModel cannot fake without a
+    stream_function, and what matters here is the mapping from its part events
+    to struckdown's.
+    """
+
+    def _events(self, parts):
+        from struckdown.llm import _thinking_stream_handler
+
+        seen = []
+        handler = _thinking_stream_handler(
+            lambda kind, payload: seen.append((kind, payload))
+        )
+
+        async def stream():
+            for part in parts:
+                yield part
+
+        anyio.run(lambda: handler(None, stream()))
+        return seen
+
+    def test_a_thinking_part_and_its_deltas_become_events(self):
+        from pydantic_ai.messages import (PartDeltaEvent, PartStartEvent,
+                                          ThinkingPart, ThinkingPartDelta)
+
+        seen = self._events([
+            PartStartEvent(index=0, part=ThinkingPart(content="They want ")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="the leader. ")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="Look it up.")),
+        ])
+
+        self.assertEqual([kind for kind, _ in seen], ["thinking"] * 3)
+        self.assertEqual(seen[0][1]["delta"], "They want ")
+        self.assertEqual(
+            seen[-1][1]["accumulated"], "They want the leader. Look it up."
+        )
+
+    def test_other_parts_are_ignored(self):
+        from pydantic_ai.messages import PartStartEvent, TextPart
+
+        seen = self._events([PartStartEvent(index=0, part=TextPart(content="hello"))])
+        self.assertEqual(seen, [])
+
+    def test_a_consumer_error_does_not_end_the_run(self):
+        from struckdown.llm import _announce_safely
+
+        def explode(kind, payload):
+            raise RuntimeError("consumer blew up")
+
+        _announce_safely(explode, "thinking", {"delta": "x", "accumulated": "x"})
+
+    def test_the_queue_maps_thinking_to_the_right_event(self):
+        from struckdown.incremental import ThinkingDelta
+        from struckdown.segment_processor import _tool_queue_event
+
+        event = _tool_queue_event(
+            "thinking", {"delta": "a", "accumulated": "a"}, 0, "answer"
+        )
+        self.assertIsInstance(event, ThinkingDelta)
+        self.assertEqual(event.slot_key, "answer")
+
+
+class CancellationTests(unittest.TestCase):
+    """Closing the stream must reach the call in flight.
+
+    Not driven end to end here: attaching the thinking handler makes
+    pydantic-ai stream every request, and its own FunctionModel cannot express
+    a tool call on the stream path without DeltaToolCalls. What is checked is
+    the mechanism -- that the tool branch cancels its feeder when the generator
+    it is feeding goes away. See TODO.md for the ollama test that would cover
+    the whole path.
+    """
+
+    def test_the_tool_branch_cancels_its_feeder_on_close(self):
+        import inspect
+
+        from struckdown import segment_processor
+
+        source = inspect.getsource(
+            segment_processor.process_segment_with_delta_incremental
+        )
+        # the finally that runs when a consumer closes the generator
+        self.assertIn("finally:", source)
+        self.assertIn("feeder.cancel()", source)
+
+    def test_the_agent_run_cancels_its_task_on_close(self):
+        import inspect
+
+        from struckdown.llm import run_agent_with_tools
+
+        source = inspect.getsource(run_agent_with_tools)
+        self.assertIn("task.cancel()", source)
+
+    def test_events_and_output_share_one_queue(self):
+        """So a tool event is not held behind the next chunk of answer -- or
+        behind a call that has not returned at all."""
+        import inspect
+
+        from struckdown import segment_processor
+
+        source = inspect.getsource(
+            segment_processor.process_segment_with_delta_incremental
+        )
+        self.assertIn('await queue.get()', source)
+        self.assertNotIn("def _drain()", source)

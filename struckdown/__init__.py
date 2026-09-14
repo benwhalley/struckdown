@@ -44,13 +44,14 @@ from .errors import (AuthError, BadRequestError, ConnectionError,
 # Re-export from execution module
 from .execution import SegmentDependencyGraph, merge_contexts
 # Re-export from incremental module
-from .incremental import (CheckpointReached, IncrementalEvent,
+from .incremental import (CheckpointReached, IncrementalEvent, ThinkingDelta,
                           ProcessingComplete, ProcessingError, SlotCompleted,
                           SlotRetracted,
                           SlotStreamStart, TokenDelta)
 # Import internal modules for complete implementation
 from .errors import Halted
 from .jinja_analysis import TemplateAnalysis, analyze_template
+from .segment_processor import readonly
 # Re-export from jinja_utils module
 from .jinja_utils import (SilentUndefined, escape_context_dict,
                           escape_struckdown_syntax, extract_jinja_variables,
@@ -1134,7 +1135,9 @@ __all__ = [
     "ProcessingComplete",
     "ProcessingError",
     "SlotRetracted",
+    "ThinkingDelta",
     "Halted",
+    "readonly",
     # Results
     "SlotResult",
     "StruckdownResult",

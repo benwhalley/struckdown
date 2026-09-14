@@ -5,6 +5,7 @@ __pycache__
 data/
 *.egg-info
 *.pyc
+build
 dist
 uv.lock
 .struckdown-chat-history

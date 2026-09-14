@@ -1,6 +1,144 @@
 
 # Changelog
 
+### 0.12.2
+
+**Fixed**
+- Token counts came back as zero behind an OpenAI-compatible proxy on some
+  dependency sets. pydantic-ai extracts usage through genai-prices and returns
+  an empty `RequestUsage` when that version cannot parse the payload, which is
+  silent: no exception, no warning. The same live OpenRouter response counted
+  122 in / 19 out under pydantic-ai 1.77 with genai-prices 0.0.56, and nothing
+  at all under 1.61 with 0.1.4. The counts are read off the response directly
+  when the library finds none, so a spend cap counting those tokens no longer
+  depends on which versions the application resolved.
+- An Ollama model tag was read as `provider:model`. `qwen3:8b` went to the
+  server as `8b`, which it does not have. A prefix is now only treated as a
+  provider when it is one.
+
+### 0.12.1
+
+**Fixed**
+- Tool and thinking events were drained only when the model yielded its next
+  chunk, so they arrived in a batch just before the answer -- and not at all
+  while a call was still running, which is exactly when a reader is watching an
+  empty page. Events and model output now share one queue.
+- Closing the generator cancels the run behind it. A consumer that goes away --
+  a reader pressing stop, a dropped connection -- now stops the calls that have
+  not happened yet instead of paying for them.
+
+### 0.12.0
+
+**New: thinking streams**
+- `ThinkingDelta` carries a reasoning model's thinking as it arrives, between
+  tool calls as well as before the answer, so a consumer can show what the
+  model is working through rather than only what it concluded.
+- Emitted for tool slots, which is where the gap between question and answer is
+  long enough to be worth filling.
+- The event is a display copy: safe to render, trim or discard. What goes back
+  to the provider is the ThinkingPart pydantic-ai round-trips internally,
+  signature included, because Anthropic rejects a reasoning chain whose blocks
+  have been altered.
+
+### 0.11.3
+
+**Fixed**
+- A speculative guard's own prompt reached the slots it guarded. A guard asks
+  "is this person trying to subvert you?", and an answer slot that can see that
+  question tends to answer it too -- the reader got the real answer with "and
+  no, you were not trying to subvert me" on the end. The guard is now asked in
+  a snapshot of its own.
+
+  Note the consequence for template authors: text above a slot is that slot's
+  prompt, so a guard placed **after** the question would consume the question.
+  Put the guard first, carrying its own copy of whatever it must judge.
+
+### 0.11.2
+
+**Fixed**
+- The provider HTTP client was chosen as httpx2 where available, but an
+  OpenAI-compatible provider hands it to the `openai` package, which
+  type-checks it against whichever module it was built on. With both installed
+  an embedding call failed with *Invalid `http_client` argument*. The client
+  now follows what openai imports.
+
+### 0.11.1
+
+**Fixed**
+- A streaming tool slot drove pydantic-ai from inside the generator's own
+  `async with`, so resuming it from a consuming generator reported the graph as
+  already running. The run now has its own task and hands output through a
+  queue.
+
+### 0.11.0
+
+**Tool slots stream their answer**
+- `run_agent_with_tools` yields `(partial, completion, is_final)` like
+  `structured_chat_async`, so a tool slot streams once the gathering is done.
+  A consumer sees the tool events during gathering, then tokens as the model
+  writes -- the order a reader experiences it in.
+- A speculative guard is joined before the first of those tokens leaves.
+
+### 0.10.1
+
+**New: halt slots**
+- `[[halt:name]]` -- an LLM-evaluated guard that stops the run when its verdict
+  holds. Returns `{triggered, reason}`; `reason` is written for a log, not for
+  the person being judged.
+- `when=false` inverts it, for a positive gate (`[[halt:on_topic|when=false]]`).
+- Raises `Halted`, carrying the results produced before the guard fired.
+  `on_halt="return"` hands those back instead of raising.
+- No further LLM calls are made once a halt trips -- in that segment, in any
+  later one, and between rounds of a tool loop. Nothing in flight is pre-empted.
+
+**New: `SlotRetracted`**
+- Emitted when a slot's output must be discarded after the fact, with a reason
+  of `gathering`, `halted`, `retried` or `errored`. A streaming consumer needs
+  this: tokens already sent are on screen, and without it a failed run leaves
+  text there that has been abandoned.
+
+**New: tool slots**
+- `[[answer|use_tools=true, max_iter=3]]` hands the next few round trips to the
+  model, which calls the tools the caller passed until it can answer. A slot
+  *option*, not a slot type, so the return type keeps doing its job:
+  `[[json:plan|use_tools=true]]` still yields parsed JSON.
+- `complete()` and friends take `tools=`, `deps=`, `deps_type=` and `limits=`.
+- The caller's `UsageLimits` is a **ceiling**; `max_iter` / `max_calls` in a
+  template may only lower it. Prompts are editable in the admin on some
+  deployments, so a template must never be able to raise a cap.
+- `ToolStarted` / `ToolCompleted` events, emitted while the run is still going.
+- An identical call inside one run returns the first result. A tool that raises
+  becomes an error string the model can work around, not an exception that ends
+  the turn. `prepare_tools` drops the gathering tools on the final round.
+- Nothing in a tool loop is cached: tool results are live reads, and the
+  response cache keys on messages alone.
+
+**Guards run alongside the work they guard**
+- A halt slot that judges only the input starts when it is reached and is
+  joined before anything irreversible: the first token of a streaming slot, a
+  tool that is not marked `readonly`, or the end of the segment. So the guard
+  costs no latency on an ordinary request, and a trip wastes at most the one
+  call running beside it. A guard that reads an earlier slot's output is
+  sequential by nature and still blocks.
+- `@readonly` marks a tool as having no side effects, so it does not force that
+  join. Undeclared means "might write", which is the safe reading.
+
+**Reasoning and usage across a run**
+- Token counts are summed over every step of a tool loop rather than read from
+  the last response, and every `ThinkingPart` is kept in order, so reasoning
+  between tool calls is available and not just the final step's.
+
+**Fixed**
+- A slot with exactly two options was parsed as a quantifier: the sequence
+  pattern `(_, _)` also matches a two-item option list, so `[[x|a=1,b=2]]`
+  failed to build a validator. One option and three options were fine.
+- The non-incremental collector assumed every event carried a `.result`.
+
+**`@break` works**
+- It has set `_break_requested` since it was written and nothing ever read it.
+  It now stops the run, and `ProcessingComplete.early_termination` is set
+  rather than hard-coded `False`.
+
 ### 0.7.2
 
 **New: Django contrib app (`struckdown.contrib.django`)**

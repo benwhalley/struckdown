@@ -24,10 +24,27 @@ except ImportError:
             provider, name = model_id.split(":", 1)
             return provider, name
         return "openai", model_id
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
+
+from struckdown.usage import CountingOpenAIChatModel
+
+def _is_known_provider(name: str) -> bool:
+    """Is this a pydantic-ai provider, or just the first half of a model name?
+
+    ``openai:gpt-4o`` splits; ``qwen3:8b`` is one Ollama tag and must not.
+    """
+    try:
+        from pydantic_ai.providers import infer_provider_class
+    except ImportError:  # older pydantic-ai: assume it is a provider
+        return True
+    try:
+        infer_provider_class(name)
+    except Exception:
+        return False
+    return True
+
 
 # Module-level flag for API request logging
 _debug_api_requests = False
@@ -753,6 +770,13 @@ class LLM(BaseModel):
             warnings.simplefilter("ignore", DeprecationWarning)
             provider_prefix, bare_name = parse_model_id(self.model_name)
 
+        # A colon does not always separate a provider from a model. Ollama
+        # writes its tags that way -- `qwen3:8b`, `llama3.2:1b` -- so splitting
+        # blindly sends `8b` to the server and gets "model not found". Only
+        # treat the prefix as a provider when it actually is one.
+        if provider_prefix and not _is_known_provider(provider_prefix):
+            provider_prefix, bare_name = "openai", self.model_name
+
         # An explicit base_url is a deliberate routing choice: send everything
         # through it as an OpenAI-compatible proxy (LiteLLM, Helicone, etc.).
         # The exception is a real Azure endpoint, which uses a different wire
@@ -777,7 +801,8 @@ class LLM(BaseModel):
                 base_url=base_url,
                 http_client=http_client,
             )
-            return OpenAIChatModel(bare_name, provider=provider)
+            # Subclassed to keep the token counts; see struckdown.usage.
+            return CountingOpenAIChatModel(bare_name, provider=provider)
 
         # Native provider mode: pydantic-ai's provider:model convention,
         # used for direct provider access (no base_url) or Azure direct.
@@ -1040,9 +1065,24 @@ def _store_in_cache(
 def _provider_http_client(**kwargs):
     """AsyncClient for an OpenAI-compatible provider.
 
-    pydantic-ai deprecated httpx clients here in favour of httpx2, which it
-    depends on from v2.42; fall back to httpx for older versions.
+    pydantic-ai deprecated httpx clients in favour of httpx2, and depends on it
+    from v2.42. But an OpenAI-compatible provider hands the client to the
+    ``openai`` package, which type-checks it against whichever module *it* was
+    built on and refuses the other with a TypeError. Having both installed is
+    normal, so the choice has to follow openai rather than a guess:
+
+        Invalid `http_client` argument; Expected an instance of
+        `httpx.AsyncClient` but got <class 'httpx2.AsyncClient'>
+
+    Ask openai what it imports, and only fall back to guessing if that private
+    attribute ever moves.
     """
+    try:
+        import openai._base_client as _openai_base
+
+        return _openai_base.httpx.AsyncClient(**kwargs)
+    except (ImportError, AttributeError):
+        pass
     try:
         import httpx2 as client_module
     except ImportError:
@@ -2305,6 +2345,43 @@ def _drop_tools_on_final_round(max_iter):
     return prepare
 
 
+
+def _thinking_stream_handler(announce):
+    """A pydantic-ai event handler that reports reasoning as it arrives.
+
+    Reasoning models emit their thinking as ordinary streamed parts, so the
+    text is available between tool calls rather than only at the end. What
+    reaches ``announce`` is a display copy; the parts pydantic-ai round-trips
+    back to the provider are untouched, which matters because Anthropic rejects
+    a reasoning chain whose blocks have been altered.
+    """
+    accumulated = {"text": ""}
+
+    async def handler(ctx, stream):
+        from pydantic_ai.messages import (PartDeltaEvent, PartStartEvent,
+                                          ThinkingPart, ThinkingPartDelta)
+
+        async for event in stream:
+            chunk = ""
+            if isinstance(event, PartStartEvent) and isinstance(
+                event.part, ThinkingPart
+            ):
+                chunk = event.part.content or ""
+            elif isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, ThinkingPartDelta
+            ):
+                chunk = event.delta.content_delta or ""
+            if not chunk:
+                continue
+            accumulated["text"] += chunk
+            announce(
+                "thinking",
+                {"delta": chunk, "accumulated": accumulated["text"]},
+            )
+
+    return handler
+
+
 async def run_agent_with_tools(
     messages,
     return_type,
@@ -2319,9 +2396,13 @@ async def run_agent_with_tools(
     max_calls=None,
     extra_kwargs=None,
     strict_params: bool = False,
+    stream: bool = False,
     on_tool_event=None,
 ):
-    """Run one tool-using slot. Returns ``(response, completion_dict)``.
+    """Run one tool-using slot, yielding ``(partial, completion, is_final)``.
+
+    Same contract as :func:`structured_chat_async`, so the segment processor
+    handles a tool slot and an ordinary one the same way.
 
     ``on_tool_event`` is called with ``("started"|"completed", payload)`` as the
     loop goes, so the caller can turn them into slot events without this
@@ -2362,11 +2443,70 @@ async def run_agent_with_tools(
     if settings:
         run_kwargs["model_settings"] = settings
 
-    result = await agent.run(user_prompt, **run_kwargs)
+    if on_tool_event is not None:
+        run_kwargs["event_stream_handler"] = _thinking_stream_handler(
+            lambda kind, payload: _announce_safely(on_tool_event, kind, payload)
+        )
 
-    elapsed_ms = (_time.monotonic() - started) * 1000
-    completion = _completion_dict_for_run(result, llm.model_name, messages, elapsed_ms)
-    return result.output, Box(completion)
+    if not stream:
+        result = await agent.run(user_prompt, **run_kwargs)
+        elapsed_ms = (_time.monotonic() - started) * 1000
+        completion = _completion_dict_for_run(
+            result, llm.model_name, messages, elapsed_ms
+        )
+        yield (result.output, Box(completion), True)
+        return
+
+    # Streaming: the tool rounds happen inside run_stream, and only the final
+    # answer is streamed. A consumer therefore sees tool events during the
+    # gathering and tokens once the model starts writing -- which is the order
+    # a reader experiences it in.
+    #
+    # The run is driven by its own task rather than yielded from inside the
+    # `async with`. A generator that suspends inside that block is resumed by
+    # whoever consumes it, which is a different step of a different generator,
+    # and pydantic-ai's graph then reports itself as already running. Pushing
+    # through a queue keeps the context manager on one task from open to close.
+    import asyncio as _asyncio
+
+    out: "_asyncio.Queue" = _asyncio.Queue()
+    sentinel = object()
+
+    async def _drive():
+        try:
+            async with agent.run_stream(user_prompt, **run_kwargs) as result:
+                async for partial in result.stream_output(debounce_by=None):
+                    await out.put((partial, None, False))
+                elapsed = (_time.monotonic() - started) * 1000
+                completion = _completion_dict_for_run(
+                    result, llm.model_name, messages, elapsed
+                )
+                await out.put((await result.get_output(), Box(completion), True))
+        except BaseException as exc:  # re-raised on the consumer's side
+            await out.put(exc)
+        finally:
+            await out.put(sentinel)
+
+    task = _asyncio.ensure_future(_drive())
+    try:
+        while True:
+            item = await out.get()
+            if item is sentinel:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+def _announce_safely(on_tool_event, kind, payload):
+    """Report an event without letting a consumer's error end the run."""
+    try:
+        on_tool_event(kind, payload)
+    except Exception:
+        logger.exception("tool event callback raised")
 
 
 def _instrumented_tool(tool, on_tool_event):

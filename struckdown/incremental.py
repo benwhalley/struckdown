@@ -150,8 +150,29 @@ class ToolCompleted(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class ThinkingDelta(BaseModel):
+    """A chunk of a reasoning model's thinking, as it arrives.
+
+    Emitted between tool calls as well as before the answer, so a consumer can
+    show what the model is working through rather than only what it concluded.
+
+    This is the display copy and is safe to render, trim or discard. What goes
+    back to the provider is the ``ThinkingPart`` pydantic-ai round-trips
+    internally, signature included -- Anthropic rejects a reasoning chain whose
+    blocks have been altered, so never send this text back in its place.
+    """
+
+    type: Literal["thinking_delta"] = "thinking_delta"
+    segment_index: int
+    slot_key: str
+    delta: str
+    accumulated: str
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 IncrementalEvent = Union[
     SlotCompleted, SlotStreamStart, TokenDelta,
     CheckpointReached, ProcessingComplete, ProcessingError,
-    SlotRetracted, ToolStarted, ToolCompleted,
+    SlotRetracted, ToolStarted, ToolCompleted, ThinkingDelta,
 ]
