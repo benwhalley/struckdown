@@ -165,3 +165,28 @@ class FetchError(Exception):
         self.url = url
         self.reason = reason
         super().__init__(f"Failed to fetch {url}: {reason}")
+
+
+class Halted(Exception):
+    """Raised when a halt slot trips and stops the rest of the run.
+
+    Carries the work already done, so a caller can log it, bill it, or show
+    what was produced before the guard fired::
+
+        try:
+            result = sd.complete(prompt, context=ctx, model=m, credentials=c)
+        except Halted as halted:
+            log_abuse(user, halted.reason)
+            return "I can't help with that."
+
+    ``reason`` is written by the model and is for logs, not for the reader:
+    showing it to someone whose request just tripped a guard tells them how
+    the guard works.
+    """
+
+    def __init__(self, slot: str, reason: str, results, when: bool = True):
+        self.slot = slot
+        self.reason = reason
+        self.results = results
+        self.when = when
+        super().__init__(f"halted at [[halt:{slot}]]: {reason}")

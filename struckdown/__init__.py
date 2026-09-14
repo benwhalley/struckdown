@@ -46,8 +46,10 @@ from .execution import SegmentDependencyGraph, merge_contexts
 # Re-export from incremental module
 from .incremental import (CheckpointReached, IncrementalEvent,
                           ProcessingComplete, ProcessingError, SlotCompleted,
+                          SlotRetracted,
                           SlotStreamStart, TokenDelta)
 # Import internal modules for complete implementation
+from .errors import Halted
 from .jinja_analysis import TemplateAnalysis, analyze_template
 # Re-export from jinja_utils module
 from .jinja_utils import (SilentUndefined, escape_context_dict,
@@ -136,6 +138,7 @@ async def _complete_single_async(
     strict_undefined: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
+    on_halt: str = "raise",
 ) -> StruckdownResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
@@ -395,6 +398,19 @@ async def _complete_single_async(
                     )
                     accumulated_context[key] = escaped_value
 
+        except Halted as halted:
+            # Stop here: no later segment runs. Merge the partial results this
+            # segment produced before the guard fired into the run's results,
+            # so the caller sees everything that was actually done.
+            logger.info(f"Halted at [[halt:{halted.slot}]]: {halted.reason}")
+            partial = getattr(halted.results, "results", None) or {}
+            for key, seg_result in partial.items():
+                final[key] = seg_result
+            halted.results = final
+            if on_halt == "raise":
+                raise
+            return final
+
         except Exception as e:
             logger.error(f"Batch {batch} error: {e}")
             raise
@@ -423,6 +439,7 @@ async def complete_async(
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
+    on_halt: str = "raise",
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """
     Process a struckdown template with one or more contexts.
@@ -482,6 +499,7 @@ async def complete_async(
                                 strict_undefined=strict_undefined,
                                 strict_params=strict_params,
                                 stop_at=stop_at,
+                                on_halt=on_halt,
                             )
                             results[index] = result
                             if on_complete:
@@ -508,6 +526,7 @@ async def complete_async(
             strict_undefined=strict_undefined,
             strict_params=strict_params,
             stop_at=stop_at,
+            on_halt=on_halt,
         )
 
 
@@ -527,6 +546,7 @@ def complete(
     max_concurrent: Optional[int] = None,
     on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
+    on_halt: str = "raise",
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
     return anyio.run(
@@ -546,6 +566,7 @@ def complete(
             max_concurrent=max_concurrent,
             on_complete=on_complete,
             stop_at=stop_at,
+            on_halt=on_halt,
         )
     )
 
@@ -562,6 +583,7 @@ async def complete_incremental_async(
     stream: bool = True,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
+    on_halt: str = "raise",
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -628,6 +650,9 @@ async def complete_incremental_async(
     # EXECUTION TIME: Process segments in batches (parallel within each batch)
     all_results = StruckdownResult()
     accumulated_context = context.copy()
+    # slot_key -> segment_index for slots that have started streaming and not
+    # yet completed; they are retracted if the run fails partway through.
+    streaming_slots: Dict[str, int] = {}
 
     # Track global system messages (persist across checkpoints)
     accumulated_globals: List[str] = []
@@ -858,7 +883,13 @@ async def complete_incremental_async(
                     **(extra_kwargs or {}),
                 ):
                     yield event
+                    # Track slots whose tokens are already on the consumer's
+                    # wire but which have not produced a final value: only
+                    # those need retracting if the run fails.
+                    if isinstance(event, SlotStreamStart):
+                        streaming_slots[event.slot_key] = seg_idx
                     if isinstance(event, SlotCompleted):
+                        streaming_slots.pop(event.slot_key, None)
                         all_results[event.slot_key] = event.result
                         slot_events.append(event)
 
@@ -930,8 +961,28 @@ async def complete_incremental_async(
             if stop_at and stop_at in all_results.results:
                 break
 
+    except Halted as halted:
+        # A guard tripped. Anything streamed was written on the strength of
+        # input the guard has now rejected, so retract it before saying so.
+        logger.info(f"Halted at [[halt:{halted.slot}]]: {halted.reason}")
+        for slot_key, seg_idx in streaming_slots.items():
+            yield SlotRetracted(
+                segment_index=seg_idx, slot_key=slot_key, reason="halted"
+            )
+        halted.results = all_results
+        yield ProcessingComplete(result=all_results, early_termination=True)
+        if on_halt == "raise":
+            raise
+        return
+
     except Exception as e:
         logger.error(f"Incremental processing error: {e}")
+        # Half-streamed slots are on screen and will never be completed.
+        # Tell the consumer to drop them before reporting the error.
+        for slot_key, seg_idx in streaming_slots.items():
+            yield SlotRetracted(
+                segment_index=seg_idx, slot_key=slot_key, reason="errored"
+            )
         yield ProcessingError(
             segment_index=0,
             slot_key=None,
@@ -958,6 +1009,7 @@ def complete_incremental(
     stream: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
+    on_halt: str = "raise",
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -989,6 +1041,7 @@ def complete_incremental(
                 stream=stream,
                 strict_params=strict_params,
                 stop_at=stop_at,
+            on_halt=on_halt,
             )
         ]
 
@@ -1033,6 +1086,8 @@ __all__ = [
     "CheckpointReached",
     "ProcessingComplete",
     "ProcessingError",
+    "SlotRetracted",
+    "Halted",
     # Results
     "SlotResult",
     "StruckdownResult",

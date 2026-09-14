@@ -1412,3 +1412,54 @@ def build_prefix_resolver(options: List[str]) -> Dict[str, str]:
     return resolver
 
 
+
+
+class HaltResponse(ResponseModel):
+    """A guard's verdict: did the condition hold, and why."""
+
+    triggered: bool = Field(
+        ...,
+        description=(
+            "true if the condition described above holds, false otherwise. "
+            "Judge only what is asked; do not add conditions of your own."
+        ),
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "One short sentence saying why, in under twenty words. This is "
+            "read by staff in a log, never by the person being judged."
+        ),
+    )
+
+
+HaltResponse.llm_config = LLMConfig(temperature=0.0, model=None)
+
+
+@ResponseTypes.register("halt")
+def halt_response_model(options=None, quantifier=None, required_prefix=False):
+    """Factory for the halt guard type.
+
+    ``[[halt:name]]`` stops the run when the condition holds. ``when=false``
+    inverts it, for a positive gate::
+
+        Is this question about workload or teaching?
+        [[halt:on_topic|when=false]]
+
+    The slot's own value is the whole verdict object, so a template can still
+    read ``{{ name.reason }}`` when the run is allowed to continue.
+    """
+    return HaltResponse
+
+
+def halt_when(options=None) -> bool:
+    """The ``when=`` option for a halt slot, defaulting to true.
+
+    ``when=true`` (the default) halts on ``triggered``; ``when=false`` halts on
+    its negation.
+    """
+    opts = parse_options(options)
+    raw = opts.get("when", True)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in ("false", "0", "no", "off")

@@ -422,6 +422,26 @@ async def _process_together_group(
         )
 
 
+def _halt_when(options):
+    from .return_type_models import halt_when
+
+    return halt_when(options)
+
+
+def halt_requested(slot_info, value) -> bool:
+    """Does this completed slot ask for the run to stop?
+
+    True only for a ``[[halt:...]]`` slot whose verdict matches its ``when=``
+    option (default ``true``). Every other slot type returns False, so the
+    check is free to sit on the common path.
+    """
+    if getattr(slot_info, "action_type", None) != "halt":
+        return False
+
+    triggered = bool(getattr(value, "triggered", False))
+    return triggered is _halt_when(slot_info.options)
+
+
 async def process_segment_with_delta_incremental(
     template_str: str,
     initial_context: Dict[str, Any],
@@ -734,6 +754,29 @@ async def process_segment_with_delta_incremental(
         accumulated_context[slot_key] = escaped_value
         filled_slots[slot_key] = escaped_value
 
+        # A halt slot whose verdict holds stops the run here. The same flag
+        # serves the @break action, which has set it since it was written but
+        # has never until now had anything read it.
+        if halt_requested(slot_info, extracted_value):
+            from .errors import Halted
+
+            raise Halted(
+                slot=slot_key,
+                reason=str(getattr(extracted_value, "reason", "") or ""),
+                results=None,
+                when=_halt_when(slot_info.options),
+            )
+        if accumulated_context.get("_break_requested"):
+            # @break was executed as an action. Its message is already in the
+            # results; stop before the next slot's call.
+            from .errors import Halted
+
+            raise Halted(
+                slot=slot_key,
+                reason=str(accumulated_context.get("_break_message", "") or ""),
+                results=None,
+            )
+
         # Update last_slot_end for next iteration (if no re-render)
         last_slot_end = slot_end
 
@@ -779,11 +822,12 @@ async def process_segment_with_delta(
     Returns:
         StruckdownResult with all slot completions
     """
+    from .errors import Halted
     from .results import StruckdownResult
 
     results = StruckdownResult()
 
-    async for event in process_segment_with_delta_incremental(
+    gen = process_segment_with_delta_incremental(
         template_str=template_str,
         initial_context=initial_context,
         llm=llm,
@@ -796,7 +840,15 @@ async def process_segment_with_delta(
         strict_params=strict_params,
         stop_at=stop_at,
         **extra_kwargs,
-    ):
-        results[event.slot_key] = event.result
+    )
+
+    try:
+        async for event in gen:
+            results[event.slot_key] = event.result
+    except Halted as halted:
+        # Carry what this segment did produce, so the caller can merge it into
+        # the run's results before re-raising.
+        halted.results = results
+        raise
 
     return results

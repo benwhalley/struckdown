@@ -85,7 +85,34 @@ class ProcessingError(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class SlotRetracted(BaseModel):
+    """Emitted when a slot's output must be discarded after the fact.
+
+    Tokens already yielded for a streaming slot are on the consumer's wire --
+    in a browser, on screen. When the run later decides that output was not
+    the answer, the consumer needs telling, or it goes on displaying text that
+    is wrong. A consumer should drop whatever it has accumulated for
+    ``slot_key``.
+
+    ``reason`` says why:
+
+    * ``gathering`` -- the round streamed prose and then called a tool, so what
+      streamed was the model talking to itself rather than answering.
+    * ``halted`` -- a halt slot tripped (see :class:`struckdown.errors.Halted`).
+    * ``retried`` -- the slot is being run again.
+    * ``errored`` -- processing failed partway through the slot.
+    """
+
+    type: Literal["slot_retracted"] = "slot_retracted"
+    segment_index: int
+    slot_key: str
+    reason: Literal["gathering", "halted", "retried", "errored"]
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 IncrementalEvent = Union[
     SlotCompleted, SlotStreamStart, TokenDelta,
     CheckpointReached, ProcessingComplete, ProcessingError,
+    SlotRetracted,
 ]
