@@ -10,7 +10,7 @@ Event flow for a constrained or non-streaming slot:
   SlotCompleted
 """
 
-from typing import Dict, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -111,8 +111,47 @@ class SlotRetracted(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class ToolStarted(BaseModel):
+    """Emitted when a tool slot's model asks for a tool.
+
+    A consumer that shows progress needs this before the call runs, not after:
+    a search takes long enough that the reader should see it happening.
+    """
+
+    type: Literal["tool_started"] = "tool_started"
+    segment_index: int
+    slot_key: str
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class ToolCompleted(BaseModel):
+    """Emitted when a tool call returns, successfully or not.
+
+    ``output`` is whatever the tool returned, unserialised -- a consumer that
+    renders sources or citation rows reads it directly. ``ok`` is False when
+    the tool raised; ``error`` then says what happened. A failed tool does not
+    end the run.
+    """
+
+    type: Literal["tool_completed"] = "tool_completed"
+    segment_index: int
+    slot_key: str
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+    output: Any = None
+    ok: bool = True
+    error: Optional[str] = None
+    elapsed_ms: float = 0.0
+    was_cached: bool = False
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
 IncrementalEvent = Union[
     SlotCompleted, SlotStreamStart, TokenDelta,
     CheckpointReached, ProcessingComplete, ProcessingError,
-    SlotRetracted,
+    SlotRetracted, ToolStarted, ToolCompleted,
 ]

@@ -422,6 +422,34 @@ async def _process_together_group(
         )
 
 
+def slot_uses_tools(slot_info) -> bool:
+    """Is this slot a tool loop? ``[[answer|use_tools=true]]``.
+
+    A slot option rather than a slot type, so the return type keeps doing its
+    job: ``[[json:plan|use_tools=true]]`` still yields parsed JSON.
+    """
+    from .validation import parse_options
+
+    raw = parse_options(slot_info.options).get("use_tools", False)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
+
+def slot_option_int(slot_info, key):
+    """An integer slot option, or None when absent or unreadable."""
+    from .validation import parse_options
+
+    raw = parse_options(slot_info.options).get(key)
+    if raw is None:
+        return None
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        logger.warning(f"ignoring non-numeric {key}={raw!r}")
+        return None
+
+
 def _halt_when(options):
     from .return_type_models import halt_when
 
@@ -455,6 +483,10 @@ async def process_segment_with_delta_incremental(
     stream: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
     **extra_kwargs,
 ) -> AsyncGenerator:
     """Process a template segment, yielding SlotCompleted events as each slot is filled.
@@ -480,7 +512,8 @@ async def process_segment_with_delta_incremental(
     # Import here to avoid circular imports
     import anyio
 
-    from .incremental import SlotCompleted, SlotStreamStart, TokenDelta
+    from .incremental import (SlotCompleted, SlotStreamStart, TokenDelta,
+                              ToolCompleted, ToolStarted)
     from .jinja_utils import escape_struckdown_syntax
     from .llm import structured_chat, structured_chat_async
     from .results import SlotResult, get_progress_callback
@@ -639,6 +672,59 @@ async def process_segment_with_delta_incremental(
             res, completion_obj = await return_type._executor(
                 accumulated_context, content_before, **extra_kwargs
             )
+        elif slot_uses_tools(slot_info):
+            # The model drives this slot: it calls tools until it can answer,
+            # inside the caller's budget. Tool events are drained while the run
+            # is still going, so a consumer can show a search happening rather
+            # than only reporting it afterwards.
+            import asyncio as _asyncio
+
+            from .llm import run_agent_with_tools
+
+            queue: "_asyncio.Queue" = _asyncio.Queue()
+            loop = _asyncio.get_running_loop()
+
+            def _on_tool_event(kind, payload):
+                loop.call_soon_threadsafe(queue.put_nowait, (kind, payload))
+
+            call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
+            if slot_info.llm_kwargs:
+                call_kwargs.update(slot_info.llm_kwargs)
+
+            task = _asyncio.ensure_future(
+                run_agent_with_tools(
+                    messages.copy(),
+                    return_type,
+                    llm,
+                    credentials,
+                    tools=tools,
+                    deps=deps,
+                    deps_type=deps_type,
+                    limits=limits,
+                    max_iter=slot_option_int(slot_info, "max_iter"),
+                    max_calls=slot_option_int(slot_info, "max_calls"),
+                    extra_kwargs=call_kwargs,
+                    strict_params=strict_params,
+                    on_tool_event=_on_tool_event,
+                )
+            )
+
+            while not task.done() or not queue.empty():
+                try:
+                    kind, payload = await _asyncio.wait_for(queue.get(), timeout=0.05)
+                except (_asyncio.TimeoutError, TimeoutError):
+                    continue
+                if kind == "started":
+                    yield ToolStarted(
+                        segment_index=segment_index, slot_key=slot_key, **payload
+                    )
+                else:
+                    yield ToolCompleted(
+                        segment_index=segment_index, slot_key=slot_key, **payload
+                    )
+
+            res, completion_obj = await task
+
         else:
             # Classify slot for streaming and token efficiency
             category = classify_slot(slot_info.action_type, return_type)
@@ -802,6 +888,10 @@ async def process_segment_with_delta(
     strict_undefined: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
     **extra_kwargs,
 ):
     """Process a template segment using delta-based re-rendering.
@@ -823,6 +913,7 @@ async def process_segment_with_delta(
         StruckdownResult with all slot completions
     """
     from .errors import Halted
+    from .incremental import SlotCompleted as SlotCompletedEvent
     from .results import StruckdownResult
 
     results = StruckdownResult()
@@ -839,12 +930,19 @@ async def process_segment_with_delta(
         strict_undefined=strict_undefined,
         strict_params=strict_params,
         stop_at=stop_at,
+        tools=tools,
+        deps=deps,
+        deps_type=deps_type,
+        limits=limits,
         **extra_kwargs,
     )
 
     try:
         async for event in gen:
-            results[event.slot_key] = event.result
+            # Tool and retraction events pass through the same stream; only a
+            # completed slot carries a result to collect.
+            if isinstance(event, SlotCompletedEvent):
+                results[event.slot_key] = event.result
     except Halted as halted:
         # Carry what this segment did produce, so the caller can merge it into
         # the run's results before re-raising.

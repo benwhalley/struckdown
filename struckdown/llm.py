@@ -2234,3 +2234,259 @@ def get_cross_encoder_scores(
         scores = normalise_with(scores, model)
 
     return scores
+
+
+# ---------------------------------------------------------------------------
+# Tool loops
+#
+# A slot marked ``use_tools=true`` hands control of the next few round trips to
+# the model: it chooses tools, reads what they return, and answers when it has
+# enough. pydantic-ai runs that loop; struckdown's job is to hand it the tools
+# the caller supplied, keep it inside the caller's budget, and report what
+# happened as ordinary slot events.
+#
+# The caller's UsageLimits is a CEILING. A template may lower it -- prompts are
+# editable in the admin on some deployments, so a template must never be able
+# to raise a cap.
+# ---------------------------------------------------------------------------
+
+
+def clamp_limits(ceiling, max_iter=None, max_calls=None):
+    """Return UsageLimits no looser than ``ceiling``.
+
+    ``max_iter`` / ``max_calls`` come from the template. Either is applied only
+    where it is *lower* than the caller's own limit; a template asking for more
+    gets the ceiling and a warning.
+    """
+    from pydantic_ai.usage import UsageLimits
+
+    ceiling_requests = getattr(ceiling, "request_limit", None) if ceiling else None
+    ceiling_calls = getattr(ceiling, "tool_calls_limit", None) if ceiling else None
+
+    def _lower(name, wanted, cap):
+        if wanted is None:
+            return cap
+        if cap is not None and wanted > cap:
+            logger.warning(
+                f"template asked for {name}={wanted} but the caller's ceiling is "
+                f"{cap}; using {cap}"
+            )
+            return cap
+        return wanted
+
+    requests = _lower("max_iter", max_iter, ceiling_requests)
+    calls = _lower("max_calls", max_calls, ceiling_calls)
+
+    kwargs = {}
+    if requests is not None:
+        kwargs["request_limit"] = requests
+    if calls is not None:
+        kwargs["tool_calls_limit"] = calls
+    for field in ("input_tokens_limit", "output_tokens_limit", "total_tokens_limit"):
+        value = getattr(ceiling, field, None) if ceiling else None
+        if value is not None:
+            kwargs[field] = value
+    return UsageLimits(**kwargs) if kwargs else None
+
+
+def _drop_tools_on_final_round(max_iter):
+    """A ``prepare_tools`` hook that empties the tool list on the last round.
+
+    This is how "send the final request without tools" is expressed to
+    pydantic-ai. The output tool stays -- it is what produces the answer -- so
+    the model can still finish, it just cannot start more gathering.
+    """
+
+    async def prepare(ctx, tool_defs):
+        if max_iter is not None and ctx.run_step >= max_iter:
+            return []
+        return tool_defs
+
+    return prepare
+
+
+async def run_agent_with_tools(
+    messages,
+    return_type,
+    llm: "LLM",
+    credentials: "LLMCredentials",
+    *,
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
+    max_iter=None,
+    max_calls=None,
+    extra_kwargs=None,
+    strict_params: bool = False,
+    on_tool_event=None,
+):
+    """Run one tool-using slot. Returns ``(response, completion_dict)``.
+
+    ``on_tool_event`` is called with ``("started"|"completed", payload)`` as the
+    loop goes, so the caller can turn them into slot events without this
+    function knowing anything about struckdown's event types.
+
+    Tool results are live reads, so nothing here is cached: the response cache
+    keys on messages alone and would serve yesterday's database.
+    """
+    import time as _time
+
+    from pydantic_ai import Agent
+
+    model = llm.get_pydantic_model(credentials)
+    call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
+    settings = _translate_kwargs(
+        call_kwargs, strict=strict_params, model_name=llm.model_name
+    )
+
+    wrapped = [_instrumented_tool(t, on_tool_event) for t in (tools or [])]
+
+    agent_kwargs = {
+        "output_type": return_type,
+        "retries": 2,
+        "tools": wrapped,
+    }
+    if deps_type is not None:
+        agent_kwargs["deps_type"] = deps_type
+    if max_iter is not None:
+        agent_kwargs["prepare_tools"] = _drop_tools_on_final_round(max_iter)
+
+    agent = Agent(model, **agent_kwargs)
+
+    user_prompt = _messages_to_user_prompt(messages)
+    started = _time.monotonic()
+    run_kwargs = {"usage_limits": clamp_limits(limits, max_iter, max_calls)}
+    if deps is not None:
+        run_kwargs["deps"] = deps
+    if settings:
+        run_kwargs["model_settings"] = settings
+
+    result = await agent.run(user_prompt, **run_kwargs)
+
+    elapsed_ms = (_time.monotonic() - started) * 1000
+    completion = _completion_dict_for_run(result, llm.model_name, messages, elapsed_ms)
+    return result.output, Box(completion)
+
+
+def _instrumented_tool(tool, on_tool_event):
+    """Wrap a tool so it reports itself and cannot end the run by raising.
+
+    Three behaviours the hand-written loops had and pydantic-ai does not:
+
+    * an identical call inside one run returns the first result, because a
+      model that is unsure tends to ask the same thing twice in one breath;
+    * a tool that raises becomes an error string the model can read and work
+      around, rather than an exception that ends the turn;
+    * every call is announced before it runs and reported after.
+    """
+    import functools
+    import inspect
+    import json
+    import time as _time
+
+    cache: Dict[str, Any] = {}
+
+    original = tool
+    signature = inspect.signature(original)
+    is_async = inspect.iscoroutinefunction(original)
+
+    def _key(kwargs):
+        return json.dumps(kwargs, sort_keys=True, default=str)
+
+    def _announce(kind, payload):
+        if on_tool_event is not None:
+            try:
+                on_tool_event(kind, payload)
+            except Exception:
+                logger.exception("tool event callback raised")
+
+    @functools.wraps(original)
+    async def wrapper(*args, **kwargs):
+        name = getattr(original, "__name__", "tool")
+        key = _key(kwargs)
+        _announce("started", {"tool_name": name, "arguments": dict(kwargs)})
+        started = _time.monotonic()
+
+        if key in cache:
+            output = cache[key]
+            _announce(
+                "completed",
+                {
+                    "tool_name": name,
+                    "arguments": dict(kwargs),
+                    "output": output,
+                    "ok": True,
+                    "elapsed_ms": 0.0,
+                    "was_cached": True,
+                },
+            )
+            return output
+
+        try:
+            output = original(*args, **kwargs)
+            if inspect.isawaitable(output):
+                output = await output
+            cache[key] = output
+            ok, error = True, None
+        except Exception as exc:  # a tool bug must not end the run
+            logger.exception(f"tool {name} failed")
+            output = f"{type(exc).__name__}: {exc}"
+            ok, error = False, str(exc)
+
+        _announce(
+            "completed",
+            {
+                "tool_name": name,
+                "arguments": dict(kwargs),
+                "output": output,
+                "ok": ok,
+                "error": error,
+                "elapsed_ms": (_time.monotonic() - started) * 1000,
+                "was_cached": False,
+            },
+        )
+        return output
+
+    wrapper.__signature__ = signature
+    if not is_async:
+        wrapper.__doc__ = original.__doc__
+    return wrapper
+
+
+def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
+    """Usage and reasoning for a whole agent run, not one request.
+
+    A tool loop is several model responses. Their token counts are summed --
+    reading only the last would under-report the most expensive slot type there
+    is -- and every ThinkingPart is kept in order, so a caller can show what the
+    model was reasoning about between calls rather than only at the end.
+    """
+    usage = result.usage()
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+    thinking_steps = []
+    for message in result.all_messages():
+        for part in getattr(message, "parts", []) or []:
+            if type(part).__name__ == "ThinkingPart" and getattr(part, "content", ""):
+                thinking_steps.append(part.content)
+
+    return {
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": getattr(usage, "cache_read_tokens", 0) or 0,
+                "cache_creation_tokens": getattr(usage, "cache_write_tokens", 0) or 0,
+            },
+        },
+        "_hidden_params": {"response_cost": None},
+        "_request_messages": messages,
+        "_thinking": "\n\n".join(thinking_steps) or None,
+        "_thinking_steps": thinking_steps,
+        "_all_messages": result.all_messages(),
+        "_elapsed_ms": elapsed_ms,
+        "_cached": False,
+    }

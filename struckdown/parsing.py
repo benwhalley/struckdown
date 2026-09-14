@@ -15,6 +15,36 @@ from .response_types import ResponseTypes
 from .return_type_models import LLMConfig
 
 
+# Options that configure how struckdown runs a slot rather than what the model
+# should return. They never reach a response-type factory.
+CONTROL_OPTIONS = frozenset({"use_tools", "max_iter", "max_calls", "when", "readonly"})
+
+
+def is_quantifier(value) -> bool:
+    """Is this a ``(min, max)`` quantifier rather than something else?
+
+    Both bounds must be an integer or None. Anything else -- notably a list of
+    two parsed options -- is not a quantifier however much it looks like a
+    two-element sequence.
+    """
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        return False
+    return all(item is None or isinstance(item, int) for item in value)
+
+
+def strip_control_options(options):
+    """Drop control options, keeping everything the return type cares about."""
+    if not options:
+        return options
+    kept = []
+    for opt in options:
+        key = getattr(opt, "key", None)
+        if key is not None and str(key).strip().lower() in CONTROL_OPTIONS:
+            continue
+        kept.append(opt)
+    return kept
+
+
 class OptionValue(NamedTuple):
     """
     Structured representation of parsed option values
@@ -1077,6 +1107,11 @@ class MindframeTransformer(Transformer):
 
         from struckdown.model_utils import create_list_model
 
+        # Control options steer struckdown, not the response shape. Strip them
+        # before the return type sees them, or a factory reads `max_iter=3` as
+        # a list quantifier and fails to build a validator.
+        options = strip_control_options(options)
+
         action_model = Actions.create_action_model(
             key, options, quantifier, required_prefix
         )
@@ -1232,14 +1267,19 @@ class MindframeTransformer(Transformer):
                     return (False, list(items))
 
         def parse_name_and_quantifier(items: list) -> tuple[str, tuple | None, list]:
-            """Extract name and optional quantifier, returning (name, quantifier, remaining)."""
-            match items:
-                case [name, (_, _) as quant, *rest]:
-                    return (str(name), quant, rest)
-                case [name, *rest]:
-                    return (str(name), None, rest)
-                case _:
-                    return ("", None, [])
+            """Extract name and optional quantifier, returning (name, quantifier, remaining).
+
+            A quantifier is ``(min, max)`` with integer or None bounds. The
+            check has to be on the contents, not just the shape: a sequence
+            pattern of length two also matches an option *list* of exactly two
+            options, so ``[[x|a=1,b=2]]`` used to be read as a quantifier and
+            then failed to build a validator.
+            """
+            if len(items) >= 2 and is_quantifier(items[1]):
+                return (str(items[0]), tuple(items[1]), items[2:])
+            if items:
+                return (str(items[0]), None, list(items[1:]))
+            return ("", None, [])
 
         def validate_name(name: str) -> bool:
             """Check if name conflicts with registered types. Returns is_function flag."""

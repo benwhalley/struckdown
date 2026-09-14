@@ -139,6 +139,10 @@ async def _complete_single_async(
     strict_params: bool = False,
     stop_at: Optional[str] = None,
     on_halt: str = "raise",
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
 ) -> StruckdownResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
@@ -301,6 +305,10 @@ async def _complete_single_async(
             strict_undefined=strict_undefined,
             strict_params=strict_params,
             stop_at=stop_at,
+            tools=tools,
+            deps=deps,
+            deps_type=deps_type,
+            limits=limits,
             **(extra_kwargs or {}),
         )
         return seg_idx, result, data["system_template"], data["header_template"]
@@ -440,6 +448,10 @@ async def complete_async(
     on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
     on_halt: str = "raise",
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """
     Process a struckdown template with one or more contexts.
@@ -500,6 +512,10 @@ async def complete_async(
                                 strict_params=strict_params,
                                 stop_at=stop_at,
                                 on_halt=on_halt,
+                                tools=tools,
+                                deps=deps,
+                                deps_type=deps_type,
+                                limits=limits,
                             )
                             results[index] = result
                             if on_complete:
@@ -527,6 +543,10 @@ async def complete_async(
             strict_params=strict_params,
             stop_at=stop_at,
             on_halt=on_halt,
+            tools=tools,
+            deps=deps,
+            deps_type=deps_type,
+            limits=limits,
         )
 
 
@@ -547,6 +567,10 @@ def complete(
     on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
     on_halt: str = "raise",
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
     return anyio.run(
@@ -567,6 +591,10 @@ def complete(
             on_complete=on_complete,
             stop_at=stop_at,
             on_halt=on_halt,
+            tools=tools,
+            deps=deps,
+            deps_type=deps_type,
+            limits=limits,
         )
     )
 
@@ -584,6 +612,10 @@ async def complete_incremental_async(
     strict_params: bool = False,
     stop_at: Optional[str] = None,
     on_halt: str = "raise",
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -880,6 +912,10 @@ async def complete_incremental_async(
                     stream=stream,
                     strict_params=strict_params,
                     stop_at=stop_at,
+                    tools=tools,
+                    deps=deps,
+                    deps_type=deps_type,
+                    limits=limits,
                     **(extra_kwargs or {}),
                 ):
                     yield event
@@ -922,7 +958,8 @@ async def complete_incremental_async(
                 if not (len(batch) == 1 and stream):
                     # only yield events here for non-streaming batches
                     for event in events:
-                        all_results[event.slot_key] = event.result
+                        if isinstance(event, SlotCompleted):
+                            all_results[event.slot_key] = event.result
                         yield event
 
                 # Yield checkpoint event
@@ -952,6 +989,8 @@ async def complete_incremental_async(
 
                 # Update context from this segment's results
                 for event in events:
+                    if not isinstance(event, SlotCompleted):
+                        continue
                     escaped_value, _ = escape_struckdown_syntax(
                         event.result.output, var_name=event.slot_key
                     )
@@ -1010,6 +1049,10 @@ def complete_incremental(
     strict_params: bool = False,
     stop_at: Optional[str] = None,
     on_halt: str = "raise",
+    tools=None,
+    deps=None,
+    deps_type=None,
+    limits=None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -1042,6 +1085,10 @@ def complete_incremental(
                 strict_params=strict_params,
                 stop_at=stop_at,
             on_halt=on_halt,
+            tools=tools,
+            deps=deps,
+            deps_type=deps_type,
+            limits=limits,
             )
         ]
 
