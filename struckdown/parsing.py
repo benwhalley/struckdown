@@ -1762,8 +1762,42 @@ def _add_default_completion_if_needed(template: str) -> str:
         return template
 
 
+class TemplateSyntaxError(ValueError):
+    """The template is not valid Jinja, so it can never render."""
+
+
+def validate_jinja_syntax(syntax: str) -> None:
+    """Raise if the template is not parseable Jinja.
+
+    Templates are rendered per segment, deep inside processing, where every
+    exception is caught and turned into an empty result. So a plain typo --
+    Django's ``{% comment %}`` instead of Jinja's ``{# ... #}``, or a
+    comment containing its own terminator -- came back as a successful call
+    with no slots, no LLM request and nothing in the log to look at.
+
+    Bad template syntax is a mistake in the prompt, not a runtime
+    condition, so it belongs here where it stops the run and names itself.
+    """
+    from jinja2 import TemplateSyntaxError as JinjaSyntaxError
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+    try:
+        ImmutableSandboxedEnvironment().parse(syntax)
+    except JinjaSyntaxError as exc:
+        hint = ""
+        if "unknown tag 'comment'" in str(exc):
+            hint = (
+                " -- templates are Jinja, so comments are {# ... #}; Django's"
+                " {% comment %} tag does not exist here."
+            )
+        raise TemplateSyntaxError(
+            f"Template is not valid Jinja (line {exc.lineno}): {exc.message}{hint}"
+        ) from None
+
+
 def parse_syntax(syntax):
     """Parse struckdown syntax into sections"""
+    validate_jinja_syntax(syntax)
     preprocessed = _add_default_completion_if_needed(syntax)
     return parser().parse(preprocessed.strip())
 
