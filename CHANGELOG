@@ -1,6 +1,30 @@
 
 # Changelog
 
+### 0.14.0
+
+**Changed**
+- Tool loops no longer run without a default resource ceiling. Without an
+  explicit `UsageLimits`, each slot is limited to 20 model requests, 20 tool
+  calls and 250,000 output tokens for the run. Template limits may lower the
+  request and tool-call caps but cannot raise them. The token figure is a
+  backstop against a runaway loop rather than a length budget, and is a
+  run-level `output_tokens_limit` rather than a per-request `max_tokens`:
+  pydantic-ai enforces it locally, so unlike a `max_tokens` above a model's
+  own output ceiling it cannot become a provider error.
+- `pydantic-ai` is now required at `>=1.48,<3`. The old `>=0.2.0` floor had
+  not been installable for a long time -- a fresh install at it cannot import
+  struckdown -- and 1.48 is the oldest release whose whole suite passes.
+
+**Fixed**
+- struckdown works with pydantic-ai 2.x. `Agent(prepare_tools=...)` is gone in
+  v2, so the caller's tools are now built as a prepared `FunctionToolset` and
+  passed as `toolsets=`; `AgentRunResult.usage` is read as a property or a
+  method depending on the version. Both paths work unchanged on 1.48 through
+  2.x.
+- The provider-client test no longer names `openai._base_client.httpx`, which
+  openai 3 renamed. The runtime code already handled it.
+
 ### 0.13.0
 
 **Changed**
@@ -29,10 +53,6 @@
   rather than re-gathering.
 
 **Fixed**
-- Tool loops no longer run without a default resource ceiling. Without an
-  explicit `UsageLimits`, each slot is limited to 20 model requests, 20 tool
-  calls and 250,000 output tokens for the run. Template limits may lower the
-  request and tool-call caps but cannot raise them.
 - `<user>`, `<assistant>` and `<header>` are escaped in interpolated values,
   alongside `<system>` and the rest. They were harmless while everything was
   flattened; now that they cut the body into messages, a value carrying one
