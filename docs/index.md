@@ -105,9 +105,9 @@ Recommendation: [[recommendation]]
 ## Python API
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
-result = chatter("""
+result = complete("""
 Analyse this review: {{review}}
 
 Sentiment: [[pick:sentiment|positive,negative,neutral]]

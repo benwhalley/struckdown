@@ -106,7 +106,7 @@ Finally, write a summary:
 
 Free-text slots (`respond`, `speak`, `think`, `extract`, `poem`) are streamed token-by-token by default when using the CLI or the async incremental API. Constrained slots (`pick`, `bool`, `int`, etc.) complete atomically.
 
-Streaming is transparent to template authors -- no syntax changes required. It is controlled by the `stream` parameter on `chatter_incremental_async()` (default: `True` for async, `False` for sync wrapper).
+Streaming is transparent to template authors -- no syntax changes required. It is controlled by the `stream` parameter on `complete_incremental_async()` (default: `True` for async, `False` for sync wrapper).
 
 ## Unsupported Parameters
 
@@ -120,7 +120,7 @@ For stricter handling, enable `strict_params` to raise an error instead:
 
 ```python
 # Python API
-result = chatter(template, strict_params=True)
+result = complete(template, strict_params=True)
 ```
 
 ```bash
@@ -136,17 +136,17 @@ LLM parameters are applied in this priority order (highest to lowest):
 
 1. **Slot-specific overrides**: `[[type:var|temperature=X]]`
 2. **Return type defaults**: `ResponseModel.llm_config`
-3. **Global extra_kwargs**: Passed to `chatter()` function
+3. **Global extra_kwargs**: Passed to `complete()` function
 
 ## Examples
 
 ### Basic usage
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
 # uses default temperature for each type
-result = chatter("""
+result = complete("""
 Extract the quote: "Hello world"
 [[extract:quote]]
 
@@ -165,7 +165,7 @@ Be creative:
 ### With overrides
 
 ```python
-result = chatter("""
+result = complete("""
 Extract carefully with slight flexibility:
 [[extract:quote|temperature=0.1]]
 
@@ -180,7 +180,7 @@ Use a specific model:
 ### With thinking
 
 ```python
-result = chatter("""
+result = complete("""
 Reason deeply about this problem:
 [[think:reasoning|thinking=high]]
 
@@ -192,7 +192,7 @@ Quick classification (no extended reasoning needed):
 ### Cost optimisation
 
 ```python
-result = chatter("""
+result = complete("""
 Simple extraction (cheap, deterministic):
 [[extract:data|model=gpt-4o-mini,temperature=0.0]]
 

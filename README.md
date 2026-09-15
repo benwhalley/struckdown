@@ -26,7 +26,7 @@ sd chat "Tell me a joke: [[joke]]"
 sd chat "[[@search|oranges]]  Provide a 2-3 sentence summary [[summary]]"
 ```
 
-**[→ Full QuickStart Guide](docs/QUICKSTART.md)**
+**[→ Full QuickStart Guide](docs/tutorials/getting-started.md)**
 
 ## What is Struckdown?
 
@@ -149,16 +149,16 @@ Example with parameters:
 ## Documentation
 
 ### Getting Started
-- **[QuickStart](docs/QUICKSTART.md)** -- Get started in 5 minutes
-- **[CLI Usage](docs/CLI_USAGE.md)** -- Complete command reference
+- **[QuickStart](docs/tutorials/getting-started.md)** -- Get started in 5 minutes
+- **[CLI Usage](docs/reference/cli.md)** -- Complete command reference
 
 ### Tutorials
-- **[Building a RAG System](docs/TUTORIAL_RAG.md)** -- Extract → Search → Generate pattern
-- **[Custom Actions](docs/CUSTOM_ACTIONS.md)** -- Extend with Python plugins
+- **[Building a RAG System](docs/tutorials/rag-retrieval.md)** -- Extract → Search → Generate pattern
+- **[Custom Actions](docs/how-to/custom-actions.md)** -- Extend with Python plugins
 
 ### Reference
 - **[Examples](examples/)** -- Real-world examples and test cases
-- **[Security](SECURITY.md)** -- Security guidelines and best practices
+- **[Security](docs/explanation/security.md)** -- Security guidelines and best practices
 
 ## Installation
 
@@ -480,17 +480,17 @@ Note: Patterns must be quoted strings. Use `\\` for literal backslashes.
 Extend Struckdown with Python functions:
 
 ```python
-from struckdown import Actions, chatter
+from struckdown import Actions, complete
 
 @Actions.register('uppercase')
 def uppercase_text(context, text: str):
     return text.upper()
 
 # Use in template - unquoted 'input' is a variable reference
-result = chatter("[[@uppercase:loud|text=input]]", context={"input": "hello"})
+result = complete("[[@uppercase:loud|text=input]]", context={"input": "hello"})
 ```
 
-See **[Custom Actions Guide](docs/CUSTOM_ACTIONS.md)** for details.
+See **[Custom Actions Guide](docs/how-to/custom-actions.md)** for details.
 
 ### System Messages
 

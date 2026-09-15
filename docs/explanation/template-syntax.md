@@ -41,22 +41,22 @@ Slots define where the LLM should produce output. The basic syntax is:
 ### Examples
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
 # Basic completion
-result = chatter("What is the capital of France? [[answer]]")
+result = complete("What is the capital of France? [[answer]]")
 print(result["answer"])  # "Paris"
 
 # Typed boolean
-result = chatter("Is the sky blue? [[bool:is_blue]]")
+result = complete("Is the sky blue? [[bool:is_blue]]")
 print(result["is_blue"])  # True
 
 # Pick from options
-result = chatter("Classify: 'I love it!' [[pick:sentiment|positive,negative,neutral]]")
+result = complete("Classify: 'I love it!' [[pick:sentiment|positive,negative,neutral]]")
 print(result["sentiment"])  # "positive"
 
 # Number with constraints
-result = chatter("Rate 1-10: 'Great product' [[int:score|min=1,max=10]]")
+result = complete("Rate 1-10: 'Great product' [[int:score|min=1,max=10]]")
 print(result["score"])  # 8
 ```
 
@@ -403,14 +403,14 @@ Use custom Pydantic models for complex structured output:
 
 ```python
 from pydantic import BaseModel
-from struckdown import chatter
+from struckdown import complete
 
 class Person(BaseModel):
     name: str
     age: int
     occupation: str
 
-result = chatter("""
+result = complete("""
 Extract person info from: {% raw %}{{text}}{% endraw %}
 [[Person:person]]
 """, context={

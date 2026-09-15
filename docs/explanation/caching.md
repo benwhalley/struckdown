@@ -42,20 +42,23 @@ export STRUCKDOWN_CACHE=false
 ### Detecting Cache Hits
 
 ```python
-from struckdown import chatter, get_run_id
+from struckdown import complete
 
-result = chatter("Tell me a joke [[joke]]")
+result = complete("Tell me a joke [[joke]]")
 
-# Check if response was cached
-for key, segment in result.results.items():
-    if segment.completion:
-        cached = segment.completion.get("_run_id") != get_run_id()
+# Check if a slot's response came from the cache
+for key, slot in result.results.items():
+    if slot.completion:
+        cached = slot.completion.get("_cached", False)
         print(f"{key}: {'cached' if cached else 'fresh'}")
 
 # Aggregate counts
 print(f"Fresh calls: {result.fresh_call_count}")
 print(f"Cached calls: {result.cached_call_count}")
 ```
+
+The incremental API reports the same thing per slot, as
+`SlotCompleted.was_cached`.
 
 
 ## Embedding Caching

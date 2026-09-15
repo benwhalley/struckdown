@@ -23,7 +23,7 @@ Actions allow you to register Python functions that can be called from templates
 ### Register an Action
 
 ```python
-from struckdown import Actions, chatter
+from struckdown import Actions, complete
 
 @Actions.register('uppercase')
 def uppercase_text(context, text: str):
@@ -31,7 +31,7 @@ def uppercase_text(context, text: str):
     return text.upper()
 
 # Use in template with literal string (quoted)
-result = chatter('[[@uppercase:loud|text="hello world"]]')
+result = complete('[[@uppercase:loud|text="hello world"]]')
 print(result['loud'])  # "HELLO WORLD"
 ```
 
@@ -60,7 +60,7 @@ def greet(context, name: str, greeting: str = "Hello"):
     return f"{greeting}, {name}!"
 
 # Use it with literal values (quoted strings)
-chatter('[[@greet:message|name="Alice",greeting="Hi"]]')
+complete('[[@greet:message|name="Alice",greeting="Hi"]]')
 # Output: "Hi, Alice!"
 ```
 
@@ -77,7 +77,7 @@ Extract name: [[name]]
 Greet them: [[@greet:greeting|name=name]]
 """
 
-result = chatter(template, context={"input": "My name is Bob"})
+result = complete(template, context={"input": "My name is Bob"})
 print(result['greeting'])  # "Hello, Bob!"
 ```
 
@@ -120,7 +120,7 @@ def multiply(context, value: int, factor: int = 2):
     return str(value * factor)
 
 # String "10" is automatically converted to int 10
-chatter("[[@multiply:result|value=10,factor=5]]")
+complete("[[@multiply:result|value=10,factor=5]]")
 # Output: "50"
 ```
 
@@ -220,7 +220,7 @@ def search(context, query: str):
 ### RAG with Vector Search
 
 ```python
-from struckdown import Actions, chatter
+from struckdown import Actions, complete
 import chromadb
 
 # Initialize your vector database
@@ -256,7 +256,7 @@ Answer the question: {{question}}
 [[answer]]
 """
 
-result = chatter(template, context={"question": "How do I use actions?"})
+result = complete(template, context={"question": "How do I use actions?"})
 ```
 
 ### Database Query

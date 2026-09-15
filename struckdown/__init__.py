@@ -1128,8 +1128,6 @@ __all__ = [
     # Main entry points
     "complete",
     "complete_async",
-    "complete_many",
-    "complete_many_async",
     "complete_incremental",
     "complete_incremental_async",
     "structured_chat",

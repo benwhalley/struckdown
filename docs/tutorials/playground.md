@@ -256,15 +256,27 @@ export LLM_TIMEOUT=60  # seconds
 
 In remote mode, consider restricting which actions are available:
 
-```python
-# Disable potentially dangerous actions
-from struckdown.actions import ACTION_LOOKUP
+The playground already enforces this: an action is available in remote mode
+only if it was registered with `allow_remote_use=True` (the default), and the
+playground refuses a template that uses one that was not.
 
-# Remove web fetch action for public deployments
-if "fetch" in ACTION_LOOKUP:
-    del ACTION_LOOKUP["fetch"]
-if "search" in ACTION_LOOKUP:
-    del ACTION_LOOKUP["search"]
+```python
+from struckdown.actions import Actions
+
+Actions.get_remote_allowed_actions()   # ['evidence', 'history', 'markdownify',
+                                       #  'noop', 'set', 'timestamp']
+Actions.is_allowed_remote("fetch")     # False
+```
+
+Register a custom action the same way when it should not run on a public
+deployment:
+
+```python
+from struckdown.actions import Actions
+
+@Actions.register("internal_lookup", allow_remote_use=False)
+def internal_lookup(context, key: str):
+    ...
 ```
 
 **6. API Key Handling**

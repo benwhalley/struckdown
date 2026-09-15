@@ -156,7 +156,7 @@ sd batch test*.txt "Price: [[number:price]]"
 
 ## Documentation
 
-- **[QuickStart](../docs/QUICKSTART.md)** -- Get started quickly
-- **[CLI Usage](../docs/CLI_USAGE.md)** -- Command reference
-- **[Custom Actions](../docs/CUSTOM_ACTIONS.md)** -- Python plugins
+- **[QuickStart](../docs/tutorials/getting-started.md)** -- Get started quickly
+- **[CLI Usage](../docs/reference/cli.md)** -- Command reference
+- **[Custom Actions](../docs/how-to/custom-actions.md)** -- Python plugins
 - **[Main README](../README.md)** -- Project overview

@@ -21,14 +21,14 @@ Cost information flows from the underlying API responses through litellm's prici
 - Token counts are always available, even when cost is unknown
 
 
-## ChatterResult Cost Properties
+## StruckdownResult Cost Properties
 
-When you call `chatter()` or `chatter_async()`, the returned `ChatterResult` provides cost information:
+When you call `complete()` or `complete_async()`, the returned `StruckdownResult` provides cost information:
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
-result = chatter("Tell me a joke [[joke]]")
+result = complete("Tell me a joke [[joke]]")
 
 # Token counts
 result.prompt_tokens      # input tokens across all segments
@@ -57,7 +57,7 @@ Cost may be unknown when:
 - The API response doesn't include usage information
 
 ```python
-result = chatter("...")
+result = complete("...")
 
 if result.has_unknown_costs:
     print(f"Cost is at least ${result.total_cost:.4f} (some unknown)")
@@ -116,7 +116,7 @@ For aggregating costs across multiple operations, use `CostSummary`:
 ```python
 from struckdown import CostSummary
 
-# Aggregate multiple ChatterResults
+# Aggregate multiple StruckdownResults
 summary = CostSummary.from_results([result1, result2, result3])
 
 summary.total_cost        # combined cost

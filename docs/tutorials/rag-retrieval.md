@@ -20,7 +20,7 @@ Learn the "Extract → Search → Generate" pattern for building RAG systems wit
 ### Register the Action
 
 ```python
-from struckdown import Actions, chatter
+from struckdown import Actions, complete
 
 @Actions.register('search_docs', on_error='return_empty')
 def search_docs(context, query: str, n: int = 3):
@@ -59,7 +59,7 @@ Context: {{context}}
 Answer the question: [[answer]]
 """
 
-result = chatter(template)
+result = complete(template)
 print(result['answer'])
 ```
 

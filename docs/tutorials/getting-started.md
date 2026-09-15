@@ -205,9 +205,9 @@ sd batch feedback/*.txt -p feedback_classifier.sd -o analysis.xlsx
 Use struckdown programmatically:
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
-result = chatter("""
+result = complete("""
 Analyse this customer review:
 {{review}}
 
@@ -225,12 +225,12 @@ print(result.total_cost)    # 0.0001 (USD)
 For async processing:
 
 ```python
-from struckdown import chatter_async
+from struckdown import complete_async
 import asyncio
 
 async def process_many(reviews):
     tasks = [
-        chatter_async("Sentiment: [[pick:sentiment|pos,neg]] {{r}}", context={"r": r})
+        complete_async("Sentiment: [[pick:sentiment|pos,neg]] {{r}}", context={"r": r})
         for r in reviews
     ]
     return await asyncio.gather(*tasks)

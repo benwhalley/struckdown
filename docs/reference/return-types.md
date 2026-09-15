@@ -165,7 +165,7 @@ Pass Pydantic models in the context to use complex types:
 ```python
 from pydantic import BaseModel, Field
 from typing import List
-from struckdown import chatter
+from struckdown import complete
 
 class Person(BaseModel):
     name: str
@@ -176,7 +176,7 @@ class Team(BaseModel):
     name: str
     members: List[Person]
 
-result = chatter("""
+result = complete("""
 Extract the team information:
 
 {{text}}
@@ -208,7 +208,7 @@ class Company(BaseModel):
     address: Address
     employee_count: int
 
-result = chatter("""
+result = complete("""
 Extract company info: {{text}}
 [[Company:company]]
 """, context={
@@ -307,10 +307,10 @@ If the LLM response cannot be parsed into the requested type:
 2. If all retries fail, raises a validation error
 
 ```python
-from struckdown import chatter
+from struckdown import complete
 
 try:
-    result = chatter("Give me a number [[int:num]]")
+    result = complete("Give me a number [[int:num]]")
 except Exception as e:
     print(f"Failed to parse: {e}")
 ```

@@ -15,18 +15,20 @@ Struckdown: markdown-like syntax for structured LLM conversations. Uses `[[slot]
 
 ## Architecture
 
-- `__init__.py`: Public API -- `chatter()` / `chatter_async()` process templates through segments
+- `__init__.py`: Public API -- `complete()` / `complete_async()` process templates through
+  segments; `complete_incremental()` / `complete_incremental_async()` yield events as they go
 - `parsing.py`: Lark grammar parser (`grammar.lark`) transforms templates into PromptPart AST
 - `segment_processor.py`: Delta-based processing -- re-renders Jinja after each slot completion
 - `execution.py`: Dependency graph resolution and parallel LLM calls
 - `sd_cli.py`: Typer CLI (`sd chat`, `sd batch`, `sd check`, `sd graph`, `sd flat`)
-- `actions/`: Extensible action registry (`@action` syntax) -- see `docs/CUSTOM_ACTIONS.md`
+- `actions/`: Extensible action registry (`@action` syntax) -- see `docs/how-to/custom-actions.md`
 - `types/`: YAML-defined response types (loaded by `type_loader.py`)
 
 ## Key Syntax
 
 - `[[type:var]]` -- typed completion slot (bool, number, date, pick, extract)
-- `[[@action:var|params]]` -- action call (fetch, break, set, etc.)
+- `[[@action:var|params]]` -- action call (fetch, search, set, timestamp, etc.)
+- `[[halt:var]]` -- guard: an LLM-judged condition that stops the run
 - `<system>` / `<system local>` -- system messages (global vs segment-scoped)
 - `<checkpoint>` -- memory boundary, only extracted vars carry forward
 - `{% include 'file.sd' %}` -- Jinja2 includes
