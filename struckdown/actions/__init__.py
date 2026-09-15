@@ -36,7 +36,7 @@ from readability import Document
 
 from struckdown.return_type_models import LLMConfig, ResponseModel
 
-MessageRole = Literal["user", "assistant", "system"]
+MessageRole = Literal["user", "assistant", "system", "tool"]
 
 
 class MessageList(list):
@@ -45,6 +45,12 @@ class MessageList(list):
     When an action returns a MessageList, each message is added to the
     conversation history with its specified role, instead of a single message
     with the default role.
+
+    This is the only way tool traffic re-enters a conversation. An assistant
+    message may carry ``tool_calls`` and a ``tool`` message answers one by
+    ``tool_call_id``, in the shape :mod:`struckdown.messages` reads -- so a
+    caller that stored ``to_openai_messages(result.all_messages())`` after one
+    turn can hand it straight back on the next.
 
     Example:
         @Actions.register('turns', default_save=False)
@@ -64,8 +70,10 @@ class MessageList(list):
                 raise TypeError(f"MessageList items must be dicts, got {type(msg)}")
             if "content" not in msg:
                 raise ValueError("MessageList items must have 'content' key")
-            if msg.get("role") not in ("user", "assistant", "system"):
+            if msg.get("role") not in ("user", "assistant", "system", "tool"):
                 raise ValueError(f"Invalid role: {msg.get('role')}")
+            if msg["role"] == "tool" and not msg.get("tool_call_id"):
+                raise ValueError("A tool message needs the tool_call_id it answers")
 
     def __str__(self) -> str:
         """Concatenate all message contents for string representation."""

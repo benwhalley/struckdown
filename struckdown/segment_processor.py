@@ -943,9 +943,12 @@ async def process_segment_with_delta_incremental(
 
         # Handle MessageList (multi-message) vs single value returns
         if isinstance(extracted_value, MessageList):
-            # Action returned multiple messages - add each with its role
+            # Action returned multiple messages - add each with its role.
+            # Copied whole: a carried assistant turn brings its ``tool_calls``
+            # and a tool result its ``tool_call_id``, and a tool result whose
+            # call has been dropped is rejected by the provider.
             for msg in extracted_value:
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                messages.append(dict(msg))
             # For context storage, use string representation
             completion_str = str(extracted_value)
         else:

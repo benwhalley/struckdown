@@ -149,6 +149,15 @@ def escape_struckdown_syntax(value: Any, var_name: str = "") -> tuple[Any, bool]
         ("</obliviate>", "</\u200bobliviate>"),
         ("<break", "<\u200bbreak"),
         ("</break>", "</\u200bbreak>"),
+        # Role tags. These are structural -- they cut the rendered body into
+        # separate messages -- so a value carrying one could forge a turn, or
+        # put its own words in the operator's mouth.
+        ("<user", "<\u200buser"),
+        ("</user>", "</\u200buser>"),
+        ("<assistant", "<\u200bassistant"),
+        ("</assistant>", "</\u200bassistant>"),
+        ("<header", "<\u200bheader"),
+        ("</header>", "</\u200bheader>"),
         ("[[", "[\u200b["),
     ]
 

@@ -51,6 +51,7 @@ from .incremental import (CheckpointReached, IncrementalEvent, ThinkingDelta,
 # Import internal modules for complete implementation
 from .errors import Halted
 from .jinja_analysis import TemplateAnalysis, analyze_template
+from .messages import to_openai_messages, to_pydantic_messages
 from .segment_processor import readonly
 # Re-export from jinja_utils module
 from .jinja_utils import (SilentUndefined, escape_context_dict,
@@ -279,7 +280,8 @@ async def _complete_single_async(
             rendered_system = env.from_string(data["system_template"]).render(
                 **ctx_snapshot
             )
-            local_globals.append(rendered_system)
+            if rendered_system.strip():
+                local_globals.append(rendered_system)
 
         if data["header_template"]:
             env = ImmutableSandboxedEnvironment(
@@ -288,7 +290,8 @@ async def _complete_single_async(
             rendered_header = env.from_string(data["header_template"]).render(
                 **ctx_snapshot
             )
-            local_header_globals.append(rendered_header)
+            if rendered_header.strip():
+                local_header_globals.append(rendered_header)
 
         logger.debug(
             f"Segment {seg_idx} analysis: "
@@ -807,7 +810,8 @@ async def complete_incremental_async(
             rendered_system = env.from_string(data["system_template"]).render(
                 **ctx_snapshot
             )
-            local_globals.append(rendered_system)
+            if rendered_system.strip():
+                local_globals.append(rendered_system)
 
         if data["header_template"]:
             env = ImmutableSandboxedEnvironment(
@@ -816,7 +820,8 @@ async def complete_incremental_async(
             rendered_header = env.from_string(data["header_template"]).render(
                 **ctx_snapshot
             )
-            local_header_globals.append(rendered_header)
+            if rendered_header.strip():
+                local_header_globals.append(rendered_header)
 
         events = []
         async for event in process_segment_with_delta_incremental(
@@ -1016,7 +1021,10 @@ async def complete_incremental_async(
         return
 
     except Exception as e:
-        logger.error(f"Incremental processing error: {e}")
+        # exception(), not error(): this catches anything the run raised,
+        # including bugs that have nothing to do with the model, and one line
+        # of str(e) is not enough to find them from.
+        logger.exception(f"Incremental processing error: {e}")
         # Half-streamed slots are on screen and will never be completed.
         # Tell the consumer to drop them before reporting the error.
         for slot_key, seg_idx in streaming_slots.items():
@@ -1109,6 +1117,9 @@ __all__ = [
     "complete_incremental",
     "complete_incremental_async",
     "structured_chat",
+    # Conversation storage
+    "to_openai_messages",
+    "to_pydantic_messages",
     "get_embedding",
     "get_embedding_async",
     "get_cross_encoder_scores",

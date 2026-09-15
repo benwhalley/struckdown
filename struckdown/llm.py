@@ -285,6 +285,7 @@ from .errors import BadRequestError as SDBadRequestError
 from .errors import ConnectionError as SDConnectionError
 from .errors import ContentFilterError, ContextWindowError, LLMError
 from .errors import RateLimitError as SDRateLimitError
+from .messages import split_for_agent, to_openai_messages
 
 
 def _classify_http_error_body(error_msg: str) -> Optional[str]:
@@ -853,7 +854,11 @@ def _is_fatal_http_error(error: Exception) -> bool:
 
 
 def _build_pydantic_ai_agent(
-    return_type, llm: "LLM", credentials: "LLMCredentials", mode: str = "tool",
+    return_type,
+    llm: "LLM",
+    credentials: "LLMCredentials",
+    mode: str = "tool",
+    instructions: str = "",
 ) -> Agent:
     """Build a pydantic-ai Agent for structured output extraction.
 
@@ -861,37 +866,22 @@ def _build_pydantic_ai_agent(
         mode: "tool" (default) uses tool calling; "prompted" injects the JSON
               schema into the prompt text instead -- works with models that
               don't reliably follow tool calls.
+        instructions: the template's ``<system>`` text, sent as instructions
+              rather than as a message. See :func:`struckdown.messages.split_for_agent`.
     """
     model = llm.get_pydantic_model(credentials)
+    kwargs = {"retries": 2, "instructions": instructions or None}
     if mode == "prompted":
-        return Agent(model, output_type=PromptedOutput(return_type), retries=2)
-    return Agent(model, output_type=return_type, retries=2)
+        return Agent(model, output_type=PromptedOutput(return_type), **kwargs)
+    return Agent(model, output_type=return_type, **kwargs)
 
 
-def _messages_to_user_prompt(messages: List[Dict[str, str]]) -> str:
-    """Convert OpenAI-format message list to a single user prompt string.
-
-    Pydantic-ai Agent.run() takes a user_prompt string. System messages are
-    prepended. Multi-turn conversations are flattened with role labels.
-    """
-    system_parts = []
-    conversation_parts = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        if role == "system":
-            system_parts.append(content)
-        elif role == "assistant":
-            conversation_parts.append(f"[assistant]: {content}")
-        else:
-            conversation_parts.append(content)
-
-    parts = []
-    if system_parts:
-        parts.append("\n\n".join(system_parts))
-    if conversation_parts:
-        parts.append("\n\n".join(conversation_parts))
-    return "\n\n".join(parts)
+def _prompt_repr(messages: List[Dict[str, str]]) -> str:
+    """The turn a caller sees quoted back in an error: the last thing asked."""
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return message.get("content") or ""
+    return ""
 
 
 def _build_completion_dict(
@@ -1140,10 +1130,14 @@ def _without_sampling_params(model: PydanticAIModel, settings: ModelSettings) ->
     )
 
 
-def _run_agent_sync(agent: Agent, user_prompt: str, settings: ModelSettings):
+def _run_agent_sync(
+    agent: Agent, user_prompt: str, settings: ModelSettings, history=None
+):
     """Run a pydantic-ai agent synchronously. Returns (output, model_response, cost)."""
     settings = _without_sampling_params(agent.model, settings)
-    result = agent.run_sync(user_prompt, model_settings=settings)
+    result = agent.run_sync(
+        user_prompt, model_settings=settings, message_history=history or None
+    )
     # get the last model response for usage
     last_response = None
     for msg in reversed(result.all_messages()):
@@ -1196,19 +1190,21 @@ def _call_llm_cached(
               file=sys.stderr)
         print("=" * 80 + "\n", file=sys.stderr)
 
-    user_prompt = _messages_to_user_prompt(messages)
-    prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+    instructions, history, user_prompt = split_for_agent(messages)
+    prompt_repr = _prompt_repr(messages)
 
     # try tool mode first, fall back to prompted mode if the model can't
     # handle tool calling (e.g. returns text instead of a tool call)
     effort_retried = False
     for mode in ("tool", "prompted"):
-        agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
+        agent = _build_pydantic_ai_agent(
+            return_type, llm, credentials, mode=mode, instructions=instructions
+        )
         mode_succeeded = False
         while True:
             try:
                 output, model_response, run_cost = _run_agent_sync(
-                    agent, user_prompt, settings
+                    agent, user_prompt, settings, history
                 )
                 mode_succeeded = True
                 break
@@ -1508,8 +1504,8 @@ async def structured_chat_async(
         call_kwargs, strict=strict_params, model_name=llm.model_name
     )
 
-    user_prompt = _messages_to_user_prompt(messages)
-    prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
+    instructions, history, user_prompt = split_for_agent(messages)
+    prompt_repr = _prompt_repr(messages)
 
     # debounce: configurable via extra_kwargs, default 200ms for responsive feel
     debounce_s = (extra_kwargs or {}).get("stream_debounce_ms", 200) / 1000.0
@@ -1518,7 +1514,9 @@ async def structured_chat_async(
     streaming_failed = False
     effort_retried = False
     for mode in ("tool", "prompted"):
-        agent = _build_pydantic_ai_agent(return_type, llm, credentials, mode=mode)
+        agent = _build_pydantic_ai_agent(
+            return_type, llm, credentials, mode=mode, instructions=instructions
+        )
         mode_succeeded = False
         while True:
             prev_text = ""
@@ -1529,6 +1527,7 @@ async def structured_chat_async(
                 async with agent.run_stream(
                     user_prompt,
                     model_settings=_without_sampling_params(agent.model, settings),
+                    message_history=history or None,
                 ) as stream:
                     async for partial in stream.stream_output(debounce_by=debounce_s):
                         final_output = partial
@@ -2423,10 +2422,13 @@ async def run_agent_with_tools(
 
     wrapped = [_instrumented_tool(t, on_tool_event) for t in (tools or [])]
 
+    instructions, history, user_prompt = split_for_agent(messages)
+
     agent_kwargs = {
         "output_type": return_type,
         "retries": 2,
         "tools": wrapped,
+        "instructions": instructions or None,
     }
     if deps_type is not None:
         agent_kwargs["deps_type"] = deps_type
@@ -2435,9 +2437,10 @@ async def run_agent_with_tools(
 
     agent = Agent(model, **agent_kwargs)
 
-    user_prompt = _messages_to_user_prompt(messages)
     started = _time.monotonic()
     run_kwargs = {"usage_limits": clamp_limits(limits, max_iter, max_calls)}
+    if history:
+        run_kwargs["message_history"] = history
     if deps is not None:
         run_kwargs["deps"] = deps
     if settings:
@@ -2594,6 +2597,16 @@ def _instrumented_tool(tool, on_tool_event):
     return wrapper
 
 
+def _new_messages(result):
+    """Messages this run produced, excluding any history it was given.
+
+    ``new_messages()`` where the result has it; a streamed run exposes the same
+    thing and both are safe to call more than once.
+    """
+    getter = getattr(result, "new_messages", None)
+    return getter() if callable(getter) else result.all_messages()
+
+
 def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
     """Usage and reasoning for a whole agent run, not one request.
 
@@ -2627,6 +2640,11 @@ def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
         "_thinking": "\n\n".join(thinking_steps) or None,
         "_thinking_steps": thinking_steps,
         "_all_messages": result.all_messages(),
+        # This run only, in the storable shape: the prompt, the calls it made,
+        # what came back and the answer -- without the history it was handed,
+        # which the caller already has. What a conversation keeps between
+        # turns, so the next one carries its own gathering.
+        "_messages": to_openai_messages(_new_messages(result)),
         "_elapsed_ms": elapsed_ms,
         "_cached": False,
     }

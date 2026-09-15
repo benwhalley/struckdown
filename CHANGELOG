@@ -1,6 +1,45 @@
 
 # Changelog
 
+### 0.13.0
+
+**Changed**
+- Requests carry real roles again. Since v0.6 (`switch to pydantic backend`)
+  every path flattened the message list into a single `user` message --
+  `<system>` text concatenated on the front, earlier turns pasted in behind
+  `[assistant]:` labels -- because `Agent.run()` takes a string and the port
+  never came back to it. The system block is now passed as pydantic-ai
+  `instructions` and earlier turns as `message_history`, so a template's roles
+  reach the provider as roles. This affects every prompt: few-shot `<user>` /
+  `<assistant>` pairs now function as prior turns rather than as narrated text,
+  operator instructions regain the standing a system message has, and a
+  trailing `<assistant>` block acts as prefill. Expect output to move on
+  prompts written against the flattened reading.
+- `MessageList` accepts a `tool` role, so an action can put tool calls and
+  their results back into a conversation. An assistant message may carry
+  `tool_calls` and a tool message answers one by `tool_call_id` -- the shape
+  every provider already speaks. A tool message without a `tool_call_id` is
+  rejected at construction.
+
+**Added**
+- `to_openai_messages()` / `to_pydantic_messages()` convert between stored
+  dicts and pydantic-ai's types. A completed tool slot now carries `_messages`
+  -- that run's prompt, calls, results and answer, excluding any history it was
+  handed -- so a caller can store a turn and hand it back on the next one
+  rather than re-gathering.
+
+**Fixed**
+- `<user>`, `<assistant>` and `<header>` are escaped in interpolated values,
+  alongside `<system>` and the rest. They were harmless while everything was
+  flattened; now that they cut the body into messages, a value carrying one
+  could forge a turn or put its own words in the operator's mouth.
+- A `<system>` or `<header>` block that renders to nothing no longer appends an
+  empty message.
+- A run that dies inside `complete_incremental_async` logs its traceback rather
+  than one line of `str(e)`. The `ProcessingError` event it emits is unchanged,
+  but a consumer that ignores that event saw a run end quietly with no answer
+  and nothing in the log to find the cause from.
+
 ### 0.12.2
 
 **Fixed**

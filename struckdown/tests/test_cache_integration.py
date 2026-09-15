@@ -68,7 +68,7 @@ def mock_llm():
     """
     call_count = {"count": 0}
 
-    def mock_run_agent_sync(agent, user_prompt, settings):
+    def mock_run_agent_sync(agent, user_prompt, settings, history=None):
         call_count["count"] += 1
         content = user_prompt[:50] if user_prompt else ""
         response_text = f"Mock response to: {content}"
