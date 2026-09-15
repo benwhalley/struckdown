@@ -2343,26 +2343,35 @@ def clamp_limits(ceiling, max_iter=None, max_calls=None):
     if calls is not None:
         kwargs["tool_calls_limit"] = calls
     for field in ("input_tokens_limit", "output_tokens_limit", "total_tokens_limit"):
-        value = getattr(ceiling, field, None)
+        value = getattr(ceiling, field, None) if ceiling else None
         if value is not None:
             kwargs[field] = value
     return UsageLimits(**kwargs) if kwargs else None
 
 
-def _drop_tools_on_final_round(max_iter):
-    """A ``prepare_tools`` hook that empties the tool list on the last round.
+def _tool_toolset(tools, max_iter):
+    """The caller's tools as a toolset, empty on the last round.
 
-    This is how "send the final request without tools" is expressed to
-    pydantic-ai. The output tool stays -- it is what produces the answer -- so
-    the model can still finish, it just cannot start more gathering.
+    Emptying the list is how "send the final request without tools" is
+    expressed to pydantic-ai. Only the caller's tools are in here, so the
+    output tool -- which is what produces the answer -- is untouched: the model
+    can still finish, it just cannot start more gathering.
+
+    A toolset rather than ``tools=``/``prepare_tools=`` because pydantic-ai v2
+    dropped the ``prepare_tools`` argument; ``.prepared()`` is the same hook by
+    another name, and is available across v1 and v2 alike. ``max_retries``
+    matches the agent's own ``retries``, which ``tools=`` used to apply for us.
     """
+    from pydantic_ai.toolsets import FunctionToolset
+
+    toolset = FunctionToolset(tools, max_retries=2)
+    if max_iter is None:
+        return toolset
 
     async def prepare(ctx, tool_defs):
-        if max_iter is not None and ctx.run_step >= max_iter:
-            return []
-        return tool_defs
+        return [] if ctx.run_step >= max_iter else tool_defs
 
-    return prepare
+    return toolset.prepared(prepare)
 
 
 
@@ -2448,13 +2457,11 @@ async def run_agent_with_tools(
     agent_kwargs = {
         "output_type": return_type,
         "retries": 2,
-        "tools": wrapped,
         "instructions": instructions or None,
     }
     if deps_type is not None:
         agent_kwargs["deps_type"] = deps_type
-    if max_iter is not None:
-        agent_kwargs["prepare_tools"] = _drop_tools_on_final_round(max_iter)
+    agent_kwargs["toolsets"] = [_tool_toolset(wrapped, max_iter)]
 
     agent = Agent(model, **agent_kwargs)
 
@@ -2628,6 +2635,12 @@ def _new_messages(result):
     return getter() if callable(getter) else result.all_messages()
 
 
+def _run_usage(result):
+    """Usage for a whole run. A method in pydantic-ai v1, a property in v2."""
+    usage = result.usage
+    return usage() if callable(usage) else usage
+
+
 def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
     """Usage and reasoning for a whole agent run, not one request.
 
@@ -2636,7 +2649,7 @@ def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
     is -- and every ThinkingPart is kept in order, so a caller can show what the
     model was reasoning about between calls rather than only at the end.
     """
-    usage = result.usage()
+    usage = _run_usage(result)
     input_tokens = getattr(usage, "input_tokens", 0) or 0
     output_tokens = getattr(usage, "output_tokens", 0) or 0
 

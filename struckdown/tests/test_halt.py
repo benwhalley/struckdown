@@ -230,12 +230,17 @@ class ProviderClientTests(unittest.TestCase):
     """
 
     def test_the_client_is_the_one_openai_validates_against(self):
-        import openai._base_client as openai_base
+        import openai
 
         from struckdown.llm import _provider_http_client
 
+        # Ask openai to accept it rather than naming the class it wants:
+        # which module that is moved between openai 2 and 3, the contract
+        # that it type-checks the client at construction did not.
         client = _provider_http_client(follow_redirects=True)
-        self.assertIsInstance(client, openai_base.httpx.AsyncClient)
+        openai.AsyncOpenAI(
+            api_key="x", base_url="https://example.invalid/v1", http_client=client
+        )
 
 
 class GuardIsolationTests(unittest.TestCase):
