@@ -515,5 +515,19 @@ class RealWorldExampleTestCase(unittest.TestCase):
         Actions._registry = self._saved_registry
 
 
+class BreakRemovedTestCase(unittest.TestCase):
+    """@break was removed in favour of [[halt:...]]."""
+
+    def test_break_is_not_registered(self):
+        self.assertNotIn("break", Actions.list_registered())
+
+    def test_a_template_using_break_warns_and_no_ops(self):
+        with self.assertWarns(UserWarning) as caught:
+            sections = parse_syntax('Hi [[@break|reason="done"]] [[after]]')
+
+        self.assertIn("@break", str(caught.warning))
+        self.assertEqual(sections[0]["break"].action_type, "noop")
+
+
 if __name__ == "__main__":
     unittest.main()

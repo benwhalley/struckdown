@@ -24,6 +24,7 @@ from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, LLMError,
                TemplateError, __version__, complete, complete_async,
                get_embedding, progress_tracking, structured_chat)
 from .actions import discover_actions, load_actions
+from .errors import Halted
 from .output_formatters import render_template, write_output
 from .parsing import find_slots_with_positions
 from .type_loader import discover_yaml_types, load_yaml_types
@@ -197,7 +198,7 @@ async def _run_chat_incremental(
     show_context: bool,
     stream: bool = True,
     strict_params: bool = False,
-) -> tuple["StruckdownResult", Optional["SlotResult"]]:
+) -> "StruckdownResult":
     """Process prompt incrementally, printing results as slots complete.
 
     When stream=True, free-text slots are streamed word-by-word to the console.
@@ -214,7 +215,6 @@ async def _run_chat_incremental(
                               SlotStreamStart, TokenDelta)
     from .results import StruckdownResult
 
-    break_result = None
     final_result = None
     slot_count = 0
     streaming_slot = None  # track which slot is currently streaming
@@ -251,21 +251,13 @@ async def _run_chat_incremental(
                 sys.stderr.flush()
                 streaming_slot = None
                 # don't re-print the output -- it was already streamed
-                # but still handle break/history
-                if seg_result.action == "break":
-                    break_result = seg_result
-                    continue
+                # but still handle history
                 if event.slot_key == "history":
                     continue
 
                 # verbose headers
                 if verbose >= 1:
                     typer.echo(f"  [{event.elapsed_ms:.0f}ms]", err=True)
-                continue
-
-            # Skip break action (handle at end)
-            if seg_result.action == "break":
-                break_result = seg_result
                 continue
 
             # Skip history slot
@@ -320,7 +312,7 @@ async def _run_chat_incremental(
                 streaming_slot = None
             raise LLMError(Exception(event.error_message), prompt_str, model.model_name)
 
-    return final_result, break_result
+    return final_result
 
 
 DEFAULT_HISTORY_FILE = Path(".struckdown-chat-history")
@@ -386,7 +378,6 @@ async def _run_chat_interactive(
         while True:
             # Run the prompt
             final_result = None
-            break_result = None
 
             async for event in complete_incremental_async(
                 multipart_prompt=prompt_str,
@@ -399,10 +390,6 @@ async def _run_chat_interactive(
             ):
                 if isinstance(event, SlotCompleted):
                     seg_result = event.result
-
-                    if seg_result.action == "break":
-                        break_result = seg_result
-                        continue
 
                     # Skip history slot in output
                     if event.slot_key == "history":
@@ -465,10 +452,6 @@ async def _run_chat_interactive(
                 history_messages.append(
                     {"role": "assistant", "content": str(assistant_response)}
                 )
-
-            if break_result:
-                typer.echo("\n(conversation ended)")
-                break
 
             # Get user input
             try:
@@ -811,7 +794,7 @@ def chat(
             return  # Exit after interactive session
         else:
             # Single-run mode (existing behaviour)
-            result, break_result = anyio.run(
+            result = anyio.run(
                 partial(
                     _run_chat_incremental,
                     prompt_str,
@@ -848,18 +831,21 @@ def chat(
         if verbose:
             typer.echo("\n" + traceback.format_exc(), err=True)
         raise typer.Exit(1)
-
-    # Show break notice if execution was terminated
-    if break_result:
+    except Halted as halted:
+        # a halt slot tripped: show what ran before the guard fired, then stop
+        result = halted.results
         if verbose:
-            typer.echo("=" * 80)
-            typer.echo("\033[1m⚠ EXECUTION TERMINATED BY BREAK\033[0m")
-            if break_result.output:
-                typer.echo(f"\033[1mReason:\033[0m {break_result.output}")
-            typer.echo("=" * 80 + "\n")
+            typer.echo("=" * 80, err=True)
+            typer.echo("\033[1m⚠ HALTED\033[0m", err=True)
+            typer.echo(f"\033[1mSlot:\033[0m [[halt:{halted.slot}]]", err=True)
+            if halted.reason:
+                typer.echo(f"\033[1mReason:\033[0m {halted.reason}", err=True)
+            typer.echo("=" * 80 + "\n", err=True)
         else:
             typer.echo(
-                f"\n\033[1m⚠ Break:\033[0m {break_result.output or 'execution terminated'}"
+                f"\n\033[1m⚠ Halted\033[0m at [[halt:{halted.slot}]]"
+                + (f": {halted.reason}" if halted.reason else ""),
+                err=True,
             )
 
     if show_context:

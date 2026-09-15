@@ -305,7 +305,6 @@ def _highlight_unparsed_content(text: str) -> str:
     """
     # patterns for elements that should be highlighted (order matters - more specific first)
     patterns = [
-        ("break", r"\[\[@break[^\]]*\]\]"),  # break action - red
         ("action", r"\[\[@[^\]]*\]\]"),  # other actions - purple
         ("placeholder", r"\[\[[^\]]*\]\]"),  # slots - green
         ("template-var", r"\{\{[^}]+\}\}"),  # template vars - pink
@@ -452,15 +451,6 @@ def render_preview_html(text: str, filename: str = "preview") -> str:
             border-radius: 4px;
             padding: 2px 6px;
             border: 1px solid #d1c4e9;
-        }}
-        /* break action [[@break]] - red */
-        .sd-break {{
-            background: #FCDCDC;
-            color: #F23030;
-            font-weight: bold;
-            border-radius: 4px;
-            padding: 2px 6px;
-            border: 1px solid #f5c6cb;
         }}
         /* template variables {{...}} - pink */
         .sd-template-var {{

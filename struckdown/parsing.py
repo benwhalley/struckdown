@@ -500,8 +500,6 @@ PromptPart = namedtuple(
         "has_explicit_var",
         "line_number",  # Line number in source file where completion is defined
         "block",  # If True, all subsequent segments depend on this completion's segment
-        "is_break",  # If True, this is a break tag (early termination)
-        "break_message",  # Optional message for break tag
         "together_group",  # If set, slots with same group ID are evaluated simultaneously
     ],
 )
@@ -520,7 +518,6 @@ def get_completion_type(prompt_part: PromptPart) -> str:
         Type name string (e.g., 'think', 'pick', 'respond', 'action')
     """
     # custom actions (registered via @Actions.register)
-    # Note: break is now an action [[@break|msg]], not a special tag
     if prompt_part.is_function:
         return "action"
 
@@ -1039,8 +1036,6 @@ class MindframeTransformer(Transformer):
             has_explicit_var=body.get("has_explicit_var", True),
             line_number=body.get("line_number", 0),
             block=block,
-            is_break=False,
-            break_message=None,
             together_group=self._get_current_together_group(),
         )
         self.current_parts.append((body["key"], part))

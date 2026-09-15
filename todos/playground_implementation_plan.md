@@ -623,7 +623,7 @@ async def run_batch_streaming(
 ## Security (Remote Mode)
 
 1. **Action Whitelist:** Only allow safe built-in actions
-   - Allowed: `@set`, `@break`, `@timestamp`
+   - Allowed: `@set`, `@timestamp`
    - Blocked: `@fetch`, `@search` (could be enabled with rate limiting)
 
 2. **Rate Limiting:** Flask-Limiter

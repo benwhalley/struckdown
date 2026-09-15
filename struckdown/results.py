@@ -572,13 +572,3 @@ class CostSummary(BaseModel):
             )
 
         return "\n".join(lines)
-
-
-class StruckdownEarlyTermination(Exception):
-    """Raised when [[end]] or [[@break]] is encountered to stop template execution."""
-
-    def __init__(self, message, partial_results=None):
-        super().__init__(message)
-        self.partial_results = (
-            partial_results if partial_results is not None else StruckdownResult()
-        )

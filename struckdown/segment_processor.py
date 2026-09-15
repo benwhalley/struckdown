@@ -1000,9 +1000,7 @@ async def process_segment_with_delta_incremental(
         accumulated_context[slot_key] = escaped_value
         filled_slots[slot_key] = escaped_value
 
-        # A halt slot whose verdict holds stops the run here. The same flag
-        # serves the @break action, which has set it since it was written but
-        # has never until now had anything read it.
+        # A halt slot whose verdict holds stops the run here.
         if halt_requested(slot_info, extracted_value):
             from .errors import Halted
 
@@ -1011,16 +1009,6 @@ async def process_segment_with_delta_incremental(
                 reason=str(getattr(extracted_value, "reason", "") or ""),
                 results=None,
                 when=_halt_when(slot_info.options),
-            )
-        if accumulated_context.get("_break_requested"):
-            # @break was executed as an action. Its message is already in the
-            # results; stop before the next slot's call.
-            from .errors import Halted
-
-            raise Halted(
-                slot=slot_key,
-                reason=str(accumulated_context.get("_break_message", "") or ""),
-                results=None,
             )
 
         # Update last_slot_end for next iteration (if no re-render)

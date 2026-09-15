@@ -327,7 +327,7 @@ Internet
 | `STRUCKDOWN_ZIP_MAX_SIZE` | Maximum uncompressed zip size in bytes | `52428800` (50MB) |
 | `STRUCKDOWN_ZIP_MAX_FILES` | Maximum files in a zip archive | `500` |
 
-**Action Restrictions:** In remote mode, actions like `@fetch` and `@search` are disabled by default for security (they could be used to probe internal networks). Safe actions like `@set`, `@break`, and `@timestamp` remain available.
+**Action Restrictions:** In remote mode, actions like `@fetch` and `@search` are disabled by default for security (they could be used to probe internal networks). Safe actions like `@set` and `@timestamp` remain available.
 
 ---
 

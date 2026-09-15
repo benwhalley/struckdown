@@ -78,7 +78,6 @@ ASSISTANT_CONTENT: /(?:(?!\[\[)[\s\S])+?(?=<\/assistant>)/
 
 // Markdown: everything else (with negative lookahead to exclude our syntax)
 // Matches anything that's NOT our special tags, completions, or variables
-// Note: <break> is now handled as [[@break|msg]] action, so not excluded here
 markdown: /(?:(?!<(?:checkpoint|obliviate|system|header|user|assistant|include|together|\/together|!--)|{{|\[\[|{%)(?:.|\n))+/s  -> markdown_text
 
 // Template variables: {{variable}} or {{variable.path}}

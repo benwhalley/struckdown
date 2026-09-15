@@ -5,7 +5,6 @@ They are invoked via template syntax: [[@action_name:varname|param1=value1]]
 
 Built-in actions:
     @set        - Set a variable without LLM call
-    @break      - Early termination
     @fetch      - Fetch URL content as markdown
     @markdownify - Convert HTML to markdown
     @search     - Web search via DuckDuckGo
@@ -634,7 +633,7 @@ def discover_actions(
     1. actions/ relative to template file
     2. actions/ in current working directory
 
-    Note: Built-in actions (set, break, fetch, search, etc.) are registered
+    Note: Built-in actions (set, fetch, search, etc.) are registered
     automatically when struckdown.actions is imported -- they don't need
     discovery. This function is for user-defined custom actions.
 
@@ -931,7 +930,7 @@ __all__ = [
 # (the @Actions.register decorators run on import)
 # =============================================================================
 
-from . import (break_, evidence, fetch, history, markdownify, search, set_,
+from . import (evidence, fetch, history, markdownify, search, set_,
                timestamp)
 
 # =============================================================================

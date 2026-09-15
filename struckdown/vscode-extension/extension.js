@@ -11,7 +11,6 @@ const COLORS = {
         slot: { bg: '#D4EDDA', fg: '#155724' },           // green for [[slot]]
         action: { bg: '#EDE7F6', fg: '#6A1B9A' },         // purple for [[@action]]
         template: { bg: '#FBDCE8', fg: '#9B2C5A' },       // pink for {{var}}
-        break: { bg: '#FCDCDC', fg: '#F23030' },
         include: { bg: '#D6F5F7', fg: '#000000', bold: false }
     },
     dark: {
@@ -22,7 +21,6 @@ const COLORS = {
         slot: { bg: '#1E5128', fg: '#98FB98' },           // green for [[slot]]
         action: { bg: '#4A148C', fg: '#CE93D8' },         // purple for [[@action]]
         template: { bg: '#5E2750', fg: '#FFB6C1' },       // pink for {{var}}
-        break: { bg: '#F23030', fg: '#FFFFFF' },
         include: { bg: '#23B7D9', fg: '#000000', bold: false }
     }
 };
@@ -76,11 +74,6 @@ function activate(context) {
                 borderRadius: '3px',
                 fontWeight: 'bold'
             }),
-            break: vscode.window.createTextEditorDecorationType({
-                backgroundColor: colors.break.bg,
-                color: colors.break.fg,
-                borderRadius: '3px'
-            }),
             include: vscode.window.createTextEditorDecorationType({
                 backgroundColor: colors.include.bg,
                 color: colors.include.fg,
@@ -111,7 +104,6 @@ function activate(context) {
         const slotRanges = [];
         const actionRanges = [];
         const templateRanges = [];
-        const breakRanges = [];
         const includeRanges = [];
         const lines = text.split('\n');
 
@@ -187,9 +179,7 @@ function activate(context) {
                 const end = new vscode.Position(i, match.index + match[0].length);
                 const content = match[1];
 
-                if (content.startsWith('@break')) {
-                    breakRanges.push({ range: new vscode.Range(start, end) });
-                } else if (content.startsWith('@')) {
+                if (content.startsWith('@')) {
                     // action - blue
                     actionRanges.push({ range: new vscode.Range(start, end) });
                 } else {
@@ -206,7 +196,6 @@ function activate(context) {
         editor.setDecorations(decorations.slot, slotRanges);
         editor.setDecorations(decorations.action, actionRanges);
         editor.setDecorations(decorations.template, templateRanges);
-        editor.setDecorations(decorations.break, breakRanges);
         editor.setDecorations(decorations.include, includeRanges);
     }
 

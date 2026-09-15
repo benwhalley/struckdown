@@ -7,7 +7,6 @@
  * Highlights:
  * - [[slot]] completions (green)
  * - [[@action]] actions (purple)
- * - [[@break]] break action (red)
  * - {{variable}} template vars (pink)
  * - {% tag %} jinja tags (blue)
  * - <system>...</system> blocks (grey)
@@ -18,8 +17,6 @@
 
 // Regex patterns for syntax elements
 const PATTERNS = [
-    // Break action [[@break...]] - red (must be before other actions)
-    { pattern: /\[\[@break[^\]]*\]\]/g, class: 'sd-break' },
     // Action slots [[@...]] - purple (must be before regular slots)
     { pattern: /\[\[@[^\]]*\]\]/g, class: 'sd-action' },
     // Regular slots [[...]] - green

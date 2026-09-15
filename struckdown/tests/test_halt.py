@@ -204,6 +204,55 @@ class HaltIncrementalTests(unittest.TestCase):
         self.assertTrue(finals[0].early_termination)
 
 
+class HaltPartialResultsTests(unittest.TestCase):
+    """A halted run hands back what it paid for, streaming or not."""
+
+    PROMPT = "Is this bad?\n[[halt:guard]]\n\nAnswer it.\n[[answer]]\n"
+
+    def _halted(self, **kwargs):
+        stub = _stub([HaltResponse(triggered=True, reason="no")])
+
+        async def drive():
+            async for _ in sd.complete_incremental_async(
+                self.PROMPT, model=MODEL, credentials=CREDS, context={}, **kwargs
+            ):
+                pass
+
+        with patch("struckdown.llm.structured_chat_async", stub):
+            with self.assertRaises(Halted) as ctx:
+                anyio.run(drive)
+        return ctx.exception
+
+    def test_streaming_carries_the_verdict(self):
+        self.assertIn("guard", self._halted(stream=True).results.results)
+
+    def test_non_streaming_carries_the_verdict_too(self):
+        # the non-streaming path buffers a segment's events instead of
+        # yielding them, and used to drop the buffer on the way out
+        self.assertIn("guard", self._halted(stream=False).results.results)
+
+    def test_the_recovered_slots_are_not_shown_to_the_consumer(self):
+        # results carry them for logging and billing, but a slot that finished
+        # beside the guard must not reach the reader
+        stub = _stub([HaltResponse(triggered=True, reason="no")])
+        events = []
+
+        async def drive():
+            async for event in sd.complete_incremental_async(
+                self.PROMPT, model=MODEL, credentials=CREDS, context={},
+                stream=False, on_halt="return",
+            ):
+                events.append(event)
+
+        with patch("struckdown.llm.structured_chat_async", stub):
+            anyio.run(drive)
+
+        self.assertEqual([e for e in events if isinstance(e, SlotCompleted)], [])
+        finals = [e for e in events if isinstance(e, ProcessingComplete)]
+        self.assertTrue(finals[0].early_termination)
+        self.assertIn("guard", finals[0].result.results)
+
+
 class RetractionTests(unittest.TestCase):
     def test_slot_retracted_is_exported_and_typed(self):
         event = SlotRetracted(segment_index=0, slot_key="answer", reason="halted")

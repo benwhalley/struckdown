@@ -89,7 +89,7 @@ from .parsing import (SlotInfo, _add_default_completion_if_needed,
 from .response_types import ResponseTypes
 # Re-export from results module
 from .results import (StruckdownResult, CostSummary, SlotResult,
-                      StruckdownEarlyTermination, progress_tracking)
+                      progress_tracking)
 from .return_type_models import (ACTION_LOOKUP, LLMConfig, SlotCategory,
                                 THINKING_LEVELS, classify_slot)
 from .segment_processor import (process_segment_with_delta,
@@ -824,21 +824,29 @@ async def complete_incremental_async(
                 local_header_globals.append(rendered_header)
 
         events = []
-        async for event in process_segment_with_delta_incremental(
-            body_template,
-            ctx_snapshot.copy(),
-            model,
-            credentials,
-            analysis=data["analysis"],
-            global_system_messages=local_globals,
-            global_header_messages=local_header_globals,
-            segment_index=seg_idx,
-            strict_undefined=strict_undefined,
-            strict_params=strict_params,
-            stop_at=stop_at,
-            **(extra_kwargs or {}),
-        ):
-            events.append(event)
+        try:
+            async for event in process_segment_with_delta_incremental(
+                body_template,
+                ctx_snapshot.copy(),
+                model,
+                credentials,
+                analysis=data["analysis"],
+                global_system_messages=local_globals,
+                global_header_messages=local_header_globals,
+                segment_index=seg_idx,
+                strict_undefined=strict_undefined,
+                strict_params=strict_params,
+                stop_at=stop_at,
+                **(extra_kwargs or {}),
+            ):
+                events.append(event)
+        except Halted as halted:
+            # This segment's events are buffered here, not yielded as they
+            # happen, so they would die with this frame. Carry the slots that
+            # did finish out on the exception -- they were paid for, and the
+            # caller is promised the work done before the guard fired.
+            halted.partial_events = events
+            raise
 
         return (
             seg_idx,
@@ -1010,6 +1018,14 @@ async def complete_incremental_async(
         # A guard tripped. Anything streamed was written on the strength of
         # input the guard has now rejected, so retract it before saying so.
         logger.info(f"Halted at [[halt:{halted.slot}]]: {halted.reason}")
+        # Recover the buffered results of a segment that was collecting rather
+        # than streaming: without this a non-streaming run halts with nothing
+        # to bill or log. The events stay unyielded on purpose -- a slot that
+        # finished beside the guard was written on input the guard has now
+        # rejected, and showing it is exactly what retraction prevents.
+        for event in getattr(halted, "partial_events", ()):
+            if isinstance(event, SlotCompleted):
+                all_results[event.slot_key] = event.result
         for slot_key, seg_idx in streaming_slots.items():
             yield SlotRetracted(
                 segment_index=seg_idx, slot_key=slot_key, reason="halted"
@@ -1168,7 +1184,6 @@ __all__ = [
     "BadRequestError",
     "ConnectionError",
     "FetchError",
-    "StruckdownEarlyTermination",
     # Actions
     "Actions",
     "ResponseTypes",

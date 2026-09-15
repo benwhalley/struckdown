@@ -36,14 +36,6 @@
     font-weight: bold;
 }
 
-/* Break action [[@break]] - red */
-.sd-break {
-    color: #F23030;
-    background-color: #FCDCDC;
-    border-radius: 2px;
-    font-weight: bold;
-}
-
 /* Template variable {{...}} - pink */
 .sd-template-var {
     color: #9B2C5A;
