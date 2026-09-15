@@ -564,7 +564,10 @@ sd.complete(prompt, context={"question": q}, tools=[lookup_module],
 The signature is the schema and the docstring is the description. The menu
 the model reads and the arguments it may send are the same object. `limits`
 is a ceiling a template may lower but never raise, so a prompt edited by
-someone other than the caller cannot widen a spend cap.
+someone other than the caller cannot widen a spend cap. Without `limits`, a
+tool slot defaults to at most 20 model requests, 20 tool calls and 250,000
+output tokens for the whole run -- a backstop against a runaway loop rather
+than a length budget.
 
 A `[[halt:name]]` slot guards a run: an LLM-evaluated condition that stops
 it and raises `Halted` with whatever was produced. Closing the generator

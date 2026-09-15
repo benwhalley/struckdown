@@ -2290,17 +2290,38 @@ def get_cross_encoder_scores(
 # ---------------------------------------------------------------------------
 
 
+DEFAULT_TOOL_REQUEST_LIMIT = 20
+DEFAULT_TOOL_CALLS_LIMIT = 20
+
+# A backstop against a runaway loop, not a length budget: a quarter of a
+# million output tokens is far more than any real answer, so it should never
+# bind on legitimate work. Deliberately a run-level ``output_tokens_limit``
+# rather than a per-request ``max_tokens``: pydantic-ai enforces it locally and
+# raises ``UsageLimitExceeded``, whereas a ``max_tokens`` above a model's own
+# output ceiling is rejected by the provider, which would turn a safety net
+# into a hard failure on every small model.
+DEFAULT_TOOL_OUTPUT_TOKENS = 250_000
+
+
 def clamp_limits(ceiling, max_iter=None, max_calls=None):
     """Return UsageLimits no looser than ``ceiling``.
 
     ``max_iter`` / ``max_calls`` come from the template. Either is applied only
     where it is *lower* than the caller's own limit; a template asking for more
-    gets the ceiling and a warning.
+    gets the ceiling and a warning. When the caller supplies no ceiling, finite
+    defaults prevent a model from running an unbounded tool loop.
     """
     from pydantic_ai.usage import UsageLimits
 
-    ceiling_requests = getattr(ceiling, "request_limit", None) if ceiling else None
-    ceiling_calls = getattr(ceiling, "tool_calls_limit", None) if ceiling else None
+    if ceiling is None:
+        ceiling = UsageLimits(
+            request_limit=DEFAULT_TOOL_REQUEST_LIMIT,
+            tool_calls_limit=DEFAULT_TOOL_CALLS_LIMIT,
+            output_tokens_limit=DEFAULT_TOOL_OUTPUT_TOKENS,
+        )
+
+    ceiling_requests = getattr(ceiling, "request_limit", None)
+    ceiling_calls = getattr(ceiling, "tool_calls_limit", None)
 
     def _lower(name, wanted, cap):
         if wanted is None:
@@ -2322,7 +2343,7 @@ def clamp_limits(ceiling, max_iter=None, max_calls=None):
     if calls is not None:
         kwargs["tool_calls_limit"] = calls
     for field in ("input_tokens_limit", "output_tokens_limit", "total_tokens_limit"):
-        value = getattr(ceiling, field, None) if ceiling else None
+        value = getattr(ceiling, field, None)
         if value is not None:
             kwargs[field] = value
     return UsageLimits(**kwargs) if kwargs else None

@@ -29,6 +29,10 @@
   rather than re-gathering.
 
 **Fixed**
+- Tool loops no longer run without a default resource ceiling. Without an
+  explicit `UsageLimits`, each slot is limited to 20 model requests, 20 tool
+  calls and 250,000 output tokens for the run. Template limits may lower the
+  request and tool-call caps but cannot raise them.
 - `<user>`, `<assistant>` and `<header>` are escaped in interpolated values,
   alongside `<system>` and the rest. They were harmless while everything was
   flattened; now that they cut the body into messages, a value carrying one

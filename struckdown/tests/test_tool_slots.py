@@ -60,6 +60,21 @@ class OptionParsingTests(unittest.TestCase):
 
 
 class CeilingTests(unittest.TestCase):
+    def test_default_ceiling_is_finite(self):
+        limits = clamp_limits(None)
+        self.assertEqual(limits.request_limit, 20)
+        self.assertEqual(limits.tool_calls_limit, 20)
+        self.assertEqual(limits.output_tokens_limit, 250_000)
+
+    def test_a_caller_ceiling_replaces_the_default_output_limit(self):
+        ceiling = UsageLimits(output_tokens_limit=1_000)
+        self.assertEqual(clamp_limits(ceiling).output_tokens_limit, 1_000)
+
+    def test_template_may_lower_but_not_raise_the_default_ceiling(self):
+        self.assertEqual(clamp_limits(None, max_iter=3).request_limit, 3)
+        self.assertEqual(clamp_limits(None, max_iter=99).request_limit, 20)
+        self.assertEqual(clamp_limits(None, max_calls=99).tool_calls_limit, 20)
+
     def test_a_template_may_lower_the_caller_ceiling(self):
         ceiling = UsageLimits(request_limit=4, tool_calls_limit=8)
         self.assertEqual(clamp_limits(ceiling, max_iter=2).request_limit, 2)
@@ -76,6 +91,30 @@ class CeilingTests(unittest.TestCase):
 
 
 class ToolLoopTests(unittest.TestCase):
+    def test_tool_loop_does_not_impose_its_own_max_tokens(self):
+        """The output backstop is a run-level limit, not a per-request cap.
+
+        A ``max_tokens`` above a model's own output ceiling is a provider
+        error, so the loop must leave the field alone unless asked.
+        """
+        from struckdown import llm as llm_module
+
+        seen = {}
+        translate = llm_module._translate_kwargs
+
+        def capture(kwargs, **options):
+            seen.update(kwargs)
+            return translate(kwargs, **options)
+
+        with patch("struckdown.llm._translate_kwargs", side_effect=capture):
+            _with_test_model(
+                lambda: sd.complete(
+                    PROMPT, context={}, model=MODEL, credentials=CREDS
+                )
+            )
+
+        self.assertNotIn("max_tokens", seen)
+
     def test_the_model_can_call_a_caller_supplied_tool(self):
         seen = []
 

@@ -97,9 +97,14 @@ template may lower either, never raise it; one asking for more gets the
 ceiling and a warning. A validation retry spends a request too, because the
 agent runs with `retries=2`.
 
-With no `limits` argument there is no ceiling, and the template's numbers
-stand as written. Pass `limits` from the calling code whenever the template
-can be edited by someone other than the caller.
+With no `limits` argument, the default ceiling is 20 model requests, 20 tool
+calls and 250,000 output tokens per slot. The token figure is a backstop
+against a runaway loop, not a length budget, and is a run-level total rather
+than a per-request `max_tokens` -- pydantic-ai enforces it locally, so unlike
+a `max_tokens` above a model's own output ceiling it cannot turn into a
+provider error. Template `max_iter` and `max_calls` values may lower the
+request and tool-call caps but cannot raise them. Pass `limits` explicitly to
+use a different ceiling.
 
 Three behaviours apply to every tool slot:
 
