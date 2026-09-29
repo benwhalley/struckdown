@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,9 @@ from .audio_probe import (
     AudioValidation,
     validate_audio_for_transcription,
 )
+from .ledger import (CostBreakdown, deferred_usage, emit, flush_usage_async,
+                     record_from_response)
+from .ledger import now as _utcnow
 from .llm import LLMCredentials, parse_model_id
 
 DEFAULT_AZURE_API_VERSION = "2024-06-01"
@@ -139,7 +143,25 @@ def transcribe(
     if prompt is not None:
         kwargs["prompt"] = prompt
 
-    raw = client.audio.transcriptions.create(**kwargs)
+    started_at = _utcnow()
+    started = time.monotonic()
+    try:
+        raw = client.audio.transcriptions.create(**kwargs)
+    except Exception as e:
+        emit(
+            record_from_response(
+                kind="transcription",
+                model_name=model,
+                response=None,
+                cost=None,
+                credentials=credentials,
+                started_at=started_at,
+                duration_ms=(time.monotonic() - started) * 1000,
+                ok=False,
+                error_class=type(e).__name__,
+            )
+        )
+        raise
 
     text = getattr(raw, "text", None) or (raw if isinstance(raw, str) else str(raw))
     duration = getattr(raw, "duration", None)
@@ -151,6 +173,22 @@ def transcribe(
     cost = None
     if cost_per_minute is not None and duration is not None:
         cost = cost_per_minute * duration / 60.0
+
+    record = record_from_response(
+        kind="transcription",
+        model_name=model,
+        response=None,
+        cost=(
+            CostBreakdown(input_cost=cost, output_cost=0.0, source="audio_rate")
+            if cost is not None
+            else None
+        ),
+        credentials=credentials,
+        started_at=started_at,
+        duration_ms=(time.monotonic() - started) * 1000,
+    )
+    record.audio_seconds = duration if duration is not None else validation.duration_s
+    emit(record)
 
     return TranscriptionResult(
         text=str(text),
@@ -174,12 +212,15 @@ async def transcribe_async(
 ) -> TranscriptionResult:
     """Async wrapper. The OpenAI SDK's audio endpoint is sync-only, so we offload
     the blocking call to a worker thread."""
-    return await asyncio.to_thread(
-        transcribe,
-        audio,
-        model,
-        credentials,
-        language=language,
-        prompt=prompt,
-        response_format=response_format,
-    )
+    with deferred_usage() as pending:
+        result = await asyncio.to_thread(
+            transcribe,
+            audio,
+            model,
+            credentials,
+            language=language,
+            prompt=prompt,
+            response_format=response_format,
+        )
+    await flush_usage_async(pending)
+    return result

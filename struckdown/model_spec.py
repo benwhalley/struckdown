@@ -110,6 +110,18 @@ class ModelSpec(BaseModel):
         default=None,
         description="Output cost per million tokens (USD). Used for cost calculation if set.",
     )
+    cache_read_cost_per_mtok: Optional[float] = Field(
+        default=None,
+        description="Price of a cached prompt token read (USD per Mtok). Input rate if unset.",
+    )
+    cache_write_cost_per_mtok: Optional[float] = Field(
+        default=None,
+        description="Price of writing a prompt token to cache (USD per Mtok). Input rate if unset.",
+    )
+    # the caller's own identifier for this model (a database row id, say),
+    # carried onto every usage record so a ledger can join back without
+    # matching on the name
+    model_ref: Optional[str] = None
 
     @computed_field
     @property

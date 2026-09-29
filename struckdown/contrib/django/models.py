@@ -177,6 +177,23 @@ class AvailableModel(LifecycleModelMixin, models.Model):
         blank=True,
         help_text="Output cost per million tokens (USD).",
     )
+    cache_read_cost_per_mtok = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text=(
+            "Price of a prompt token read from the provider's cache (USD per Mtok). "
+            "Blank = charged at the input rate, which overstates cache-heavy use."
+        ),
+    )
+    cache_write_cost_per_mtok = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Price of writing a prompt token to the cache (USD per Mtok). Blank = input rate.",
+    )
     cost_per_audio_minute = models.DecimalField(
         max_digits=10,
         decimal_places=6,
@@ -314,22 +331,43 @@ class AvailableModel(LifecycleModelMixin, models.Model):
                 if self.output_cost_per_mtok is not None
                 else None
             ),
+            cache_read_cost_per_mtok=(
+                float(self.cache_read_cost_per_mtok)
+                if self.cache_read_cost_per_mtok is not None
+                else None
+            ),
+            cache_write_cost_per_mtok=(
+                float(self.cache_write_cost_per_mtok)
+                if self.cache_write_cost_per_mtok is not None
+                else None
+            ),
+            model_ref=self.id,
         )
 
     def get_llm_and_credentials(self):
         """Return (LLM, LLMCredentials) tuple ready for struckdown calls.
 
         Also sets the pricing context var so struckdown uses the stored
-        per-mtok rates for cost calculation. Prefer to_spec() for new code.
+        per-mtok rates for cost calculation, and names this row as the
+        ``model_ref`` on every usage record the calls produce, so the ledger
+        joins back to it. Prefer to_spec() for new code.
         """
         from struckdown.audio import set_audio_pricing
+        from struckdown.ledger import set_model_ref
         from struckdown.llm import LLM, LLMCredentials, set_model_pricing
 
         cred = self.resolve_credential()
-        set_model_pricing(
-            float(self.input_cost_per_mtok) if self.input_cost_per_mtok is not None else None,
-            float(self.output_cost_per_mtok) if self.output_cost_per_mtok is not None else None,
-        )
+        pricing = self.stored_pricing()
+        if pricing is not None:
+            set_model_pricing(
+                pricing.input_per_mtok,
+                pricing.output_per_mtok,
+                pricing.cache_read_per_mtok,
+                pricing.cache_write_per_mtok,
+            )
+        else:
+            set_model_pricing(None, None)
+        set_model_ref(self.id)
         set_audio_pricing(
             float(self.cost_per_audio_minute)
             if self.cost_per_audio_minute is not None
@@ -420,15 +458,40 @@ class AvailableModel(LifecycleModelMixin, models.Model):
 
         self.input_cost_per_mtok = result.input_cost_per_mtok
         self.output_cost_per_mtok = result.output_cost_per_mtok
+        self.cache_read_cost_per_mtok = result.cache_read_cost_per_mtok
+        self.cache_write_cost_per_mtok = result.cache_write_cost_per_mtok
         self.prices_updated_at = timezone.now()
         self.save(
             update_fields=[
                 "input_cost_per_mtok",
                 "output_cost_per_mtok",
+                "cache_read_cost_per_mtok",
+                "cache_write_cost_per_mtok",
                 "prices_updated_at",
             ]
         )
         return True
+
+    def stored_pricing(self):
+        """This row's rates as struckdown's ``StoredPricing``, or None if unpriced."""
+        from struckdown.ledger import StoredPricing
+
+        if self.input_cost_per_mtok is None or self.output_cost_per_mtok is None:
+            return None
+        return StoredPricing(
+            input_per_mtok=float(self.input_cost_per_mtok),
+            output_per_mtok=float(self.output_cost_per_mtok),
+            cache_read_per_mtok=(
+                float(self.cache_read_cost_per_mtok)
+                if self.cache_read_cost_per_mtok is not None
+                else None
+            ),
+            cache_write_per_mtok=(
+                float(self.cache_write_cost_per_mtok)
+                if self.cache_write_cost_per_mtok is not None
+                else None
+            ),
+        )
 
 
 class ModelSet(models.Model):
@@ -641,3 +704,8 @@ def get_default_llm_id() -> str:
         return str(first_llm.id)
 
     raise ValueError("No LLM models configured in the system")
+
+
+# the usage ledger lives in its own module; imported here so Django registers
+# its models with this app
+from .models_ledger import LLMCall, LLMCallPayload, LLMCosts, LLMSpan  # noqa: E402,F401

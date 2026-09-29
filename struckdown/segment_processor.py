@@ -223,6 +223,7 @@ async def _process_together_group(
 
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
+    from .ledger import deferred_usage, flush_usage_async, slot_context
     from .llm import structured_chat
     from .results import SlotResult, get_progress_callback
 
@@ -304,17 +305,19 @@ async def _process_together_group(
             call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
-            res, completion_obj = await anyio.to_thread.run_sync(
-                lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
-                    messages=msgs,
-                    return_type=rt,
-                    llm=llm,
-                    credentials=credentials,
-                    extra_kwargs=kw,
-                    strict_params=strict_params,
-                ),
-                abandon_on_cancel=True,
-            )
+            with slot_context(slot_key), deferred_usage() as pending:
+                res, completion_obj = await anyio.to_thread.run_sync(
+                    lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
+                        messages=msgs,
+                        return_type=rt,
+                        llm=llm,
+                        credentials=credentials,
+                        extra_kwargs=kw,
+                        strict_params=strict_params,
+                    ),
+                    abandon_on_cancel=True,
+                )
+            await flush_usage_async(pending)
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
         logger.debug(
@@ -528,6 +531,7 @@ async def process_segment_with_delta_incremental(
     from .incremental import (SlotCompleted, SlotStreamStart, ThinkingDelta,
                               TokenDelta, ToolCompleted, ToolStarted)
     from .jinja_utils import escape_struckdown_syntax
+    from .ledger import slot_context
     from .llm import structured_chat, structured_chat_async
     from .results import SlotResult, get_progress_callback
     from .return_type_models import SlotCategory, classify_slot
@@ -744,11 +748,9 @@ async def process_segment_with_delta_incremental(
             snapshot = messages.copy()
             if content_before.strip():
                 snapshot.extend(split_content_by_role(content_before))
-            pending_halts[slot_key] = (
-                _asyncio.ensure_future(_run_halt(slot_info, snapshot)),
-                slot_info,
-                content_before,
-            )
+            with slot_context(slot_key):
+                halt_task = _asyncio.ensure_future(_run_halt(slot_info, snapshot))
+            pending_halts[slot_key] = (halt_task, slot_info, content_before)
             filled_slots[slot_key] = None
             last_slot_end = slot_end
             continue
@@ -824,7 +826,8 @@ async def process_segment_with_delta_incremental(
                 else:
                     await queue.put(("ended", None))
 
-            feeder = _asyncio.ensure_future(_feed())
+            with slot_context(slot_key):
+                feeder = _asyncio.ensure_future(_feed())
 
             res = None
             completion_obj = None
@@ -910,28 +913,33 @@ async def process_segment_with_delta_incremental(
             # unified async path
             prev_text = ""
             completion_obj = None
-            async for partial, com, is_final in structured_chat_async(
-                messages=messages.copy(),
-                return_type=return_type,
-                llm=llm,
-                credentials=credentials,
-                extra_kwargs=call_kwargs,
-                stream=should_stream,
-                strict_params=strict_params,
-            ):
-                if is_final:
-                    res = partial
-                    completion_obj = com
-                elif should_stream:
-                    current = getattr(partial, "response", None)
-                    if current is not None and str(current) != prev_text:
-                        yield TokenDelta(
-                            segment_index=segment_index,
-                            slot_key=slot_key,
-                            delta=str(current)[len(prev_text):],
-                            accumulated=str(current),
-                        )
-                        prev_text = str(current)
+            slot_scope = slot_context(slot_key)
+            slot_scope.__enter__()
+            try:
+                async for partial, com, is_final in structured_chat_async(
+                    messages=messages.copy(),
+                    return_type=return_type,
+                    llm=llm,
+                    credentials=credentials,
+                    extra_kwargs=call_kwargs,
+                    stream=should_stream,
+                    strict_params=strict_params,
+                ):
+                    if is_final:
+                        res = partial
+                        completion_obj = com
+                    elif should_stream:
+                        current = getattr(partial, "response", None)
+                        if current is not None and str(current) != prev_text:
+                            yield TokenDelta(
+                                segment_index=segment_index,
+                                slot_key=slot_key,
+                                delta=str(current)[len(prev_text):],
+                                accumulated=str(current),
+                            )
+                            prev_text = str(current)
+            finally:
+                slot_scope.__exit__(None, None, None)
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
 

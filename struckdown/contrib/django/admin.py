@@ -391,3 +391,9 @@ if not admin.site.is_registered(AvailableModel):
     admin.site.register(AvailableModel, AvailableModelAdmin)
 if not admin.site.is_registered(ModelSet):
     admin.site.register(ModelSet, ModelSetAdmin)
+
+# The usage ledger's admins live in admin_ledger; registered here under the
+# same rule (default site only, unless a project already registered them).
+from .admin_ledger import register as _register_ledger_admins  # noqa: E402
+
+_register_ledger_admins()

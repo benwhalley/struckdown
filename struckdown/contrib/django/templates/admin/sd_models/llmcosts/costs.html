@@ -1,0 +1,147 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .sd-costs table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  .sd-costs th, .sd-costs td { padding: .35rem .6rem; text-align: right; white-space: nowrap; }
+  .sd-costs th:first-child, .sd-costs td:first-child { text-align: left; }
+  .sd-costs td.num, .sd-costs th.num { font-variant-numeric: tabular-nums; }
+  .sd-costs .quiet { opacity: .6; }
+  .sd-costs .windows a { margin-right: .75rem; }
+  .sd-costs .windows a.on { font-weight: bold; text-decoration: none; }
+  .sd-costs .headline { display: flex; gap: 2.5rem; flex-wrap: wrap; margin: 1rem 0 1.5rem; }
+  .sd-costs .headline div { line-height: 1.3; }
+  .sd-costs .headline b { font-size: 1.4em; display: block; }
+  .sd-costs h2 { margin-top: 2rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sd-costs">
+
+<p class="windows">
+  {% for d, label in windows %}
+    <a href="?days={{ d }}" class="{% if d == days %}on{% endif %}">{{ label }}</a>
+  {% endfor %}
+  <span class="quiet">Estimates from token counts and list prices; the provider's invoice is the truth.</span>
+</p>
+
+{% with h=data.headline %}
+<div class="headline">
+  <div><b>{% if h.cost_total is not None %}${{ h.cost_total|floatformat:2 }}{% else %}--{% endif %}</b> spent (priced calls)</div>
+  <div><b>{{ h.calls }}</b> calls</div>
+  <div><b>{{ h.users }}</b> users</div>
+  <div><b>{{ h.input_tokens }}</b> tokens in <span class="quiet">({{ h.cache_share }}% cached)</span></div>
+  <div><b>{{ h.output_tokens }}</b> tokens out</div>
+  <div><b>{{ h.unpriced }}</b> unpriced <span class="quiet">not in any total</span></div>
+  <div><b>{{ h.cache_hits }}</b> cache hits</div>
+  <div><b>{{ h.failed }}</b> failed</div>
+</div>
+{% endwith %}
+
+<h2>By feature</h2>
+<table>
+  <thead><tr>
+    <th>Feature (root span)</th><th>Calls</th><th>Users</th><th>In</th><th>Cached</th><th>Out</th>
+    <th>Input $</th><th>Output $</th><th>Total $</th><th>Per call</th><th>Per user</th><th>Unpriced</th>
+  </tr></thead>
+  <tbody>
+  {% for r in data.by_feature %}
+    <tr>
+      <td><a href="{% url calls_url %}?root_name={{ r.feature|urlencode }}">{{ r.feature }}</a></td>
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.users }}</td>
+      <td class="num">{{ r.input_tokens }}</td>
+      <td class="num quiet">{{ r.cache_share }}%</td>
+      <td class="num">{{ r.output_tokens }}</td>
+      <td class="num">{{ r.cost_in|floatformat:4|default:"--" }}</td>
+      <td class="num">{{ r.cost_out|floatformat:4|default:"--" }}</td>
+      <td class="num"><b>{{ r.cost_total|floatformat:4|default:"--" }}</b></td>
+      <td class="num quiet">{{ r.per_call|floatformat:5|default:"--" }}</td>
+      <td class="num quiet">{{ r.per_user|floatformat:4|default:"--" }}</td>
+      <td class="num {% if r.unpriced %}{% else %}quiet{% endif %}">{{ r.unpriced }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="12" class="quiet">No calls in this window.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>By model</h2>
+<table>
+  <thead><tr>
+    <th>Model</th><th>Kind</th><th>Calls</th><th>In</th><th>Cached</th><th>Out</th>
+    <th>Input $</th><th>Output $</th><th>Total $</th><th>Per call</th><th>Unpriced</th>
+  </tr></thead>
+  <tbody>
+  {% for r in data.by_model %}
+    <tr>
+      <td>{{ r.model_name }} <span class="quiet">{{ r.provider }}</span></td>
+      <td>{{ r.kind }}</td>
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.input_tokens }}</td>
+      <td class="num quiet">{{ r.cache_share }}%</td>
+      <td class="num">{{ r.output_tokens }}</td>
+      <td class="num">{{ r.cost_in|floatformat:4|default:"--" }}</td>
+      <td class="num">{{ r.cost_out|floatformat:4|default:"--" }}</td>
+      <td class="num"><b>{{ r.cost_total|floatformat:4|default:"--" }}</b></td>
+      <td class="num quiet">{{ r.per_call|floatformat:5|default:"--" }}</td>
+      <td class="num {% if r.unpriced %}{% else %}quiet{% endif %}">{{ r.unpriced }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="11" class="quiet">No calls in this window.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>By month</h2>
+<table>
+  <thead><tr>
+    <th>Month</th><th>Calls</th><th>Users</th><th>In</th><th>Out</th><th>Input $</th><th>Output $</th><th>Total $</th><th>Unpriced</th>
+  </tr></thead>
+  <tbody>
+  {% for r in data.by_month %}
+    <tr>
+      <td>{{ r.month|date:"M Y" }}</td>
+      <td class="num">{{ r.calls }}</td>
+      <td class="num">{{ r.users }}</td>
+      <td class="num">{{ r.input_tokens }}</td>
+      <td class="num">{{ r.output_tokens }}</td>
+      <td class="num">{{ r.cost_in|floatformat:2|default:"--" }}</td>
+      <td class="num">{{ r.cost_out|floatformat:2|default:"--" }}</td>
+      <td class="num"><b>{{ r.cost_total|floatformat:2|default:"--" }}</b></td>
+      <td class="num {% if r.unpriced %}{% else %}quiet{% endif %}">{{ r.unpriced }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="9" class="quiet">Nothing recorded yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Per user</h2>
+{% with u=data.per_user %}
+<p>
+  <b>{{ u.users }}</b> users made calls in this window.
+  Spend per user: mean {% if u.mean is not None %}${{ u.mean|floatformat:4 }}{% else %}--{% endif %},
+  median {% if u.median is not None %}${{ u.median|floatformat:4 }}{% else %}--{% endif %},
+  highest {% if u.max is not None %}${{ u.max|floatformat:4 }}{% else %}--{% endif %}.
+  <span class="quiet">Counts and averages only; named lookups are in the <a href="{% url spans_url %}">spans</a> and <a href="{% url calls_url %}">calls</a> lists.</span>
+</p>
+{% endwith %}
+
+{% for section in extra_sections %}
+<h2>{{ section.title }}</h2>
+{% if section.note %}<p class="quiet">{{ section.note }}</p>{% endif %}
+<table>
+  <thead><tr>{% for c in section.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in section.rows %}
+    <tr>{% for cell in row %}<td class="num">{{ cell }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+
+</div>
+{% endblock %}

@@ -60,6 +60,9 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
                           struckdown_finalize)
 # Re-export from llm module
 from .model_spec import PROVIDERS, ModelRegistry, ModelSpec, ProviderInfo
+from .ledger import (CostBreakdown, UsagePayload, UsageRecord, deferred_usage,
+                     flush_usage, register_usage_handler, set_model_ref,
+                     unregister_usage_handler, usage_tracking)
 from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   MAX_EMBEDDING_TOKENS_PER_BATCH, MAX_LLM_CONCURRENCY,
                   EmbeddingCostCallback, EmbeddingResult, EmbeddingResultList,
@@ -123,8 +126,12 @@ def _resolve_spec_kwargs(
     # set pricing context var if spec has pricing
     if resolved_spec is not None:
         set_model_pricing(
-            resolved_spec.input_cost_per_mtok, resolved_spec.output_cost_per_mtok
+            resolved_spec.input_cost_per_mtok,
+            resolved_spec.output_cost_per_mtok,
+            resolved_spec.cache_read_cost_per_mtok,
+            resolved_spec.cache_write_cost_per_mtok,
         )
+        set_model_ref(resolved_spec.model_ref)
 
     return model, credentials
 
@@ -576,8 +583,13 @@ def complete(
     deps_type=None,
     limits=None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
-    """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
-    return anyio.run(
+    """Synchronous wrapper for complete_async. Accepts single dict or list of dicts.
+
+    Usage records made inside the run are dispatched here, in the caller's
+    thread, once the loop has finished (see ``ledger.deferred_usage``).
+    """
+    with deferred_usage() as pending:
+        result = anyio.run(
         partial(
             complete_async,
             multipart_prompt,
@@ -601,6 +613,8 @@ def complete(
             limits=limits,
         )
     )
+    flush_usage(pending)
+    return result
 
 
 async def complete_incremental_async(
@@ -1117,7 +1131,9 @@ def complete_incremental(
             )
         ]
 
-    events = anyio.run(collect)
+    with deferred_usage() as pending:
+        events = anyio.run(collect)
+    flush_usage(pending)
     yield from events
 
 
@@ -1193,6 +1209,14 @@ __all__ = [
     "extract_jinja_variables",
     "progress_tracking",
     "clear_cache",
+    # Usage ledger
+    "UsageRecord",
+    "UsagePayload",
+    "CostBreakdown",
+    "usage_tracking",
+    "register_usage_handler",
+    "unregister_usage_handler",
+    "set_model_ref",
     # Validation
     "ParsedOptions",
     "parse_options",

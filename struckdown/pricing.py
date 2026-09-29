@@ -17,11 +17,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PriceLookup:
-    """Result of a price source lookup."""
+    """Result of a price source lookup.
+
+    The cache rates are None when the source does not publish them; a caller
+    charging cached tokens then falls back to the input rate.
+    """
 
     input_cost_per_mtok: Decimal
     output_cost_per_mtok: Decimal
     source: str
+    cache_read_cost_per_mtok: Optional[Decimal] = None
+    cache_write_cost_per_mtok: Optional[Decimal] = None
 
 
 class PriceSource(Protocol):
@@ -34,24 +40,31 @@ class PriceSource(Protocol):
     ) -> Optional[PriceLookup]: ...
 
 
-def _extract_genai_prices(prices) -> Optional[tuple[Decimal, Decimal]]:
-    """Extract per-mtok costs from a genai-prices model object.
+def _base(value):
+    """A tiered price's base rate, or the value itself."""
+    return getattr(value, "base", value)
 
-    Handles the .base attribute on tiered pricing structures.
+
+def _extract_genai_prices(prices) -> Optional[PriceLookup]:
+    """A ``PriceLookup`` from a genai-prices model's price object.
+
+    The cache rates are whatever the snapshot publishes for the model, which
+    is often only the read rate, and sometimes neither.
     """
     if not prices:
         return None
-    input_mtok = prices.input_mtok
-    output_mtok = prices.output_mtok
-    if hasattr(input_mtok, "base"):
-        input_mtok = input_mtok.base
-    if hasattr(output_mtok, "base"):
-        output_mtok = output_mtok.base
+    input_mtok = _base(getattr(prices, "input_mtok", None))
     if input_mtok is None:
         return None
-    return (
-        Decimal(str(input_mtok)),
-        Decimal(str(output_mtok)) if output_mtok is not None else Decimal("0"),
+    output_mtok = _base(getattr(prices, "output_mtok", None))
+    cache_read = _base(getattr(prices, "cache_read_mtok", None))
+    cache_write = _base(getattr(prices, "cache_write_mtok", None))
+    return PriceLookup(
+        input_cost_per_mtok=Decimal(str(input_mtok)),
+        output_cost_per_mtok=Decimal(str(output_mtok)) if output_mtok is not None else Decimal("0"),
+        source="genai-prices",
+        cache_read_cost_per_mtok=Decimal(str(cache_read)) if cache_read is not None else None,
+        cache_write_cost_per_mtok=Decimal(str(cache_write)) if cache_write is not None else None,
     )
 
 
@@ -78,11 +91,7 @@ class GenAIPriceSource:
                 if result and result.model and result.model.prices:
                     costs = _extract_genai_prices(result.model.prices)
                     if costs:
-                        return PriceLookup(
-                            input_cost_per_mtok=costs[0],
-                            output_cost_per_mtok=costs[1],
-                            source=self.name,
-                        )
+                        return costs
             except Exception:
                 pass
 
@@ -97,11 +106,7 @@ class GenAIPriceSource:
                         if model and model.prices:
                             costs = _extract_genai_prices(model.prices)
                             if costs:
-                                return PriceLookup(
-                                    input_cost_per_mtok=costs[0],
-                                    output_cost_per_mtok=costs[1],
-                                    source=self.name,
-                                )
+                                return costs
                             break
 
             # try all providers
@@ -110,11 +115,7 @@ class GenAIPriceSource:
                 if model and model.prices:
                     costs = _extract_genai_prices(model.prices)
                     if costs:
-                        return PriceLookup(
-                            input_cost_per_mtok=costs[0],
-                            output_cost_per_mtok=costs[1],
-                            source=self.name,
-                        )
+                        return costs
 
             return None
         except ImportError:
@@ -183,14 +184,16 @@ class OpenRouterPriceSource:
             return None
 
         completion_per_token = pricing.get("completion")
+
+        def _per_mtok(value):
+            return Decimal(str(value)) * 1_000_000 if value not in (None, "") else None
+
         return PriceLookup(
             input_cost_per_mtok=Decimal(str(prompt_per_token)) * 1_000_000,
-            output_cost_per_mtok=(
-                Decimal(str(completion_per_token)) * 1_000_000
-                if completion_per_token
-                else Decimal("0")
-            ),
+            output_cost_per_mtok=_per_mtok(completion_per_token) or Decimal("0"),
             source=self.name,
+            cache_read_cost_per_mtok=_per_mtok(pricing.get("input_cache_read")),
+            cache_write_cost_per_mtok=_per_mtok(pricing.get("input_cache_write")),
         )
 
 

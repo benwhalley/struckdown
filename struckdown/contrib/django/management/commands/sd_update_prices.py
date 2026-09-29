@@ -52,7 +52,8 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.SUCCESS(
                         f"  Updated: {model.name} "
-                        f"(in: {model.input_cost_per_mtok}, out: {model.output_cost_per_mtok})"
+                        f"(in: {model.input_cost_per_mtok}, out: {model.output_cost_per_mtok}, "
+                        f"cache read: {model.cache_read_cost_per_mtok})"
                     )
                 )
             else:

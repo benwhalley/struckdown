@@ -1,6 +1,44 @@
 
 # Changelog
 
+### 0.16.0
+
+**Added**
+- A usage ledger. Every provider request struckdown makes -- a completion, a
+  round of a tool loop, an embedding batch, a transcription, a cache hit, a
+  failed request -- is reported as a `UsageRecord` to whoever is listening:
+  `register_usage_handler(fn)` for the process, `usage_tracking(fn)` for a
+  block. The record carries the model, token counts (cache reads and writes
+  apart), a `CostBreakdown` with the input and output sides and the prices
+  used, timing, the slot it ran in, and, when a handler asks, the request and
+  response bodies. From async code a handler may return an awaitable and it is
+  awaited; records made on a worker thread on the caller's behalf are
+  dispatched in the caller's own thread. See docs/how-to/usage-ledger.md.
+- `struckdown.contrib.django` gains the ledger's tables: `LLMSpan` (what a
+  call belonged to: the request or task, with the user and a link to the
+  record that holds the text), `LLMCall` (one row per request, with the prices
+  and model details copied onto it and `total_cost` a generated column) and
+  `LLMCallPayload` (bodies, opt-in, on a short retention window). With them:
+  `llm_span(...)` for naming a block of calls, `SpanMiddleware` and
+  `install_celery_hooks()` for a root span per request and task, a costs page
+  at `/admin/sd_models/llmcosts/`, read-only changelists, `ledger.record_call`
+  / `record_openai_response` for calls made outside struckdown, and
+  `sd_prune_ledger`. Needs `django.contrib.contenttypes`.
+- `AvailableModel.cache_read_cost_per_mtok` and `cache_write_cost_per_mtok`,
+  filled by `sd_update_prices` where the price source publishes them.
+  `ModelSpec` and `set_model_pricing` take the same two rates, and
+  `ModelSpec.model_ref` names the caller's own model record on every usage
+  record. `get_llm_and_credentials()` sets both.
+- A Django test harness for the contrib app (`pip install struckdown[test]`).
+
+**Changed**
+- `_calc_cost_from_usage` returns a `CostBreakdown`, not a float; the
+  completion dict's `response_cost` is unchanged. Stored pricing now charges
+  cached prompt tokens at the cache rate when one is known (previously the full
+  input rate, which overstated cache-heavy use).
+- A tool loop's completion dict now carries the run's `response_cost` (the sum
+  over its responses) instead of `None`.
+
 ### 0.14.0
 
 **Changed**

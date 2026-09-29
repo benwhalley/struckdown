@@ -6,6 +6,7 @@ Uses pydantic-ai for structured LLM calls and embeddings.
 import json
 import logging
 import os
+import time
 import traceback
 import warnings
 from contextvars import ContextVar
@@ -285,6 +286,11 @@ from .errors import BadRequestError as SDBadRequestError
 from .errors import ConnectionError as SDConnectionError
 from .errors import ContentFilterError, ContextWindowError, LLMError
 from .errors import RateLimitError as SDRateLimitError
+from .ledger import (CostBreakdown, ResponseStandIn, StoredPricing, UsagePayload,
+                     cost_from_price_calc, cost_from_stored, deferred_usage, emit,
+                     emit_async, flush_usage, flush_usage_async,
+                     record_from_response, wants_payload)
+from .ledger import now as _utcnow
 from .messages import split_for_agent, to_openai_messages
 
 
@@ -432,24 +438,46 @@ _cache_miss_marker: ContextVar[bool] = ContextVar("cache_miss", default=False)
 
 # Per-call pricing override from ModelSpec. When set, _calc_cost_from_usage()
 # uses these values instead of pydantic-ai or genai-prices.
-# Tuple of (input_cost_per_mtok, output_cost_per_mtok).
-_model_pricing: ContextVar[Optional[Tuple[float, float]]] = ContextVar(
+_model_pricing: ContextVar[Optional[StoredPricing]] = ContextVar(
     "model_pricing", default=None
 )
 
 
 def set_model_pricing(
-    input_cost_per_mtok: Optional[float], output_cost_per_mtok: Optional[float]
+    input_cost_per_mtok: Optional[float],
+    output_cost_per_mtok: Optional[float],
+    cache_read_cost_per_mtok: Optional[float] = None,
+    cache_write_cost_per_mtok: Optional[float] = None,
 ) -> None:
     """Set pricing for the current context (used by cost calculation).
 
-    When both values are provided, _calc_cost_from_usage() uses them instead of
-    pydantic-ai or genai-prices. Pass None to clear.
+    When both input and output values are provided, _calc_cost_from_usage() uses
+    them instead of pydantic-ai or genai-prices. The cache rates are optional;
+    a missing one is charged at the input rate. Pass None to clear.
     """
     if input_cost_per_mtok is not None and output_cost_per_mtok is not None:
-        _model_pricing.set((input_cost_per_mtok, output_cost_per_mtok))
+        _model_pricing.set(
+            StoredPricing(
+                input_per_mtok=float(input_cost_per_mtok),
+                output_per_mtok=float(output_cost_per_mtok),
+                cache_read_per_mtok=(
+                    float(cache_read_cost_per_mtok)
+                    if cache_read_cost_per_mtok is not None
+                    else None
+                ),
+                cache_write_per_mtok=(
+                    float(cache_write_cost_per_mtok)
+                    if cache_write_cost_per_mtok is not None
+                    else None
+                ),
+            )
+        )
     else:
         _model_pricing.set(None)
+
+
+def get_model_pricing() -> Optional[StoredPricing]:
+    return _model_pricing.get()
 
 # Shared concurrency control for all LLM calls
 # This limits concurrent API calls across templates AND within together blocks
@@ -907,6 +935,8 @@ def _build_completion_dict(
     response_cost = cost
     if response_cost is None and model_response is not None:
         response_cost = _calc_cost_from_usage(model_response, model_name)
+    if isinstance(response_cost, CostBreakdown):
+        response_cost = response_cost.total_cost
 
     # extract thinking content from model response (empty string -> None)
     thinking = None
@@ -954,13 +984,17 @@ def _normalise_pricing_model(model_name: str) -> tuple[str, Optional[str]]:
             return model_name, None
 
 
-def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
+def _calc_cost_from_usage(model_response, model_name: str) -> Optional[CostBreakdown]:
     """Compute USD cost from a model response's usage data.
 
     Priority:
     1. ModelSpec pricing (via _model_pricing context var) -- caller-supplied per-mtok rates
     2. pydantic-ai's built-in .cost() method
     3. genai-prices library fallback
+
+    Returns a :class:`CostBreakdown` (input and output sides, with the prices
+    used) or None when no route can price the call. ``.total_cost`` is the old
+    single figure.
     """
     usage = getattr(model_response, "usage", None)
     if not usage:
@@ -972,18 +1006,22 @@ def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
     # 1. Check for caller-supplied pricing from ModelSpec
     pricing = _model_pricing.get()
     if pricing is not None:
-        input_per_mtok, output_per_mtok = pricing
-        cost = (input_tokens * input_per_mtok / 1_000_000) + (
-            output_tokens * output_per_mtok / 1_000_000
+        return cost_from_stored(
+            pricing,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=getattr(usage, "cache_read_tokens", 0) or 0,
+            cache_write_tokens=getattr(usage, "cache_write_tokens", 0) or 0,
         )
-        return cost
 
     # 2. PydanticAI already knows how to price a ModelResponse using usage plus
     # provider metadata; prefer that path over our local reconstruction.
     response_cost = getattr(model_response, "cost", None)
     if callable(response_cost):
         try:
-            return _extract_total_price(response_cost())
+            breakdown = cost_from_price_calc(response_cost(), "pydantic_ai")
+            if breakdown is not None:
+                return breakdown
         except Exception:
             pass
 
@@ -1014,7 +1052,7 @@ def _calc_cost_from_usage(model_response, model_name: str) -> Optional[float]:
             provider_id=provider_name or provider_id,
             provider_api_url=provider_url,
         )
-        return _extract_total_price(price)
+        return cost_from_price_calc(price, "genai_prices")
     except Exception:
         return None
 
@@ -1128,6 +1166,103 @@ def _without_sampling_params(model: PydanticAIModel, settings: ModelSettings) ->
     return ModelSettings(
         **{k: v for k, v in settings.items() if k not in _SAMPLING_SETTINGS}
     )
+
+
+def _record_for_completion(
+    model_name,
+    credentials,
+    com_dict: dict,
+    messages,
+    *,
+    started_at,
+    duration_ms,
+    cache_hit: bool,
+):
+    """The usage record for a finished ``structured_chat`` call.
+
+    Built from the completion dict rather than the response, because on a cache
+    hit the dict is all there is. The cost is re-derived from the token counts
+    when the dict carries no breakdown (a cache hit made before this version, or
+    a call priced by a route that returned only a total).
+    """
+    response = ResponseStandIn(com_dict)
+    cost = None
+    if not cache_hit:
+        cost = com_dict.get("_cost_breakdown")
+        if cost is None:
+            cost = _calc_cost_from_usage(response, model_name)
+    else:
+        cost = CostBreakdown(input_cost=0.0, output_cost=0.0, source="cache")
+    payload = None
+    if wants_payload():
+        payload = UsagePayload(
+            request={"messages": messages},
+            response={"output": com_dict.get("_output")},
+        )
+    return record_from_response(
+        kind="chat",
+        model_name=model_name,
+        response=response,
+        cost=cost,
+        credentials=credentials,
+        started_at=started_at,
+        duration_ms=duration_ms,
+        cache_hit=cache_hit,
+        payload=payload,
+    )
+
+
+def _failure_record(
+    model_name, credentials, error_class, started_at, duration_ms, cache_hit=False, kind="chat"
+):
+    return record_from_response(
+        kind=kind,
+        model_name=model_name,
+        response=None,
+        cost=None,
+        credentials=credentials,
+        started_at=started_at,
+        duration_ms=duration_ms,
+        cache_hit=cache_hit,
+        ok=False,
+        error_class=error_class,
+    )
+
+
+def _emit_failure(model_name, credentials, error_class, started_at, duration_ms, cache_hit=False):
+    emit(_failure_record(model_name, credentials, error_class, started_at, duration_ms, cache_hit))
+
+
+def _records_for_run(result, model_name, credentials, messages, *, started_at, elapsed_ms):
+    """One usage record per model response in an agent run.
+
+    A tool loop is several provider requests, each with its own usage; summing
+    them (which the completion dict does) would make a five-round loop look
+    like one enormous call. Only the last record carries the run's duration:
+    pydantic-ai does not time individual requests.
+    """
+    responses = [m for m in result.all_messages() if hasattr(m, "usage")]
+    records = []
+    for i, response in enumerate(responses):
+        payload = None
+        if wants_payload():
+            payload = UsagePayload(
+                request={"messages": messages} if i == 0 else None,
+                response={"parts": to_openai_messages([response])},
+            )
+        records.append(
+            record_from_response(
+                kind="chat",
+                model_name=model_name,
+                response=response,
+                cost=_calc_cost_from_usage(response, model_name),
+                credentials=credentials,
+                started_at=started_at,
+                duration_ms=elapsed_ms if i == len(responses) - 1 else None,
+                payload=payload,
+            )
+        )
+    return records
 
 
 def _run_agent_sync(
@@ -1247,12 +1382,19 @@ def _call_llm_cached(
         cost=run_cost,
         model_name=agent.model.model_name,
     )
+    com_dict["_cost_breakdown"] = run_cost
+    com_dict["_provider_response_id"] = str(
+        getattr(model_response, "provider_response_id", "") or ""
+    )
+    com_dict["_finish_reason"] = str(getattr(model_response, "finish_reason", "") or "")
 
     # mark that we made a fresh API call (this code only runs on cache miss)
     _cache_miss_marker.set(True)
 
     res_dict = output.model_dump() if hasattr(output, "model_dump") else output
-    return _strip_null_bytes(res_dict), com_dict
+    res_dict = _strip_null_bytes(res_dict)
+    com_dict["_output"] = res_dict
+    return res_dict, com_dict
 
 
 def structured_chat(
@@ -1339,6 +1481,7 @@ def structured_chat(
 
     # Reset cache miss marker before call
     _cache_miss_marker.set(False)
+    started_at = _utcnow()
 
     try:
         res_dict, com_dict = _call_llm_cached(
@@ -1359,6 +1502,13 @@ def structured_chat(
         logger.debug(
             f"{LC.RED}LLM CALL FAILED [{elapsed_ms:.0f}ms]{call_hint}: {e}{LC.RESET}"
         )
+        _emit_failure(llm.model_name, credentials, type(e).__name__, started_at, elapsed_ms)
+        raise
+    except Exception as e:
+        # not an LLMError: a provider client that would not build, a bug. Still
+        # a request that was attempted, so still a row.
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        _emit_failure(llm.model_name, credentials, type(e).__name__, started_at, elapsed_ms)
         raise
     finally:
         cancel_event.set()  # stop the warning thread
@@ -1371,6 +1521,9 @@ def structured_chat(
         logger.debug(
             f"{LC.RED}LLM CALL FAILED (cached) [{elapsed_ms:.0f}ms]{call_hint}: {error_class}{LC.RESET}"
         )
+        _emit_failure(
+            llm.model_name, credentials, error_class, started_at, elapsed_ms, cache_hit=True
+        )
         prompt_repr = next((m["content"] for m in messages if m["role"] == "user"), "")
         raise _make_cached_error(error_class, error_msg, prompt_repr, llm.model_name)
 
@@ -1382,6 +1535,17 @@ def structured_chat(
     com = Box(com_dict)
 
     elapsed_ms = (time.monotonic() - start_time) * 1000
+    emit(
+        _record_for_completion(
+            llm.model_name,
+            credentials,
+            com_dict,
+            messages,
+            started_at=started_at,
+            duration_ms=elapsed_ms,
+            cache_hit=was_cached,
+        )
+    )
     cache_status = " (cached)" if was_cached else ""
     logger.debug(was_cached and "Cache hit" or "")
     logger.debug(
@@ -1422,19 +1586,22 @@ async def structured_chat_async(
         )
 
     if not stream:
-        # non-streaming: wrap existing sync path in a thread
-        res, com = await anyio.to_thread.run_sync(
-            lambda: structured_chat(
-                messages=messages,
-                return_type=return_type,
-                llm=llm,
-                credentials=credentials,
-                max_retries=max_retries,
-                extra_kwargs=extra_kwargs,
-                strict_params=strict_params,
-            ),
-            abandon_on_cancel=True,
-        )
+        # non-streaming: wrap existing sync path in a thread. Its usage records
+        # are dispatched here, on the loop, not from the worker thread.
+        with deferred_usage() as pending:
+            res, com = await anyio.to_thread.run_sync(
+                lambda: structured_chat(
+                    messages=messages,
+                    return_type=return_type,
+                    llm=llm,
+                    credentials=credentials,
+                    max_retries=max_retries,
+                    extra_kwargs=extra_kwargs,
+                    strict_params=strict_params,
+                ),
+                abandon_on_cancel=True,
+            )
+        await flush_usage_async(pending)
         yield (res, com, True)
         return
 
@@ -1510,6 +1677,9 @@ async def structured_chat_async(
     # debounce: configurable via extra_kwargs, default 200ms for responsive feel
     debounce_s = (extra_kwargs or {}).get("stream_debounce_ms", 200) / 1000.0
 
+    stream_started_at = _utcnow()
+    stream_started = time.monotonic()
+
     # try tool mode first, fall back to prompted mode
     streaming_failed = False
     effort_retried = False
@@ -1564,25 +1734,39 @@ async def structured_chat_async(
                 if not effort_retried and _retry_effort(e, llm.model_name, settings):
                     effort_retried = True
                     continue
+                await emit_async(
+                    _failure_record(
+                        llm.model_name, credentials, type(e).__name__, stream_started_at,
+                        (time.monotonic() - stream_started) * 1000,
+                    )
+                )
                 raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
             except Exception as e:
+                await emit_async(
+                    _failure_record(
+                        llm.model_name, credentials, type(e).__name__, stream_started_at,
+                        (time.monotonic() - stream_started) * 1000,
+                    )
+                )
                 raise _make_struckdown_error(e, prompt_repr, llm.model_name) from e
         if streaming_failed or mode_succeeded:
             break
 
     # non-streaming fallback: use run_sync which supports retries
     if streaming_failed:
-        res_dict, com_dict = await anyio.to_thread.run_sync(
-            lambda: structured_chat(
-                messages=messages,
-                return_type=return_type,
-                llm=llm,
-                credentials=credentials,
-                max_retries=3,
-                extra_kwargs=extra_kwargs,
-                strict_params=strict_params,
+        with deferred_usage() as pending:
+            res_dict, com_dict = await anyio.to_thread.run_sync(
+                lambda: structured_chat(
+                    messages=messages,
+                    return_type=return_type,
+                    llm=llm,
+                    credentials=credentials,
+                    max_retries=3,
+                    extra_kwargs=extra_kwargs,
+                    strict_params=strict_params,
+                )
             )
-        )
+        await flush_usage_async(pending)
         com_dict["_cached"] = False
         # reconstruct the output as a pydantic model for consistency
         if hasattr(return_type, "model_validate"):
@@ -1609,10 +1793,28 @@ async def structured_chat_async(
         model_name=llm.model_name,
     )
     com_dict["_cached"] = False
+    com_dict["_cost_breakdown"] = stream_cost
 
     # store the streamed result into joblib's cache so subsequent calls hit cache
     res_dict = final_output.model_dump() if hasattr(final_output, "model_dump") else final_output
     res_dict = _strip_null_bytes(res_dict)
+    com_dict["_output"] = res_dict
+    await emit_async(
+        record_from_response(
+            kind="chat",
+            model_name=llm.model_name,
+            response=last_response,
+            cost=stream_cost,
+            credentials=credentials,
+            started_at=stream_started_at,
+            duration_ms=(time.monotonic() - stream_started) * 1000,
+            payload=(
+                UsagePayload(request={"messages": messages}, response={"output": res_dict})
+                if wants_payload()
+                else None
+            ),
+        )
+    )
     _store_in_cache(
         messages=messages,
         model_name=llm.model_name,
@@ -1752,25 +1954,77 @@ async def _get_api_embedding_batch_async(
     embedding_model = OpenAIEmbeddingModel(model_name, provider=provider)
 
     settings = {"dimensions": dimensions} if dimensions else {}
-    result = await embedding_model.embed(
-        list(map(str, batch)),
-        input_type="document",
-        settings=settings,
-    )
+    started_at = _utcnow()
+    started = time.monotonic()
+    try:
+        result = await embedding_model.embed(
+            list(map(str, batch)),
+            input_type="document",
+            settings=settings,
+        )
+    except Exception as e:
+        await emit_async(
+            record_from_response(
+                kind="embedding",
+                model_name=model_name,
+                response=None,
+                cost=None,
+                credentials=LLMCredentials(api_key=api_key, base_url=base_url or None),
+                started_at=started_at,
+                duration_ms=(time.monotonic() - started) * 1000,
+                ok=False,
+                error_class=type(e).__name__,
+            )
+        )
+        raise
 
     logger.debug(f"API embedding batch complete: {len(result.embeddings)} embeddings")
 
     # extract token count and cost from result
     total_tokens = result.usage.total_tokens if result.usage else 0
 
-    cost = None
-    try:
-        price = result.cost()
-        cost = price.total if price else None
-    except Exception as e:
-        logger.debug(f"Could not calculate embedding cost: {e}")
+    breakdown = _embedding_cost(result, total_tokens)
+    cost = breakdown.total_cost if breakdown is not None else None
+
+    usage_stand_in = ResponseStandIn({"usage": {"prompt_tokens": total_tokens}})
+    await emit_async(
+        record_from_response(
+            kind="embedding",
+            model_name=model_name,
+            response=usage_stand_in,
+            cost=breakdown,
+            credentials=LLMCredentials(api_key=api_key, base_url=base_url or None),
+            started_at=started_at,
+            duration_ms=(time.monotonic() - started) * 1000,
+            payload=(
+                UsagePayload(request={"texts": len(batch)}, response=None)
+                if wants_payload()
+                else None
+            ),
+        )
+    )
 
     return result.embeddings, total_tokens, cost
+
+
+def _embedding_cost(result, total_tokens: int) -> Optional[CostBreakdown]:
+    """Price an embedding batch: the caller's stored rate first, else pydantic-ai's."""
+    pricing = _model_pricing.get()
+    if pricing is not None:
+        return cost_from_stored(pricing, input_tokens=total_tokens, output_tokens=0)
+    try:
+        price = result.cost()
+    except Exception as e:
+        logger.debug(f"Could not calculate embedding cost: {e}")
+        return None
+    if price is None:
+        return None
+    total = getattr(price, "total", None)
+    if total is None:
+        total = getattr(price, "total_price", None)
+    if total is None:
+        return None
+    return CostBreakdown(input_cost=float(total), output_cost=0.0, source="pydantic_ai")
 
 
 # Type alias for progress callback: receives count of items just completed
@@ -2166,7 +2420,10 @@ def get_embedding(texts: List[str], **kwargs) -> EmbeddingResultList:
         if "no running event loop" not in str(e):
             raise
 
-    return asyncio.run(get_embedding_async(texts, **kwargs))
+    with deferred_usage() as pending:
+        result = asyncio.run(get_embedding_async(texts, **kwargs))
+    flush_usage(pending)
+    return result
 
 
 # --- Cross-encoder similarity ---
@@ -2479,12 +2736,19 @@ async def run_agent_with_tools(
             lambda kind, payload: _announce_safely(on_tool_event, kind, payload)
         )
 
+    started_at = _utcnow()
+
     if not stream:
         result = await agent.run(user_prompt, **run_kwargs)
         elapsed_ms = (_time.monotonic() - started) * 1000
         completion = _completion_dict_for_run(
             result, llm.model_name, messages, elapsed_ms
         )
+        for record in _records_for_run(
+            result, llm.model_name, credentials, messages,
+            started_at=started_at, elapsed_ms=elapsed_ms,
+        ):
+            await emit_async(record)
         yield (result.output, Box(completion), True)
         return
 
@@ -2512,6 +2776,11 @@ async def run_agent_with_tools(
                 completion = _completion_dict_for_run(
                     result, llm.model_name, messages, elapsed
                 )
+                for record in _records_for_run(
+                    result, llm.model_name, credentials, messages,
+                    started_at=started_at, elapsed_ms=elapsed,
+                ):
+                    await emit_async(record)
                 await out.put((await result.get_output(), Box(completion), True))
         except BaseException as exc:  # re-raised on the consumer's side
             await out.put(exc)
@@ -2659,6 +2928,16 @@ def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
             if type(part).__name__ == "ThinkingPart" and getattr(part, "content", ""):
                 thinking_steps.append(part.content)
 
+    # the run's cost is the sum over its responses; None if any is unpriced
+    costs = [
+        _calc_cost_from_usage(m, model_name)
+        for m in result.all_messages()
+        if hasattr(m, "usage")
+    ]
+    run_cost = (
+        sum(c.total_cost for c in costs) if costs and all(c is not None for c in costs) else None
+    )
+
     return {
         "usage": {
             "prompt_tokens": input_tokens,
@@ -2669,7 +2948,7 @@ def _completion_dict_for_run(result, model_name, messages, elapsed_ms):
                 "cache_creation_tokens": getattr(usage, "cache_write_tokens", 0) or 0,
             },
         },
-        "_hidden_params": {"response_cost": None},
+        "_hidden_params": {"response_cost": run_cost},
         "_request_messages": messages,
         "_thinking": "\n\n".join(thinking_steps) or None,
         "_thinking_steps": thinking_steps,

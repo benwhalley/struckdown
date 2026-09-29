@@ -26,7 +26,8 @@ def test_calc_cost_uses_pydantic_ai_response_cost_when_available():
 
     cost = _calc_cost_from_usage(ResponseWithCost(), "azure:gpt-5-mini")
 
-    assert cost == pytest.approx(0.1234)
+    assert cost.total_cost == pytest.approx(0.1234)
+    assert cost.source == "pydantic_ai"
 
 
 def test_calc_cost_normalises_provider_prefixed_model_names():
@@ -35,7 +36,9 @@ def test_calc_cost_normalises_provider_prefixed_model_names():
     cost = _calc_cost_from_usage(response, "azure:gpt-5-mini")
 
     assert cost is not None
-    assert cost > 0
+    assert cost.total_cost > 0
+    assert cost.input_cost > 0 and cost.output_cost > 0
+    assert cost.source == "genai_prices"
 
 
 def test_build_completion_dict_fallback_uses_model_name_for_cost_lookup():
