@@ -1241,7 +1241,17 @@ def _records_for_run(result, model_name, credentials, messages, *, started_at, e
     like one enormous call. Only the last record carries the run's duration:
     pydantic-ai does not time individual requests.
     """
-    responses = [m for m in result.all_messages() if hasattr(m, "usage")]
+    # a response without usage (a provider that reported none) has nothing to
+    # bill and would only be a zero row
+    responses = [
+        m
+        for m in result.all_messages()
+        if hasattr(m, "usage")
+        and (
+            (getattr(m.usage, "input_tokens", 0) or 0)
+            or (getattr(m.usage, "output_tokens", 0) or 0)
+        )
+    ]
     records = []
     for i, response in enumerate(responses):
         payload = None
@@ -2772,6 +2782,9 @@ async def run_agent_with_tools(
             async with agent.run_stream(user_prompt, **run_kwargs) as result:
                 async for partial in result.stream_output(debounce_by=None):
                     await out.put((partial, None, False))
+                # the streamed response's usage is complete only once the
+                # output has been read, so gather that before counting
+                output = await result.get_output()
                 elapsed = (_time.monotonic() - started) * 1000
                 completion = _completion_dict_for_run(
                     result, llm.model_name, messages, elapsed
@@ -2781,7 +2794,7 @@ async def run_agent_with_tools(
                     started_at=started_at, elapsed_ms=elapsed,
                 ):
                     await emit_async(record)
-                await out.put((await result.get_output(), Box(completion), True))
+                await out.put((output, Box(completion), True))
         except BaseException as exc:  # re-raised on the consumer's side
             await out.put(exc)
         finally:

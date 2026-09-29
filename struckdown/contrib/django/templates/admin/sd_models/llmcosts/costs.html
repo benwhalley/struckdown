@@ -32,10 +32,10 @@
   <div><b>{% if h.cost_total is not None %}${{ h.cost_total|floatformat:2 }}{% else %}--{% endif %}</b> spent (priced calls)</div>
   <div><b>{{ h.calls }}</b> calls</div>
   <div><b>{{ h.users }}</b> users</div>
-  <div><b>{{ h.input_tokens }}</b> tokens in <span class="quiet">({{ h.cache_share }}% cached)</span></div>
+  <div><b>{{ h.input_tokens }}</b> tokens in <span class="quiet">{{ h.cache_share }}% from the provider's prompt cache</span></div>
   <div><b>{{ h.output_tokens }}</b> tokens out</div>
   <div><b>{{ h.unpriced }}</b> unpriced <span class="quiet">not in any total</span></div>
-  <div><b>{{ h.cache_hits }}</b> cache hits</div>
+  <div><b>{{ h.cache_hits }}</b> struckdown cache hits <span class="quiet">repeat prompts answered without a request</span></div>
   <div><b>{{ h.failed }}</b> failed</div>
 </div>
 {% endwith %}
@@ -43,7 +43,7 @@
 <h2>By feature</h2>
 <table>
   <thead><tr>
-    <th>Feature (root span)</th><th>Calls</th><th>Users</th><th>In</th><th>Cached</th><th>Out</th>
+    <th>Feature (root span)</th><th>Calls</th><th>Users</th><th>In</th><th title="Share of input tokens the provider served from its prompt cache">Prompt-cached</th><th>Out</th>
     <th>Input $</th><th>Output $</th><th>Total $</th><th>Per call</th><th>Per user</th><th>Unpriced</th>
   </tr></thead>
   <tbody>
@@ -71,7 +71,7 @@
 <h2>By model</h2>
 <table>
   <thead><tr>
-    <th>Model</th><th>Kind</th><th>Calls</th><th>In</th><th>Cached</th><th>Out</th>
+    <th>Model</th><th>Kind</th><th>Calls</th><th>In</th><th title="Share of input tokens the provider served from its prompt cache">Prompt-cached</th><th>Out</th>
     <th>Input $</th><th>Output $</th><th>Total $</th><th>Per call</th><th>Unpriced</th>
   </tr></thead>
   <tbody>
