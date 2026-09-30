@@ -75,6 +75,54 @@ DEFAULT_RETURN_TYPE = "respond"
 # Regex pattern for finding [[...]] slot placeholders
 SLOT_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
 
+# Jinja inside a slot's options: [[pick:srn|{{ srns }}]]. The template is
+# analysed with the whole options part swapped for this token, so the slot's
+# key and type are known up front; the options themselves are parsed from the
+# rendered text when the slot runs (see parse_rendered_slot).
+_JINJA_IN_SLOT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
+DYNAMIC_TOKEN = "__sd_dynamic__"
+
+
+def mask_slot_jinja(text: str) -> tuple[str, dict[str, str]]:
+    """``text`` with Jinja inside ``[[...]]`` replaced by a token, and
+    ``{slot key: raw inner text}`` for the slots that had any."""
+    dynamic: dict[str, str] = {}
+
+    from .errors import TemplateError
+
+    def _mask(m):
+        inner = m.group(1)
+        if not _JINJA_IN_SLOT.search(inner):
+            return m.group(0)
+        head, pipe, _ = inner.partition("|")
+        if not pipe or _JINJA_IN_SLOT.search(head):
+            raise TemplateError(
+                f"[[{inner}]]: Jinja can only go in a slot's options, after the |, "
+                "not in its name or type"
+            )
+        # the options are parsed from the rendered text when the slot runs
+        dynamic[extract_slot_key(head)] = inner
+        return f"[[{head}|{DYNAMIC_TOKEN}]]"
+
+    return SLOT_PATTERN.sub(_mask, text), dynamic
+
+
+def parse_rendered_slot(key: str, inner: str) -> "PromptPart":
+    """A slot with Jinja in its options, parsed from its rendered text."""
+    from .errors import TemplateError
+
+    lark, _ = parser_with_state()
+    try:
+        parts = {k: v for segment in lark.parse(f"[[{inner}]]") for k, v in segment.items() if k}
+    except Exception as e:
+        raise TemplateError(
+            f"slot [[{key}]] rendered as [[{inner}]], which isn't valid slot syntax: {e}",
+            original_error=e,
+        ) from e
+    if key not in parts:
+        raise TemplateError(f"slot [[{key}]] rendered as [[{inner}]], which names a different slot")
+    return parts[key]
+
 # Mini-grammar for parsing just the inner content of [[...]] slots
 # This is a subset of the main grammar, used for extracting slot keys
 _slot_body_grammar = """

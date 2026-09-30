@@ -124,6 +124,28 @@ sd chat 'Module code: [[code|pattern="\w{4}\d+"]]'
 sd chat 'Postcode: [[postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]'
 ```
 
+### Options from Variables
+
+A slot's options can come from Jinja, so a pick list or a setting can be built
+from the context or from an earlier slot:
+
+```
+Which student? [[pick:srn|{{ srns|join(',') }}]]
+Colour? [[colour]] Shade? [[pick:shade|"light {{ colour }}","dark {{ colour }}"]]
+Say hello [[greeting|temperature={{ temp }}]]
+```
+
+The options are read from the rendered text when the slot runs, with the same
+rules as options written out by hand: an option containing a space needs
+quotes. If the rendered options aren't valid, the run stops with an error
+naming the slot. Jinja can't go in a slot's name or type (before the `|`), and
+an expression containing `]` (such as `{{ opts[0] }}`) ends the slot early;
+use a filter or a variable instead.
+
+The rendered options are read as slot syntax, so fill them from values you
+control: a value containing `|` or `]]` changes the slot itself (`a,b|temperature=2`
+adds a setting). Don't put untrusted user input there.
+
 ## Template Variables
 
 Reference extracted values or input data:

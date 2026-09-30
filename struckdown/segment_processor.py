@@ -139,24 +139,22 @@ def build_slot_info_map(body_template: str) -> Dict[str, PromptPart]:
     Returns:
         Dict mapping slot key to PromptPart with return_type, options, etc.
     """
+    from .errors import TemplateError
+    from .parsing import mask_slot_jinja
+
+    masked, _ = mask_slot_jinja(body_template)
     try:
         lark, _ = parser_with_state()
-        parsed_segments = lark.parse(body_template)
-
-        # NamedSegment is an OrderedDict of (key, PromptPart) pairs
-        slot_map = {}
-        for segment in parsed_segments:
-            for key, part in segment.items():
-                if key:
-                    slot_map[key] = part
-
-        return slot_map
+        parsed_segments = lark.parse(masked)
     except ValueError:
         # Re-raise ValueError (e.g. unknown action errors) - these are user errors
         raise
     except Exception as e:
-        logger.warning(f"Failed to parse template for slot info: {e}")
-        return {}
+        # a template whose slots don't parse must not run as if it had none
+        raise TemplateError(f"Could not parse the template's slots: {e}", original_error=e) from e
+
+    # NamedSegment is an OrderedDict of (key, PromptPart) pairs
+    return {key: part for segment in parsed_segments for key, part in segment.items() if key}
 
 
 def render_template(
@@ -176,10 +174,13 @@ def render_template(
     """
     from jinja2 import StrictUndefined
 
+    from .attachments import canonicalise
+    from .jinja_utils import struckdown_finalize
+
     undefined_class = StrictUndefined if strict_undefined else SilentUndefined
-    env = ImmutableSandboxedEnvironment(undefined=undefined_class)
+    env = ImmutableSandboxedEnvironment(undefined=undefined_class, finalize=struckdown_finalize)
     template = env.from_string(template_str)
-    return template.render(**context)
+    return canonicalise(template.render(**context))
 
 
 async def _process_together_group(
@@ -542,6 +543,23 @@ async def process_segment_with_delta_incremental(
     # Parse template once with main parser to get slot info (return types, options, etc.)
     slot_info_map = build_slot_info_map(body_template)
 
+    # slots with Jinja in their options are parsed again from each render
+    from .parsing import mask_slot_jinja, parse_rendered_slot
+
+    _, dynamic_slots = mask_slot_jinja(body_template)
+
+    def resolved_infos(rendered_text: str) -> Dict[str, PromptPart]:
+        if not dynamic_slots:
+            return slot_info_map
+        return {
+            **slot_info_map,
+            **{
+                key: parse_rendered_slot(key, inner)
+                for key, _, _, inner in find_slots_with_positions(rendered_text)
+                if key in dynamic_slots
+            },
+        }
+
     # Analyze template for conditional dependencies if not provided
     if analysis is None:
         analysis = analyze_template(body_template)
@@ -553,14 +571,17 @@ async def process_segment_with_delta_incremental(
     last_slot_end = 0  # Position after the last filled slot placeholder
     processed_together_groups: Set[str] = set()  # Track processed parallel groups
 
+    from .attachments import canonicalise, forbid_images
+
     # Add system message from globals (caller passes accumulated globals)
     if global_system_messages:
         combined_system = "\n\n".join(global_system_messages)
+        forbid_images(combined_system, "a system prompt")
         messages.append({"role": "system", "content": combined_system})
 
     # Add header message from globals (sent as user role, appears after system)
     if global_header_messages:
-        combined_header = "\n\n".join(global_header_messages)
+        combined_header = canonicalise("\n\n".join(global_header_messages))
         messages.append({"role": "user", "content": combined_header})
 
     # Initial render of body
@@ -572,7 +593,7 @@ async def process_segment_with_delta_incremental(
     # a turn in the conversation the other slots are having.
     import asyncio as _asyncio
 
-    speculative = speculative_halt_slots(slot_info_map, analysis, rendered)
+    speculative = speculative_halt_slots(resolved_infos(rendered), analysis, rendered)
     pending_halts: Dict[str, Any] = {}
 
     async def _run_halt(slot_info, snapshot):
@@ -651,7 +672,8 @@ async def process_segment_with_delta_incremental(
         slot_key, slot_start, slot_end, slot_inner = unfilled_slots[0]
 
         # Look up slot info from pre-parsed map
-        slot_info = slot_info_map.get(slot_key)
+        infos = resolved_infos(rendered)
+        slot_info = infos.get(slot_key)
         if slot_info is None:
             logger.warning(f"Slot {slot_key} not found in parsed info, skipping")
             filled_slots[slot_key] = None
@@ -668,7 +690,7 @@ async def process_segment_with_delta_incremental(
             together_events = []
             async for event in _process_together_group(
                 together_group=together_group,
-                slot_info_map=slot_info_map,
+                slot_info_map=infos,
                 unfilled_slots=unfilled_slots,
                 rendered=rendered,
                 messages=messages.copy(),  # Snapshot messages for parallel slots

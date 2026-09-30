@@ -278,6 +278,7 @@ class EmbeddingResultList(list):
         )
 
 
+from .attachments import check_request
 from .embedding_cache import (CachedEmbedding, clear_embedding_cache,
                               get_cached_embeddings, get_cached_pair_scores,
                               store_embeddings, store_pair_scores)
@@ -1342,6 +1343,7 @@ def _call_llm_cached(
               file=sys.stderr)
         print("=" * 80 + "\n", file=sys.stderr)
 
+    check_request(messages, model_name, credentials)
     instructions, history, user_prompt = split_for_agent(messages)
     prompt_repr = _prompt_repr(messages)
 
@@ -1687,6 +1689,7 @@ async def structured_chat_async(
         call_kwargs, strict=strict_params, model_name=llm.model_name
     )
 
+    check_request(messages, llm.model_name, credentials)
     instructions, history, user_prompt = split_for_agent(messages)
     prompt_repr = _prompt_repr(messages)
 
@@ -2722,6 +2725,7 @@ async def run_agent_with_tools(
 
     wrapped = [_instrumented_tool(t, on_tool_event) for t in (tools or [])]
 
+    check_request(messages, llm.model_name, credentials)
     instructions, history, user_prompt = split_for_agent(messages)
 
     agent_kwargs = {

@@ -266,6 +266,19 @@ Extract name: [[name]]
 Hello {{name}}, how are you? [[response]]
 ```
 
+### Images
+
+Wrap an image with `attach()` and it goes where its variable is rendered:
+
+```python
+from struckdown import complete, attach
+
+complete("Read this sheet: {{ sheet }} [[extract:answers]]", {"sheet": attach("scan.jpg")})
+```
+
+Images are resized, turned upright and stripped of metadata before sending. See
+[Images](docs/how-to/images.md); install with `pip install 'struckdown[vision]'`.
+
 ### Memory Boundaries
 
 Use `<checkpoint>` to create memory boundaries and save tokens:

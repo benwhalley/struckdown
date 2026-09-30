@@ -59,6 +59,10 @@ docs = [
     "mkdocs-material>=9.0",
     "pymdown-extensions>=10.0",
 ]
+vision = [
+    "pillow>=10",
+    "pillow-heif>=0.16",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
