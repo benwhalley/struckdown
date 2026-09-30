@@ -3,14 +3,14 @@ List Completions Example
 Shows generating lists with fixed counts and ranges
 -->
 
-Generate 3 creative business ideas: [[response{3}:idea]]
+Generate 3 creative business ideas: [[respond{3}:idea]]
 
 <checkpoint>
 
 For each business idea, evaluate the pros and cons:
 
 Business Ideas:
-{{ideas}}
+{{idea}}
 
 Generate between 2 and 4 evaluations: [[default{2,4}:evaluation]]
 
@@ -18,6 +18,6 @@ Generate between 2 and 4 evaluations: [[default{2,4}:evaluation]]
 
 Now generate as many potential names as you can for the best business idea:
 
-Ideas generated: {{response*:ideas}}
+Ideas generated: {{idea}}
 
-For each idea, create a name: [[response*:business_names]]
+For each idea, create a name: [[respond*:business_names]]

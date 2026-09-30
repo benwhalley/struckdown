@@ -37,7 +37,7 @@ Struckdown makes it easy to extract structured data from text using LLMs with a 
 Imagine you have unstructured data stored in free text. You can make it structured like this:
 
 ```bash
-% sd batch *.txt "Purpose, <5 words: [[purpose]]"
+% sd batch -i '*.txt' "Purpose, <5 words: [[purpose]]"
 [
   {
     "filename": "butter_robot.txt",
@@ -59,7 +59,7 @@ Imagine you have unstructured data stored in free text. You can make it structur
 Extract structured data with type constraints:
 
 ```bash
-% sd batch *.txt "Price: [[number:price]] Currency? [[pick:currency|schmeckles,brapples,flurbos]]"
+% sd batch -i '*.txt' "Price: [[number:price]] Currency? [[pick:currency|schmeckles,brapples,flurbos]]"
 [
   {
     "filename": "butter_robot.txt",
@@ -79,7 +79,7 @@ Extract structured data with type constraints:
 Batch operations accept JSON, so you can chain commands:
 
 ```bash
-% sd batch *.txt "Purpose: [[purpose]] Name: [[name]]" | \
+% sd batch -i '*.txt' "Purpose: [[purpose]] Name: [[name]]" | \
   sd batch "Most similar on Amazon: [[product]]" -k
 ```
 
@@ -102,7 +102,7 @@ Batch operations accept JSON, so you can chain commands:
 
 ```bash
 # Extract product data from a web page
-sd chat "{{source}} Extract the product name and price [[product:data]]" \
+sd chat "{{source}} Extract the product name and price [[record:data]]" \
   -s https://www.example.com/product/12345
 
 # Fetch raw HTML (no readability processing)
@@ -128,7 +128,7 @@ Extract:
 With an input spreadsheet containing a `product_url` column:
 
 ```bash
-sd batch products.xlsx template.sd -o results.xlsx
+sd batch -i products.xlsx -p template.sd -o results.xlsx
 ```
 
 Each row's URL will be fetched, processed with readability to extract the main content, and converted to markdown before being passed to the LLM.
@@ -139,8 +139,9 @@ Each row's URL will be fetched, processed with readability to extract the main c
 |-----------|---------|-------------|
 | `url` | required | URL to fetch (unquoted = variable, quoted = literal) |
 | `raw` | `false` | Return raw HTML instead of markdown |
-| `timeout` | `30` | Request timeout in seconds |
-| `max_chars` | `32000` | Max characters (0 = no limit) |
+| `timeout` | `8` | Request timeout in seconds (the `STRUCKDOWN_WEB_FETCH_TIMEOUT` environment variable changes the default) |
+| `max_chars` | `64000` | Max characters (0 = no limit) |
+| `playwright` | `false` | Fetch with a headless browser. Without it, a 401 or 403 response retries with Playwright. Needs the `playwright` package (`pip install playwright`, or the `dev` extra) and `playwright install chromium` |
 
 Example with parameters:
 ```
@@ -195,7 +196,7 @@ export DEFAULT_LLM="gpt-4o-mini"         # Model name
 Syntax highlighting for `.sd` files:
 
 ```bash
-cd vscode-extension && ./install.sh
+sd install-vscode
 ```
 
 Select theme: **Cmd/Ctrl+Shift+P** → "Color Theme" → "Struckdown Dark"
@@ -295,16 +296,16 @@ echo "Process this" | sd chat
 
 ```bash
 # Basic usage
-sd batch *.txt "Extract [[name]]" -o results.json
+sd batch -i '*.txt' "Extract [[name]]" -o results.json
 
 # With prompt file
-sd batch *.txt -p prompt.sd -o results.csv
+sd batch -i '*.txt' -p prompt.sd -o results.csv
 
 # Keep input fields
-sd batch *.txt "[[summary]]" -k
+sd batch -i '*.txt' "[[summary]]" -k
 
 # Chain operations
-sd batch *.txt "[[purpose]]" | sd batch "Similar: [[product]]" -k
+sd batch -i '*.txt' "[[purpose]]" | sd batch "Similar: [[product]]" -k
 ```
 
 **Output formats** (auto-detected from extension):
@@ -313,30 +314,33 @@ sd batch *.txt "[[purpose]]" | sd batch "Similar: [[product]]" -k
 - `.xlsx` -- Excel spreadsheet
 - None -- Pretty-printed to stdout
 
-### `sd check` - Validate Prompts
+### `sd explain` - Validate Prompts
 
-Check prompt syntax and display execution plan:
+Check prompt syntax and display the execution plan:
 
 ```bash
 # Validate and show structure
-sd check prompt.sd
+sd explain prompt.sd
+
+# Write the plan as an HTML page
+sd explain prompt.sd -o plan.html
 ```
 
-Shows system prompt info, sections, completions, dependencies, and line numbers.
+Shows external inputs, sections, completions, dependencies, line numbers and any parsing errors. `sd check` is an alias.
 
-### `sd graph` - Visualize Prompts
+### `sd graph` - Dependency Graph
 
-Generate dependency graph visualizations:
+Print the section dependency graph as Mermaid diagram text:
 
 ```bash
-# Generate HTML visualization (default)
+# Print to stdout
 sd graph prompt.sd
 
-# Generate Mermaid diagram text
+# Write to a file
 sd graph prompt.sd -o diagram.mmd
 ```
 
-Creates interactive diagrams showing sections, completions, dependencies, and execution flow.
+The diagram shows sections with their slot names, the dependencies between them and external inputs. For a rendered view, use `sd explain prompt.sd -o plan.html`.
 
 ### `sd flat` - Flatten Templates
 
@@ -354,40 +358,25 @@ Useful for debugging includes or creating self-contained templates.
 
 ## File Includes
 
-Struckdown supports file includes using Jinja2's `{% include %}` syntax:
+Use `<include src="..."/>` to pull another file into a template:
 
 ```struckdown
-{# Include shared system prompt #}
-{% include 'common/system.sd' %}
-
-{# Include evaluation rubric #}
-{% include 'rubrics/essay_criteria.txt' %}
+<include src="common/system.sd"/>
+<include src="rubrics/essay_criteria.txt"/>
 
 Process: {{input}}
 Result: [[output]]
 ```
 
-**Search paths** (in priority order):
-1. Same directory as template file
-2. `templates/` subdirectory relative to template file
-3. `./includes/` (project-local includes)
-4. `./templates/` (project-local templates)
-5. `~/.struckdown/includes/` (global user includes)
+Includes are inlined before the template is rendered, so an included file can contain slots, `{{variables}}` and further includes. The file is looked up in, in order:
 
-**Advanced includes:**
+1. the directory of the template file (when the prompt comes from a file, e.g. `sd chat -p prompt.sd`, or `template_path=` in Python)
+2. `./templates/` in the current directory (CLI only, when it exists)
+3. directories passed with `-I/--include-path` on the CLI, or `include_paths=` in Python
 
-```struckdown
-{# Conditional includes #}
-{% if verbose %}
-  {% include 'detailed_instructions.sd' %}
-{% else %}
-  {% include 'brief_instructions.sd' %}
-{% endif %}
+A missing file is an error that lists the directories searched.
 
-{# Dynamic includes with variables #}
-{% set rubric = 'rubrics/' + grade_level + '.sd' %}
-{% include rubric %}
-```
+Jinja's `{% include %}` does not work when a prompt runs: `sd chat`, `sd batch` and `complete()` render templates without a file loader, so the include fails. Only `sd flat`, `sd graph` and `sd explain` expand `{% include %}`, for inspection. Those three search the template's directory, its `templates/` subdirectory, the current directory, `./includes/`, `./templates/` and `~/.struckdown/includes/`.
 
 ## Caching
 
@@ -412,16 +401,18 @@ export STRUCKDOWN_CACHE_SIZE=5120  # 5 GB
 Generate text embeddings using API or local models:
 
 ```python
-from struckdown import get_embedding
+from struckdown import LLMCredentials, get_embedding
+
+credentials = LLMCredentials.from_env()
 
 # API embeddings (default)
-embeddings = get_embedding(["text 1", "text 2"])
+embeddings = get_embedding(["text 1", "text 2"], credentials=credentials)
 
 # Local embeddings (requires: uv pip install struckdown[local])
 embeddings = get_embedding(texts, model="local/all-MiniLM-L6-v2")
 ```
 
-Use `local/model-name` prefix for any sentence-transformers model. API embeddings use `LLM_API_KEY` and `LLM_API_BASE` environment variables.
+Use the `local/model-name` prefix for any sentence-transformers model. API embeddings need `credentials`: the library does not read `LLM_API_KEY` and `LLM_API_BASE` itself. The CLI uses them as defaults, and `LLMCredentials.from_env()` builds credentials from them.
 
 ## Usage and costs
 
@@ -443,13 +434,13 @@ Extract multiple items:
 
 ```bash
 # Exactly 3 items
-sd chat "Name 3 fruits: [[3*pick:fruit|apple,banana,orange]]"
+sd chat "Name 3 fruits: [[pick{3}:fruit|apple,banana,orange]]"
 
 # Between 2 and 4 items
-sd chat "Name 2-4 animals: [[2:4*extract:animals]]"
+sd chat "Name 2-4 animals: [[extract{2,4}:animals]]"
 
 # Any number
-sd chat "List all mentioned: [[*extract:items]]"
+sd chat "List all mentioned: [[extract*:items]]"
 ```
 
 ### Date/Time Extraction
@@ -500,14 +491,18 @@ Note: Patterns must be quoted strings. Use `\\` for literal backslashes.
 Extend Struckdown with Python functions:
 
 ```python
-from struckdown import Actions, complete
+from struckdown import Actions, LLMCredentials, complete
 
 @Actions.register('uppercase')
 def uppercase_text(context, text: str):
     return text.upper()
 
 # Use in template - unquoted 'input' is a variable reference
-result = complete("[[@uppercase:loud|text=input]]", context={"input": "hello"})
+result = complete(
+    "[[@uppercase:loud|text=input]]",
+    context={"input": "hello"},
+    credentials=LLMCredentials.from_env(),
+)
 ```
 
 See **[Custom Actions Guide](docs/how-to/custom-actions.md)** for details.
@@ -553,10 +548,10 @@ Override per-slot settings:
 [[think:reasoning|temperature=0.3]]
 
 # Different model
-[[pick:choice|red,blue|model=gpt-4]]
+[[pick:choice|red,blue,model="gpt-4"]]
 
 # Combine
-[[extract:data|model=gpt-4,temperature=0.0]]
+[[extract:data|model="gpt-4",temperature=0.0]]
 ```
 
 ### Halting a Run

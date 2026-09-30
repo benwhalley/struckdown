@@ -14,7 +14,7 @@ This directory contains example files demonstrating Struckdown features.
 
 ### Advanced Features
 
-- **`06_list_completions.sd`** -- List generation (`3*[[item]]`, `*[[item]]`)
+- **`06_list_completions.sd`** -- List generation (`[[item{3}]]`, `[[item*]]`)
 - **`07_complex_workflow.sd`** -- Multi-step data analysis pipeline
 - **`08_template_tags.sd`** -- Dynamic content generation
 - **`11_temporal_extraction.sd`** -- Date/time extraction examples
@@ -42,10 +42,10 @@ This directory contains example files demonstrating Struckdown features.
 
 ```bash
 # Run an example
-python -c "
-from struckdown import chatter
+uv run python -c "
+from struckdown import LLMCredentials, complete
 template = open('examples/01_basic_completion.sd').read()
-result = chatter(template)
+result = complete(template, credentials=LLMCredentials.from_env())
 print(result.response)
 "
 ```
@@ -75,9 +75,9 @@ uv run python examples/test_examples.py
 ```
 [[variable]]              # Basic text completion
 [[type:variable]]         # Typed completion
-[[3*item]]                # Exactly 3 items
-[[2:4*item]]              # Between 2-4 items
-[[*item]]                 # Any number of items
+[[item{3}]]               # Exactly 3 items
+[[item{2,4}]]             # Between 2 and 4 items
+[[item*]]                 # Any number of items
 ```
 
 ### Types
@@ -151,7 +151,7 @@ echo "Price: $29.99" > test1.txt
 echo "Cost: $45.50" > test2.txt
 
 # Extract prices
-sd batch test*.txt "Price: [[number:price]]"
+sd batch -i 'test*.txt' "Price: [[number:price]]"
 ```
 
 ## Documentation

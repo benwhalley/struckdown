@@ -7,7 +7,7 @@ with optional min/max validation.
 Run with: uv run python examples/number_test_cases.py
 """
 
-from struckdown import LLM, LLMCredentials, chatter
+from struckdown import LLM, LLMCredentials, complete
 
 # Test case format: (description, prompt, expected_type, validation_function)
 TEST_CASES = [
@@ -402,7 +402,7 @@ def run_tests(verbose=False, stop_on_error=False):
                 if expects_exception:
                     # For validation error tests, we expect an exception
                     try:
-                        result = chatter(prompt, model=model, credentials=credentials)
+                        result = complete(prompt, model=model, credentials=credentials)
                         # If we got here, the validation didn't raise an error (TEST FAILED)
                         results["failed"].append(
                             (
@@ -464,7 +464,7 @@ def run_tests(verbose=False, stop_on_error=False):
                                 break
                 else:
                     # Normal test - run extraction and validate
-                    result = chatter(prompt, model=model, credentials=credentials)
+                    result = complete(prompt, model=model, credentials=credentials)
 
                     # Validate the result
                     if validate(result):

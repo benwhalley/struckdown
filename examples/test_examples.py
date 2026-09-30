@@ -12,8 +12,10 @@ from pathlib import Path
 # Suppress Pydantic serialization warnings from OpenAI/Anthropic SDK completion objects
 warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 
-from struckdown import chatter
+from struckdown import LLMCredentials, complete
 from struckdown.parsing import extract_all_placeholders, parse_syntax
+
+CREDENTIALS = LLMCredentials.from_env()
 
 
 def test_all_examples():
@@ -60,9 +62,10 @@ def test_all_examples():
             # try to execute with minimal LLM calls (using mock or very small max_tokens)
             print(f"✓ Attempting execution...")
             try:
-                result = chatter(
+                result = complete(
                     template_content,
                     context=sample_context,
+                    credentials=CREDENTIALS,
                     extra_kwargs={"max_tokens": 20},  # very small to minimize cost
                 )
                 print(f"✓ Execution successful - {len(result.results)} completions")

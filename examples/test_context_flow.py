@@ -10,8 +10,9 @@ This demonstrates:
 
 from unittest.mock import Mock, patch
 
-from struckdown import LLM, LLMCredentials, chatter
-from struckdown.return_type_models import ACTION_LOOKUP
+from struckdown import LLMCredentials, complete
+
+CREDENTIALS = LLMCredentials.from_env()
 
 print("=" * 70)
 print("CONTEXT FLOW TEST: Expertise → Context → LLM Completion")
@@ -48,7 +49,7 @@ mock_responses = {
 }
 
 
-def mock_structured_chat(messages, return_type, llm, credentials, extra_kwargs):
+def mock_structured_chat(messages=None, return_type=None, **kwargs):
     """Mock LLM that returns predefined responses and shows context"""
 
     # Extract the user message content from messages list
@@ -92,19 +93,18 @@ def mock_structured_chat(messages, return_type, llm, credentials, extra_kwargs):
     mock_result.response = response_value
     mock_result.model_dump = lambda: {"response": response_value}
 
-    mock_completion = Mock()
-    mock_completion.model_dump = lambda: {"usage": {"total_tokens": 100}}
+    mock_completion = {"usage": {"total_tokens": 100}}
 
     return mock_result, mock_completion
 
 
 # Patch the LLM call
-with patch("struckdown.structured_chat", side_effect=mock_structured_chat):
+with patch("struckdown.llm.structured_chat", side_effect=mock_structured_chat):
     print("\n" + "=" * 70)
     print("EXECUTING TEMPLATE")
     print("=" * 70)
 
-    result = chatter(template)
+    result = complete(template, credentials=CREDENTIALS)
 
 print("\n" + "=" * 70)
 print("FINAL RESULTS")

@@ -9,7 +9,7 @@ Run with: python examples/temporal_test_cases.py
 
 from datetime import date, datetime, time, timedelta
 
-from struckdown import LLM, LLMCredentials, chatter
+from struckdown import LLM, LLMCredentials, complete
 
 # Test case format: (description, prompt, expected_type, validation_function)
 TEST_CASES = [
@@ -417,7 +417,7 @@ def run_tests(verbose=False, stop_on_error=False):
 
             try:
                 # Run the extraction
-                result = chatter(prompt, model=model, credentials=credentials)
+                result = complete(prompt, model=model, credentials=credentials)
 
                 # Validate the result
                 if validate(result):

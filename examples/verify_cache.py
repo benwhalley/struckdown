@@ -13,8 +13,10 @@ Run this to verify caching works after API changes.
 import time
 from pathlib import Path
 
-from struckdown import chatter
+from struckdown import LLMCredentials, complete
 from struckdown.cache import get_cache_dir
+
+CREDENTIALS = LLMCredentials.from_env()
 
 
 def get_cache_size(cache_path):
@@ -63,7 +65,7 @@ print("=" * 70)
 template = """What is 2+2? Give a one word answer [[response]]"""
 
 start = time.time()
-result1 = chatter(template, extra_kwargs={"max_tokens": 10})
+result1 = complete(template, extra_kwargs={"max_tokens": 10}, credentials=CREDENTIALS)
 duration1 = time.time() - start
 
 print(f"✓ Response: {result1.response}")
@@ -88,7 +90,7 @@ print("SECOND CALL (should use cache)")
 print("=" * 70)
 
 start = time.time()
-result2 = chatter(template, extra_kwargs={"max_tokens": 10})
+result2 = complete(template, extra_kwargs={"max_tokens": 10}, credentials=CREDENTIALS)
 duration2 = time.time() - start
 
 print(f"✓ Response: {result2.response}")

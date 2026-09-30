@@ -7,7 +7,9 @@ This demonstrates the "extract then search" pattern where:
 2. We search for expertise using that extracted info via [[@expertise:var|...]]
 """
 
-from struckdown import chatter
+from struckdown import LLMCredentials, complete
+
+CREDENTIALS = LLMCredentials.from_env()
 
 # Test 1: Basic expertise function call with literal query
 print("=" * 60)
@@ -23,7 +25,7 @@ Here's what I found:
 {{ sleep_tips }}
 """
 
-result1 = chatter(template1)
+result1 = complete(template1, credentials=CREDENTIALS)
 print(f"\nResult:\n{result1.response}")
 print(f"\nExtracted sleep_tips:\n{result1['sleep_tips']}")
 
@@ -46,7 +48,7 @@ Based on the problem being "{{ problem }}", here's relevant expertise:
 Now respond to the client. [[response]]
 """
 
-result2 = chatter(template2)
+result2 = complete(template2, credentials=CREDENTIALS)
 print(f"\nExtracted problem: {result2['problem']}")
 print(f"\nRelevant expertise:\n{result2['relevant_info']}")
 print(f"\nFinal response: {result2.response}")
@@ -75,7 +77,7 @@ Concern information:
 Based on the above, what technique should the therapist use? [[technique]]
 """
 
-result3 = chatter(template3)
+result3 = complete(template3, credentials=CREDENTIALS)
 print(f"\nStage: {result3['stage']}")
 print(f"\nConcern: {result3['concern']}")
 print(f"\nStage info: {result3['stage_info']}")
