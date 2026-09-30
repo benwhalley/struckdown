@@ -454,6 +454,10 @@ def set_model_pricing(
     When both input and output values are provided, _calc_cost_from_usage() uses
     them instead of pydantic-ai or genai-prices. The cache rates are optional;
     a missing one is charged at the input rate. Pass None to clear.
+
+    The pricing applies to every call that follows in this context, whatever
+    its model, until something sets it again. Set it immediately before the
+    call it belongs to.
     """
     if input_cost_per_mtok is not None and output_cost_per_mtok is not None:
         _model_pricing.set(

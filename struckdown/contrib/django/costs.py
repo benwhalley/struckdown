@@ -49,7 +49,11 @@ def _totals():
 
 
 def _finish(row: dict) -> dict:
-    """Derived columns a template should not compute."""
+    """Derived columns a template should not compute.
+
+    ``per_call`` divides by calls less unpriced calls and cache hits; failed
+    calls, which have no cost, are still in the denominator.
+    """
     calls = row.get("calls") or 0
     priced_calls = calls - (row.get("unpriced") or 0) - (row.get("cache_hits") or 0)
     total = row.get("cost_total")

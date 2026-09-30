@@ -252,6 +252,10 @@ class SpanMiddleware:
     Sync and async capable, so it never forces an async view chain onto a
     thread. Sits after ``AuthenticationMiddleware`` so the user is known. No
     database work happens here: the row is written only if a call is made.
+
+    When the view returns, the span context is reset to what it was before
+    the request, which drops any span the view opened and left open. A view
+    that streams should open its span inside the body.
     """
 
     sync_capable = True
@@ -327,6 +331,11 @@ def _wrap_streaming(response, handle: SpanHandle) -> None:
     context iterates it, so the handle is set around each chunk rather than
     left in the context (where a reused thread would carry it into the next
     request).
+
+    The sync wrapper sets the handle around ``next()``, while the body
+    computes a chunk. The async wrapper sets it around ``yield``, while the
+    consumer holds the chunk, so calls an async body makes are not attributed
+    to the request span; such a body should open a span of its own.
     """
     from django.http import FileResponse
 

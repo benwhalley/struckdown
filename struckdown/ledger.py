@@ -216,6 +216,10 @@ def set_model_ref(ref: Optional[str]) -> None:
     struckdown only knows a model name; a host that keeps its own table of
     models (the Django contrib's ``AvailableModel``) sets its row id here so a
     record can be joined back without guessing from the name.
+
+    The ref stays set for every call that follows in this context, whatever
+    its model, until something sets it again. Set it immediately before the
+    call it belongs to: resolving a second model in between re-points it.
     """
     _model_ref.set(ref)
 
@@ -304,6 +308,10 @@ def deferred_usage() -> Iterator[list]:
     the far side and dispatches them on the near side once it returns. The
     list is shared with any context copied from this one, so a record made on
     the other side of the hop lands in it.
+
+    Nothing is dispatched on exit: the caller flushes after the block. The
+    call sites in struckdown flush after the ``with`` rather than in a
+    ``finally``, so if the hop raises, the records it held are dropped.
     """
     pending: list = []
     token = _deferred.set(pending)
