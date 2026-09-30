@@ -317,3 +317,28 @@ class QuantifierDescriptionTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNumericListBounds(unittest.TestCase):
+    """``min``/``max`` on a quantified number slot bound each value."""
+
+    def _model(self, template):
+        (segment,) = parse_syntax(template)
+        return next(iter(segment.values())).return_type
+
+    def test_number_list_values_within_bounds_validate(self):
+        model = self._model("Rate. [[number*:x|min=0,max=5]]")
+        self.assertEqual(model.model_validate({"response": [0, 2.5, 5]}).response, [0, 2.5, 5])
+
+    def test_number_list_value_out_of_bounds_is_rejected(self):
+        model = self._model("Rate. [[number*:x|min=0,max=5]]")
+        with self.assertRaises(ValidationError):
+            model.model_validate({"response": [1, 6]})
+
+    def test_int_list_bounds_and_count_both_apply(self):
+        model = self._model("Rate. [[int{2}:x|min=1,max=3]]")
+        self.assertEqual(model.model_validate({"response": [1, 3]}).response, [1, 3])
+        with self.assertRaises(ValidationError):
+            model.model_validate({"response": [0, 3]})
+        with self.assertRaises(ValidationError):
+            model.model_validate({"response": [1, 2, 3]})

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
-from typing import (Any, ClassVar, Dict, List, Literal, Optional, Type, Union,
+from typing import (Annotated, Any, ClassVar, Dict, List, Literal, Optional, Type, Union,
                     get_args, get_origin)
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
@@ -616,7 +616,11 @@ def _build_numeric_response_model(
     if quantifier:
         min_items, max_items = quantifier
 
-        list_field_kwargs = dict(field_kwargs)  # copy value constraints
+        # value bounds apply to each item; the list itself takes the counts
+        item_type = (
+            Annotated[value_type, Field(**field_kwargs)] if field_kwargs else value_type
+        )
+        list_field_kwargs = {}
         if min_items is not None:
             list_field_kwargs["min_length"] = min_items
         if max_items is not None:
@@ -639,7 +643,7 @@ def _build_numeric_response_model(
             f"Multi{model_name}",
             __base__=ResponseModel,
             response=(
-                List[value_type],
+                List[item_type],
                 Field(
                     default_factory=list, description=description, **list_field_kwargs
                 ),
