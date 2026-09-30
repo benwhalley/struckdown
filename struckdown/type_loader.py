@@ -619,10 +619,14 @@ def discover_yaml_types(
 ) -> list[str]:
     """Auto-discover and load YAML types from conventional locations.
 
-    Discovery order (highest priority first):
+    Precedence (highest first):
     1. types/ relative to template file
     2. types/ in current working directory
     3. Built-in types in struckdown/types/
+
+    A type defined in more than one place takes the definition from the
+    highest. The locations are loaded lowest first, so each later load
+    replaces the definition before it.
 
     Args:
         template_path: Path to the .sd template file
@@ -635,26 +639,22 @@ def discover_yaml_types(
         cwd = Path.cwd()
 
     loader = get_loader()
-    locations_searched = []
 
-    # 1. types/ relative to template
+    # highest priority first, deduplicated, then loaded in reverse
+    candidates = []
     if template_path and template_path.parent.is_dir():
-        types_dir = template_path.parent / "types"
-        if types_dir.is_dir():
-            loader.load_directory(types_dir)
-            locations_searched.append(types_dir)
+        candidates.append(template_path.parent / "types")
+    candidates.append(cwd / "types")
+    candidates.append(Path(__file__).parent / "types")
+    locations_searched = []
+    for directory in candidates:
+        if directory.is_dir() and directory.resolve() not in {
+            d.resolve() for d in locations_searched
+        }:
+            locations_searched.append(directory)
 
-    # 2. types/ in cwd
-    cwd_types = cwd / "types"
-    if cwd_types.is_dir() and cwd_types not in locations_searched:
-        loader.load_directory(cwd_types)
-        locations_searched.append(cwd_types)
-
-    # 3. built-in types in struckdown/types/
-    builtin_types = Path(__file__).parent / "types"
-    if builtin_types.is_dir():
-        loader.load_directory(builtin_types)
-        locations_searched.append(builtin_types)
+    for directory in reversed(locations_searched):
+        loader.load_directory(directory)
 
     if locations_searched:
         logger.debug(f"Searched for YAML types in: {locations_searched}")

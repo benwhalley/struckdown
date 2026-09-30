@@ -465,3 +465,48 @@ fields:
         finally:
             path.unlink()
             tl._loader = None
+
+
+class TestDiscoveryPrecedence:
+    """A project's own types win over struckdown's built-in YAML types:
+    template ``types/`` over cwd ``types/`` over built-ins."""
+
+    @pytest.fixture
+    def fresh_registry(self):
+        import struckdown.type_loader as tl
+        from struckdown.response_types import ResponseTypes
+
+        saved = dict(ResponseTypes._registry)
+        tl._loader = None
+        yield tl
+        tl._loader = None
+        ResponseTypes._registry.clear()
+        ResponseTypes._registry.update(saved)
+
+    @staticmethod
+    def _write_type(directory: Path, name: str, field: str):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}.yaml").write_text(f"name: {name}\nfields:\n  {field}: str\n")
+
+    def test_local_types_override_built_ins(self, fresh_registry, tmp_path):
+        project = tmp_path / "project"
+        cwd = tmp_path / "cwd"
+        self._write_type(project / "types", "product", "from_template")
+        self._write_type(project / "types", "poem", "from_template")
+        self._write_type(cwd / "types", "poem", "from_cwd")
+        self._write_type(cwd / "types", "superhero", "from_cwd")
+
+        fresh_registry.discover_yaml_types(template_path=project / "t.sd", cwd=cwd)
+        models = fresh_registry.get_loader()._models
+
+        assert "from_template" in models["product"].model_fields
+        assert "from_template" in models["poem"].model_fields
+        assert "from_cwd" in models["superhero"].model_fields
+        # a built-in nobody redefined is still there
+        assert "think" in models
+
+    def test_rediscovery_keeps_the_local_definition(self, fresh_registry, tmp_path):
+        self._write_type(tmp_path / "types", "product", "mine")
+        fresh_registry.discover_yaml_types(template_path=tmp_path / "t.sd", cwd=tmp_path)
+        fresh_registry.discover_yaml_types(template_path=tmp_path / "t.sd", cwd=tmp_path)
+        assert "mine" in fresh_registry.get_loader()._models["product"].model_fields

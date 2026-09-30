@@ -619,12 +619,7 @@ def chat(
 
         enable_api_debug()
 
-    # load custom types and actions
-    if type_files:
-        loaded_types = load_yaml_types(type_files)
-        if verbose and loaded_types:
-            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
-
+    # load custom actions
     if tools_files:
         loaded_actions = load_actions(tools_files)
         if verbose and loaded_actions:
@@ -638,6 +633,12 @@ def chat(
             typer.echo(f"Discovered types: {', '.join(discovered_types)}", err=True)
         if discovered_actions:
             typer.echo(f"Discovered actions: {', '.join(discovered_actions)}", err=True)
+
+    # explicit type files last, so they win over discovered ones
+    if type_files:
+        loaded_types = load_yaml_types(type_files)
+        if verbose and loaded_types:
+            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
 
     # Determine prompt source
     prompt_str = None
@@ -1459,12 +1460,7 @@ def batch(
 
         enable_api_debug()
 
-    # load custom types and tools
-    if type_files:
-        loaded_types = load_yaml_types(type_files)
-        if verbose and loaded_types:
-            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
-
+    # load custom tools
     if tools_files:
         loaded_actions = load_actions(tools_files)
         if verbose and loaded_actions:
@@ -1478,6 +1474,12 @@ def batch(
             typer.echo(f"Discovered types: {', '.join(discovered_types)}", err=True)
         if discovered_actions:
             typer.echo(f"Discovered actions: {', '.join(discovered_actions)}", err=True)
+
+    # explicit type files last, so they win over discovered ones
+    if type_files:
+        loaded_types = load_yaml_types(type_files)
+        if verbose and loaded_types:
+            typer.echo(f"Loaded types: {', '.join(loaded_types)}", err=True)
 
     # Validate --statsonly requires --compare
     if statsonly and not compare:

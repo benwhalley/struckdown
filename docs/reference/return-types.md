@@ -305,11 +305,12 @@ fields:
 ```
 
 The CLI and playground load `*.yaml` files from `types/` next to the
-template, then `types/` in the current directory, then the built-in
-`struckdown/types/`. A later file with the same `name` replaces an earlier
-one, so a local type named `product` or `superhero` (or `extract`, `poem`,
-`speak`, `think`) is replaced by the built-in example; use a different name. `sd chat --type` and `sd batch -t` load extra
-files or directories. From Python, call
+template, `types/` in the current directory and the built-in
+`struckdown/types/`. When two define the same `name`, the one next to the
+template wins, then the current directory, then the built-in; a local
+`product` (or `extract`, `poem` and so on) replaces the built-in example.
+`sd chat --type` and `sd batch -t` load extra files or directories, and
+these win over anything discovered. From Python, call
 `struckdown.type_loader.load_yaml_types([Path("types")])` before `complete()`.
 
 Field types are `str`, `int`, `float`, `bool`, `date`, `datetime`, `time` and
