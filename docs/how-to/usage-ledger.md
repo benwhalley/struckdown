@@ -103,16 +103,15 @@ A handler that writes to a database can therefore use your thread's connection, 
 
 `structured_chat` and `transcribe` called directly make no hop, so they call the handler in the thread that made the call.
 
-If a call raises before its hop returns, the records held for that hop are not dispatched. A sync `complete()` whose later slot fails therefore reports nothing for the run, including the slots that succeeded. See [Limitations](../explanation/cost-tracking.md#limitations).
+The held records are dispatched whether or not the call raises. A sync `complete()` whose second slot fails reports the first slot's call and an `ok=False` record for the second.
 
 If your own code runs struckdown on a worker thread and you want the records back in the calling thread, do what struckdown does:
 
 ```python
-from struckdown import deferred_usage, flush_usage
+from struckdown import held_usage
 
-with deferred_usage() as pending:
+with held_usage():
     result = run_in_worker(lambda: sd.complete(prompt, spec=spec))
-flush_usage(pending)
 ```
 
-The worker must run in a copy of the caller's context (`contextvars.copy_context().run`, or a helper that copies it, such as `asyncio.to_thread`) for the records to reach `pending`. From async code, use `struckdown.ledger.flush_usage_async`.
+The records are dispatched when the block exits, including when it raises. The worker must run in a copy of the caller's context (`contextvars.copy_context().run`, or a helper that copies it, such as `asyncio.to_thread`) for the records to reach the block. From async code, use `async with struckdown.ledger.aheld_usage():`.

@@ -96,7 +96,7 @@ else:
 
 `all_costs_unknown` is true when no slot could be priced.
 
-An API embedding whose batch could not be priced currently comes back with `cost` 0.0 rather than `None`, so `EmbeddingResultList.has_unknown_costs` stays false for it. The usage record for that batch has `cost=None`, so a ledger counts it correctly.
+An API embedding whose batch could not be priced has `cost` `None`, and `EmbeddingResultList.has_unknown_costs` is true.
 
 
 ## Response cache hits
@@ -138,9 +138,9 @@ A tool slot is several provider requests. Its cost on the result is the sum over
 
 ## Limitations
 
-This is how the current version behaves, with the workaround for each.
+This is how the current version behaves, with the workaround where there is one.
 
 - **Pricing and `model_ref` travel in context variables.** `set_model_pricing`, `set_model_ref`, `get_llm_and_credentials()` and `complete(spec=...)` set them for everything that follows in the same context, and resolving a second model re-points them. If you resolve a chat model, then resolve an embedding model (to embed a query, say), then make the chat call, the chat call is priced at the embedding model's rates and joined to its row. Resolve a model immediately before the call that uses it, with nothing in between that resolves another. Changes made inside a `sync_to_async` call are copied back into the caller's context, so a resolution there counts too.
 - **Anthropic cache writes through OpenRouter are charged at the input rate.** OpenRouter's OpenAI-shaped usage reports `cached_tokens` (reads) but no cache-write count, so written tokens are counted as ordinary input. For Anthropic models this leaves out the write premium. Reads are priced correctly.
-- **Records are lost when a call raises inside a deferral.** Where struckdown hops threads or event loops (see [Threads and event loops](../how-to/usage-ledger.md#threads-and-event-loops)) it holds records back and dispatches them after the hop returns. If the hop raises, the held records are not dispatched. So a sync `complete()` whose later slot raises loses the records for the whole run, including slots that succeeded and were paid for, and the `ok=False` record for a failed request is usually lost. A tool loop's records are emitted when the run finishes, so a run stopped by its usage limits or by an exception produces none. Treat failure counts as a lower bound.
+- **A tool loop that stops part-way records one failure, not its rounds.** A tool loop's per-round records are emitted when the run finishes. A run stopped by its usage limits or by an exception produces a single `ok=False` record with no token counts, so the rounds it completed, which were paid for, are not counted. Treat the cost of a stopped tool loop as a lower bound.
 - **The costs page's "per call" average counts failed calls.** Its denominator leaves out unpriced calls and cache hits but not failed requests, which have no cost, so failures pull the average down.

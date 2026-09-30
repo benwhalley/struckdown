@@ -45,7 +45,11 @@ Returns: `scores: [85, 92, 78, 95]` (list)
 
 ### List with Constraints
 
-`min` and `max` on a list slot (`[[number*:ratings|min=0,max=5]]`) currently fail with a `TypeError` when the answer is validated: the bounds are applied to the list rather than to each value. Use them on single values only, and check list values in your own code.
+```
+Ratings: 4, 5, 3 [[number*:ratings|min=0,max=5]]
+```
+
+`min` and `max` on a list slot bound each value. A value outside them fails validation.
 
 ## Syntax
 

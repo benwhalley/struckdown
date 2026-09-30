@@ -118,7 +118,7 @@ async def answer(request, pk):
     return StreamingHttpResponse(body())
 ```
 
-Two things make this necessary. When the view returns, the middleware restores the span context to what it was before the request, which discards a span the view opened. And for an async body, the middleware sets the request's span around each `yield` rather than while the body computes the next chunk, so calls made in an async body that opens no span of its own are recorded as unattributed. A sync body sees the request's span.
+When the view returns, the middleware restores the span context to what it was before the request, which discards a span the view opened. A body that opens no span of its own still has its calls recorded under the request's `http:` span, sync or async.
 
 ## Price calls from your model table
 
@@ -246,4 +246,4 @@ CELERY_BEAT_SCHEDULE = {
 
 - Local embedding and cross-encoder models make no API call and cost nothing, so they leave no row.
 - A call made inside a database transaction that then rolls back loses its row with the transaction. The ledger writes on the caller's connection so that it never holds a second one.
-- When a call raises inside `complete()` or an async call, the rows held back for that call are usually lost, including rows for slots that had already succeeded. A tool loop stopped part-way writes no rows. See [Limitations](../explanation/cost-tracking.md#limitations).
+- A tool loop that stops part-way, at its usage limits or on an exception, writes one failed row without token counts, not a row per round it completed. See [Limitations](../explanation/cost-tracking.md#limitations).

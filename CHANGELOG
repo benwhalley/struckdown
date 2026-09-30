@@ -34,9 +34,11 @@
   sides and the prices used, timing, the slot it ran in, and, when a handler
   sets `wants_payload`, the request and response bodies. From async code a
   handler may return an awaitable and it is awaited; records made on a worker
-  thread on the caller's behalf are dispatched in the caller's own thread
-  (`deferred_usage` / `flush_usage`). Field names map to the OpenTelemetry
-  `gen_ai` conventions (`ledger.SEMCONV`). See docs/how-to/usage-ledger.md.
+  thread on the caller's behalf are dispatched in the caller's own thread,
+  whether or not the call raised (`held_usage` / `aheld_usage`, or the lower
+  level `deferred_usage` / `flush_usage`). Field names map to the
+  OpenTelemetry `gen_ai` conventions (`ledger.SEMCONV`). See
+  docs/how-to/usage-ledger.md.
 - `struckdown.contrib.django` gains the ledger's tables: `LLMSpan` (what a
   call belonged to: the request or task, with the user and a link to the
   record that holds the text), `LLMCall` (one row per request, with the prices
@@ -66,25 +68,37 @@
   and `_finish_reason`. A raw completion dict still passes through
   `json.dumps`.
 
+**Fixed**
+- An API embedding whose batch could not be priced has `cost` `None` on its
+  `EmbeddingResult`, not 0.0, so `EmbeddingResultList.has_unknown_costs` is
+  true and `total_cost` is `None`.
+- `[[number*:x|min=0,max=5]]` and `[[int{2}:x|min=1,max=3]]` validate: `min`
+  and `max` on a list slot bound each value. They used to be applied to the
+  list and raised `TypeError`.
+- A project's own YAML types win over struckdown's built-in examples
+  (`product`, `superhero`, and the YAML `extract`, `poem`, `speak`, `think`):
+  `types/` next to the template, then `types/` in the current directory, then
+  the built-ins, as documented. The built-ins used to load last and replace
+  local types of the same name. `sd chat --type` and `sd batch -t` files now
+  load after discovery, so they win too.
+- Reasoning models no longer receive sampling parameters under pydantic-ai
+  2.x, which renamed the profile flag struckdown read to decide whether
+  reasoning is on by default.
+
 **Known limitations**
 - Pricing and `model_ref` are context variables. Resolving a second model (an
   embedding model, say) between resolving a model and calling it re-points
   them, so the call is priced and linked as the second model. Resolve
   immediately before the call.
-- `SpanMiddleware`'s wrapper for an async streaming body sets the request's
-  span around each `yield`, not while the body computes the next chunk, and
-  the middleware discards a span the view opened before returning a stream.
+- `SpanMiddleware` discards a span the view opened before returning a stream.
   Open spans for streamed work inside the body.
-- Records held back across a thread or loop hop are dispatched after the hop,
-  not in a `finally`: when a call raises, its failure record and, for a sync
-  `complete()`, the records of the whole run are lost. A tool loop's records
-  are emitted only when the run finishes.
+- A tool loop's per-round records are emitted when the run finishes. A run
+  stopped part-way, by its usage limits or an exception, produces one
+  `ok=False` record without token counts.
 - The costs page's "per call" average counts failed calls in its
   denominator.
 - Anthropic cache writes reported through OpenRouter's OpenAI-shaped usage
   have no cache-write count and are charged at the input rate.
-- An API embedding whose batch could not be priced reports `cost` 0.0 on the
-  `EmbeddingResult` (its usage record correctly has no cost).
 
 See docs/explanation/cost-tracking.md#limitations.
 

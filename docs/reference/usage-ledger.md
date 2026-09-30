@@ -23,7 +23,9 @@ Importable from `struckdown` unless another module is given.
 | `set_model_ref(ref)` | Your own identifier for the model, copied onto records that follow in this context. `None` clears it. |
 | `struckdown.ledger.get_model_ref()` | The current `model_ref`. |
 | `set_audio_pricing(cost_per_minute)` | Per-minute rate for transcriptions that follow in this context. `None` clears it. |
-| `deferred_usage()` | Context manager yielding a list. Records made inside the block, including on threads running in a copy of this context, are appended to it instead of dispatched. |
+| `held_usage()` | Context manager. Records made inside the block, including on threads running in a copy of this context, are held back and dispatched in this thread when the block exits, whether or not it raised. Inside an enclosing block, they are passed up to it instead. |
+| `struckdown.ledger.aheld_usage()` | The same as an async context manager; the records are dispatched on this loop, shielded from cancellation. |
+| `deferred_usage()` | Lower level: a context manager yielding the list of held records, which it does not dispatch. Flush it with `flush_usage` in a `finally`. |
 | `flush_usage(pending)` | Dispatch held records from sync code, in this thread. Inside an enclosing `deferred_usage` block, passes them up to it instead. |
 | `struckdown.ledger.flush_usage_async(pending)` | The same from async code; awaits handlers that return an awaitable. |
 
@@ -238,7 +240,7 @@ When struckdown could not price a successful, non-cached chat or embedding call 
 
 `user` is a user instance, a primary key, or a callable returning either; an anonymous user is stored as null. `obj` is any model instance.
 
-`SpanMiddleware` opens a lazy root span per request -- the row is written only if a call is made -- named `http:<view name>`, or `http:<path>` when the URL did not resolve. It is sync- and async-capable, and must come after `AuthenticationMiddleware`. For a streaming response it runs the body under the request's span: a sync body around each `next()`, an async body around each `yield` (so calls an async body makes before yielding are not attributed to it). It resets the span context when the view returns, discarding any span the view opened and left open; open spans for streamed work inside the body.
+`SpanMiddleware` opens a lazy root span per request -- the row is written only if a call is made -- named `http:<view name>`, or `http:<path>` when the URL did not resolve. It is sync- and async-capable, and must come after `AuthenticationMiddleware`. For a streaming response it runs the body under the request's span, setting it around each `next()` or `__anext__()` while the body computes a chunk, and never leaving it in the consumer's context. A span the body opens stays current across its chunks. It resets the span context when the view returns, discarding any span the view opened and left open; open spans for streamed work inside the body.
 
 ### Ledger writer
 
@@ -279,5 +281,5 @@ A failed write is logged and never fails the LLM call.
 
 | Command | Description |
 |---|---|
-| `sd_prune_ledger [--dry-run]` | Delete payloads older than `STRUCKDOWN_LEDGER_PAYLOAD_DAYS`, calls older than `STRUCKDOWN_LEDGER_CALL_DAYS`, and spans older than that with no calls left. `--dry-run` counts only; its span count leaves out spans that would become empty when their calls go |
+| `sd_prune_ledger [--dry-run]` | Delete payloads older than `STRUCKDOWN_LEDGER_PAYLOAD_DAYS`, calls older than `STRUCKDOWN_LEDGER_CALL_DAYS`, and spans older than that with no calls left. A payload also goes with its call. `--dry-run` counts the same rows and deletes none |
 | `sd_update_prices [--force] [--dry-run]` | Refresh stored prices, cache rates included, for active `AvailableModel`s from their credential's pricing source. Skips rows with `prices_updated_manually` unless `--force` |
