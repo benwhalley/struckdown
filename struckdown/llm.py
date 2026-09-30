@@ -1191,7 +1191,7 @@ def _record_for_completion(
     response = ResponseStandIn(com_dict)
     cost = None
     if not cache_hit:
-        cost = com_dict.get("_cost_breakdown")
+        cost = CostBreakdown.from_dict(com_dict.get("_cost_breakdown"))
         if cost is None:
             cost = _calc_cost_from_usage(response, model_name)
     else:
@@ -1395,7 +1395,7 @@ def _call_llm_cached(
         cost=run_cost,
         model_name=agent.model.model_name,
     )
-    com_dict["_cost_breakdown"] = run_cost
+    com_dict["_cost_breakdown"] = run_cost.to_dict() if run_cost is not None else None
     com_dict["_provider_response_id"] = str(
         getattr(model_response, "provider_response_id", "") or ""
     )
@@ -1804,7 +1804,7 @@ async def structured_chat_async(
         model_name=llm.model_name,
     )
     com_dict["_cached"] = False
-    com_dict["_cost_breakdown"] = stream_cost
+    com_dict["_cost_breakdown"] = stream_cost.to_dict() if stream_cost is not None else None
 
     # store the streamed result into joblib's cache so subsequent calls hit cache
     res_dict = final_output.model_dump() if hasattr(final_output, "model_dump") else final_output

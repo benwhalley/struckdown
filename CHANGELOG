@@ -23,11 +23,6 @@
 - `_calc_cost_from_usage` returns a `CostBreakdown`, not a float, and the
   `_model_pricing` context variable holds a `StoredPricing` rather than a
   tuple. Both are private, but were reachable.
-- Completion dicts (`SlotResult.completion`) carry new keys: `_cost_breakdown`
-  (a `CostBreakdown` dataclass), `_output`, `_provider_response_id` and
-  `_finish_reason`. `json.dumps` on a raw completion dict now needs a
-  `default=` for the dataclass; pydantic serialisation of a
-  `StruckdownResult` is unaffected.
 
 **Added**
 - A usage ledger. Every provider request struckdown makes -- a completion, a
@@ -65,6 +60,11 @@
   `get_llm_and_credentials()` set it to the row's id, and
   `AvailableModel.stored_pricing()` returns the row's rates.
 - A Django test harness for the contrib app (`pip install struckdown[test]`).
+- Completion dicts (`SlotResult.completion`) carry new keys: `_cost_breakdown`
+  (the call's `CostBreakdown` as a plain dict, or `None` when unpriced;
+  `CostBreakdown.from_dict()` rebuilds it), `_output`, `_provider_response_id`
+  and `_finish_reason`. A raw completion dict still passes through
+  `json.dumps`.
 
 **Known limitations**
 - Pricing and `model_ref` are context variables. Resolving a second model (an

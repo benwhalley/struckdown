@@ -36,7 +36,7 @@ import inspect
 import logging
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Optional, Union
 from urllib.parse import urlparse
@@ -78,6 +78,17 @@ class CostBreakdown:
     @property
     def total_cost(self) -> float:
         return self.input_cost + self.output_cost
+
+    def to_dict(self) -> dict:
+        """The fields as plain data, as a completion dict carries them."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data) -> Optional["CostBreakdown"]:
+        """Rebuild from :meth:`to_dict`. ``None`` and an instance pass through."""
+        if data is None or isinstance(data, cls):
+            return data
+        return cls(**data)
 
 
 def cost_from_stored(

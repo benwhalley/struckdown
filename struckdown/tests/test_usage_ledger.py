@@ -410,3 +410,64 @@ class FailedRunTests(unittest.TestCase):
         (record,) = records
         self.assertFalse(record.ok)
         self.assertEqual(record.slot, "answer")
+
+
+class CompletionDictTests(unittest.TestCase):
+    """A raw completion dict is plain data: it survives ``json.dumps``."""
+
+    def setUp(self):
+        sd.clear_cache()
+
+    def test_a_fresh_completion_serialises_and_keeps_its_breakdown(self):
+        import json
+
+        from pydantic import BaseModel
+
+        class Out(BaseModel):
+            response: str
+
+        records, handler = _collector()
+        set_model_pricing(2.0, 8.0)
+        try:
+            with usage_tracking(handler), _served_by_test_model():
+                _, com = structured_chat(
+                    messages=[{"role": "user", "content": "json dict test 8a1"}],
+                    return_type=Out,
+                    llm=MODEL,
+                    credentials=CREDS,
+                )
+        finally:
+            set_model_pricing(None, None)
+        data = json.loads(json.dumps(com))
+        self.assertEqual(data["_cost_breakdown"]["source"], "stored")
+        self.assertEqual(data["_cost_breakdown"]["input_price"], 2.0)
+        # the ledger still gets a real breakdown
+        (record,) = records
+        self.assertIsInstance(record.cost, CostBreakdown)
+        self.assertEqual(record.cost.input_price, 2.0)
+
+    def test_a_streamed_completion_serialises(self):
+        import json
+
+        async def go():
+            with _served_by_test_model():
+                async for event in sd.complete_incremental_async(
+                    "Say hi 9b2.\n[[hi]]", model=MODEL, credentials=CREDS, stream=True
+                ):
+                    completion = getattr(getattr(event, "result", None), "completion", None)
+                    if completion is not None:
+                        return completion
+
+        set_model_pricing(2.0, 8.0)
+        try:
+            completion = asyncio.run(go())
+        finally:
+            set_model_pricing(None, None)
+        data = json.loads(json.dumps(completion))
+        self.assertEqual(data["_cost_breakdown"]["source"], "stored")
+
+    def test_a_breakdown_round_trips_through_a_dict(self):
+        cost = CostBreakdown(0.1, 0.2, input_price=2.0, source="stored")
+        self.assertEqual(CostBreakdown.from_dict(cost.to_dict()), cost)
+        self.assertIs(CostBreakdown.from_dict(cost), cost)
+        self.assertIsNone(CostBreakdown.from_dict(None))
