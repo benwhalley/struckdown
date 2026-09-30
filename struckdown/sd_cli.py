@@ -24,13 +24,18 @@ from . import (ACTION_LOOKUP, LLM, CostSummary, LLMCredentials, LLMError,
                TemplateError, __version__, complete, complete_async,
                get_embedding, progress_tracking, structured_chat)
 from .actions import discover_actions, load_actions
+from .attachments import Attachment, AttachmentList, attach, readable
 from .errors import Halted
 from .output_formatters import render_template, write_output
 from .parsing import find_slots_with_positions
 from .type_loader import discover_yaml_types, load_yaml_types
 from .url_fetch import is_url, read_input_url
 
-app = typer.Typer(help="struckdown: structured conversations with language models")
+app = typer.Typer(
+    help="struckdown: structured conversations with language models",
+    # help text is full of [[slot]] examples, which Rich markup would swallow
+    rich_markup_mode="markdown",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +93,15 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     """Resolve both <include> tags and Jinja2 includes in a template file.
 
     Args:
+
         prompt_file: Path to the template file
 
     Returns:
+
         The template content with all includes resolved
 
     Raises:
+
         Exception: If template rendering fails (e.g., include file not found)
     """
     from jinja2 import FileSystemLoader
@@ -168,6 +176,7 @@ def setup_logging(verbosity: int):
     """Set up logging based on verbosity level.
 
     Levels:
+
         0 (no -v): WARNING only
         1 (-v): WARNING only (quiet, just outputs)
         2 (-vv): INFO logs
@@ -198,12 +207,14 @@ async def _run_chat_incremental(
     show_context: bool,
     stream: bool = True,
     strict_params: bool = False,
+    image_options: Optional[dict] = None,
 ) -> "StruckdownResult":
     """Process prompt incrementally, printing results as slots complete.
 
     When stream=True, free-text slots are streamed word-by-word to the console.
 
     Verbosity levels:
+
         0: just slot outputs (slot_key: output)
         1 (-v): messages list + slot outputs
         2 (-vv): detailed slot info (timing, segment) + messages + outputs
@@ -229,6 +240,7 @@ async def _run_chat_incremental(
         include_paths=include_paths,
         stream=stream,
         strict_params=strict_params,
+        **(image_options or {}),
     ):
         if isinstance(event, SlotStreamStart):
             # start streaming a slot -- print the label prefix
@@ -283,7 +295,7 @@ async def _run_chat_incremental(
                 if request_messages:
                     for msg in request_messages:
                         role = msg.get("role", "unknown")
-                        content = msg.get("content", "")
+                        content = readable(msg.get("content") or "")
                         typer.echo(f"\033[1m{role}:\033[0m")
                         typer.echo(content)
                         typer.echo()
@@ -348,10 +360,12 @@ async def _run_chat_interactive(
     verbose: int,
     show_context: bool,
     history_file: Optional[Path],
+    image_options: Optional[dict] = None,
 ) -> None:
     """Run chat in interactive REPL mode with continuous conversation.
 
     Verbosity levels:
+
         0: just slot outputs
         1 (-v): messages list + slot outputs
         2 (-vv): detailed slot info (timing) + messages + outputs
@@ -387,6 +401,7 @@ async def _run_chat_interactive(
                 extra_kwargs=extra_kwargs,
                 template_path=prompt_file,
                 include_paths=include_paths,
+                **(image_options or {}),
             ):
                 if isinstance(event, SlotCompleted):
                     seg_result = event.result
@@ -582,6 +597,21 @@ def chat(
         "--strict-params",
         help="Raise error on unsupported LLM parameters instead of warning",
     ),
+    attach_vars: Optional[List[str]] = typer.Option(
+        None,
+        "--attach",
+        help="Attach an image as a context variable: name=path.jpg (repeatable). "
+        "A glob (name='scans/*.jpg') gives a list of images.",
+    ),
+    image_max_side: Optional[int] = typer.Option(
+        None, "--image-max-side", help="Resize images to at most this many px (default 2048)"
+    ),
+    max_images: Optional[int] = typer.Option(
+        None, "--max-images", help="Most images in one request, counting earlier turns (default 50)"
+    ),
+    image_detail: Optional[str] = typer.Option(
+        None, "--image-detail", help="Detail setting sent with images: auto, low, high or original"
+    ),
 ):
     """
     Run a single complete prompt (interactive mode).
@@ -595,8 +625,10 @@ def chat(
     prefixes are stripped. Bare model names (no prefix) default to OpenAI.
 
     Examples:
+
         sd chat "tell a joke [[joke]]"
         sd chat "joke [[joke]]" --model-name anthropic:claude-sonnet-4-20250514
+        sd chat "Describe {{ photo }} [[description]]" --attach photo=IMG_1.jpg
         cat prompt.sd | sd chat
         sd chat -p prompt.sd
         sd chat -p prompt.sd -s input.txt       # {{source}} available in template
@@ -735,6 +767,26 @@ def chat(
             key, value = var.split("=", 1)
             context[key.strip()] = value.strip()
 
+    # images: --attach name=path (a glob gives a list)
+    for var in attach_vars or []:
+        if "=" not in var:
+            typer.echo(f"Error: --attach must be name=path format: {var}", err=True)
+            raise typer.Exit(1)
+        key, pattern = (x.strip() for x in var.split("=", 1))
+        if any(c in pattern for c in "*?["):
+            paths = sorted(glob(os.path.expanduser(pattern)))
+            if not paths:
+                typer.echo(f"Error: --attach {key}: no files match {pattern}", err=True)
+                raise typer.Exit(1)
+            context[key] = attach(paths)
+        else:
+            context[key] = attach(pattern)
+    image_options = {
+        "image_max_side": image_max_side,
+        "max_images": max_images,
+        "image_detail": image_detail,
+    }
+
     # add history file to context for @history action
     if history_file:
         if not history_file.exists():
@@ -790,6 +842,7 @@ def chat(
                 verbose,
                 show_context,
                 history_file,
+                image_options,
             )
             return  # Exit after interactive session
         else:
@@ -808,6 +861,7 @@ def chat(
                     show_context,
                     stream=not no_stream,
                     strict_params=strict_params,
+                    image_options=image_options,
                 )
             )
     except TemplateError as e:
@@ -917,6 +971,14 @@ def _create_error_output(error: Exception, item: dict, keep_inputs: bool) -> dic
     return output
 
 
+def _plain(value):
+    """An attached image as its file name, for output files."""
+    if isinstance(value, (Attachment, AttachmentList)):
+        images = value if isinstance(value, AttachmentList) else [value]
+        return ", ".join(a.name or a.sha256[:12] for a in images)
+    return value
+
+
 def _merge_result_with_input(item: dict, result, keep_inputs: bool) -> dict:
     """
     Merge input data with completion results, handling column name clashes.
@@ -947,9 +1009,9 @@ def _merge_result_with_input(item: dict, result, keep_inputs: bool) -> dict:
                 # Keep internal metadata as-is
                 output_item[k] = v
             elif k in clashing_keys:
-                output_item[f"{k}.data"] = v
+                output_item[f"{k}.data"] = _plain(v)
             else:
-                output_item[k] = v
+                output_item[k] = _plain(v)
     else:
         output_item = {}
         # Keep filename for traceability
@@ -1426,6 +1488,11 @@ def batch(
         "--tools",
         help="Python tools file or directory (can be repeated)",
     ),
+    as_image: bool = typer.Option(
+        False,
+        "--as-image",
+        help="Send image files as images: {{ input }} is the image itself, not text read from it",
+    ),
     column_map: Optional[List[str]] = typer.Option(
         None,
         "-M",
@@ -1437,6 +1504,7 @@ def batch(
     Process multiple inputs in batch mode.
 
     Examples:
+
         sd batch -i '*.txt' -p prompt.sd -o results.json
         sd batch -i 'data.json' "welcome for {{name}} [[msg]]"
         cat file.txt | sd batch "extract [[name]]"
@@ -1570,7 +1638,10 @@ def batch(
         for file_path in file_paths:
             path = Path(file_path)
             try:
-                input_data.extend(_read_input_file(path))
+                if as_image and path.suffix.lower() in IMAGE_EXTENSIONS:
+                    input_data.extend(_read_image_file(path))
+                else:
+                    input_data.extend(_read_input_file(path))
             except Exception as e:
                 logger.error(f"Error reading {file_path}: {e}")
                 if verbose:
@@ -1702,6 +1773,7 @@ def _extract_spreadsheet_rows(path: Path) -> tuple[List[dict], List[str]]:
     NaN values are converted to None.
 
     Returns:
+
         (rows, original_columns): rows as dicts and list of original column names
     """
     import pandas as pd
@@ -1761,6 +1833,15 @@ def _read_document_text(path: Path) -> str:
     return read_text_file(path)
 
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
+
+
+def _read_image_file(path: Path) -> List[dict]:
+    """An image as a batch item: ``{{ input }}`` (and ``{{ image }}``) is the image."""
+    image = attach(path)
+    return [{"input": image, "image": image, "filename": str(path), "basename": path.stem}]
+
+
 def _read_input_file(path: Path) -> List[dict]:
     """
     Read an input file and return a list of input items.
@@ -1768,6 +1849,7 @@ def _read_input_file(path: Path) -> List[dict]:
     For spreadsheets (CSV/XLSX): returns list of dicts, one per row with columns as keys
     For text files: returns [{"input": "...", "content": "...", "filename": "..."}]
     For JSON files:
+
         - If dict: returns [dict]
         - If list: returns list
     """
@@ -1838,6 +1920,7 @@ def graph(
     For visual rendering, use 'sd explain -o output.html' instead.
 
     Examples:
+
         sd graph prompt.sd                  # Print to stdout
         sd graph prompt.sd -o diagram.mmd   # Write to file
     """
@@ -1899,6 +1982,7 @@ def explain(
     - Any parsing errors
 
     Examples:
+
         sd explain prompt.sd
         sd explain prompt.sd -o plan.html
     """
@@ -1985,6 +2069,7 @@ def preview(
     Use --fragment to output just the highlighted HTML (no page wrapper) to stdout.
 
     Examples:
+
         sd preview prompt.sd              # Opens in browser (includes resolved)
         sd preview prompt.sd -o out.html  # Saves to file
         sd preview prompt.sd --raw        # Don't resolve includes
@@ -2090,6 +2175,7 @@ def flat(
     Useful for debugging, inspection, and creating self-contained templates.
 
     Examples:
+
         sd flat prompt.sd                    # Output to stdout
         sd flat prompt.sd -o flattened.sd    # Save to file
     """
@@ -2153,6 +2239,7 @@ def edit(
     and testing struckdown prompts interactively.
 
     Examples:
+
         sd edit                     # Open workspace browser for current dir
         sd edit myfile.sd           # Edit specific file
         sd edit ./prompts/          # Open workspace browser for prompts/
@@ -2268,6 +2355,7 @@ def serve(
     Use --api-key to provide a server-side key (e.g. for internal deployments).
 
     Examples:
+
         sd serve                              # Users provide their own keys
         sd serve --api-key=$MY_API_KEY        # Use server-side key
         sd serve -p 9000                      # Use specific port
@@ -2275,10 +2363,12 @@ def serve(
         sd serve --models=gpt-4o,gpt-4o-mini  # Restrict to specific models
 
     Environment variables:
+
         STRUCKDOWN_ALLOWED_MODELS: Comma-separated list of allowed models
                                    (fallback if --models not provided)
 
     For production, use with gunicorn:
+
         gunicorn -w 4 -b 0.0.0.0:8000 \\
             "struckdown.playground:create_app(remote_mode=True)"
     """
@@ -2322,6 +2412,7 @@ def load_env_file(env_path: Path) -> dict:
     """Load environment variables from .env file.
 
     Returns:
+
         Dict of key-value pairs. Empty dict if file missing.
     """
     env_vars = {}
@@ -2350,6 +2441,7 @@ def check_and_prompt_credentials(cwd: Path) -> tuple:
     """Check for LLM credentials and prompt user if missing.
 
     Returns:
+
         Tuple of (api_key, base_url, model_name)
     """
     env_path = cwd / ".env"
@@ -2440,6 +2532,7 @@ def test(
     If credentials are missing, prompts interactively and saves to .env file.
 
     Examples:
+
         sd test                # Test with current settings
         sd test -v             # Verbose output
     """
@@ -2590,6 +2683,7 @@ def install_skill(
     - Suggesting batch processing commands
 
     Examples:
+
         sd install-skill           # Install the skill
         sd install-skill --force   # Overwrite existing
     """
@@ -2648,6 +2742,7 @@ def install_vscode(
     and themes for .sd and .soak files.
 
     Examples:
+
         sd install-vscode           # Install the extension
         sd install-vscode --force   # Overwrite existing
     """
@@ -2747,6 +2842,7 @@ def setup(
     - VS Code extension for .sd/.soak syntax highlighting
 
     Examples:
+
         sd setup                  # Install everything
         sd setup --force          # Overwrite existing
         sd setup --skip-vscode    # Only install Claude skill

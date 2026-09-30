@@ -198,11 +198,16 @@ def struckdown_finalize(value: Any) -> str:
         This function is set as the `finalize` parameter on Jinja2 Environment,
         making escaping automatic and transparent.
     """
+    from .attachments import protect, render_value
+
     if isinstance(value, Safe):
         return str(value.content)
     if value is None:
         return ""
-    escaped_value, was_escaped = escape_struckdown_syntax(str(value))
+    image = render_value(value)
+    if image is not None:
+        return image
+    escaped_value, was_escaped = escape_struckdown_syntax(protect(str(value)))
     return escaped_value
 
 

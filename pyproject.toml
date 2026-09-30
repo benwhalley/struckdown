@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "struckdown"
-version = "0.14.0"
+version = "0.15.0"
 description = "struckdown: markdown-like syntax for structured conversations with language models"
 
 authors = [
@@ -57,6 +57,10 @@ docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.0",
     "pymdown-extensions>=10.0",
+]
+vision = [
+    "pillow>=10",
+    "pillow-heif>=0.16",
 ]
 
 [tool.setuptools.packages.find]

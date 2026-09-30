@@ -120,8 +120,14 @@ def analyze_template(template_str: str) -> TemplateAnalysis:
     Returns:
         TemplateAnalysis with slots and triggers
     """
+    from .jinja_utils import extract_jinja_variables
+    from .parsing import mask_slot_jinja
+
+    # slots with Jinja in their options are found in the masked text; the
+    # variables they use are collected below as re-render triggers
+    masked, dynamic = mask_slot_jinja(template_str)
     try:
-        ast = ImmutableSandboxedEnvironment().parse(template_str)
+        ast = ImmutableSandboxedEnvironment().parse(masked)
     except Exception:
         # If Jinja parsing fails, return empty analysis
         # (the error will surface later during actual rendering)
@@ -189,5 +195,10 @@ def analyze_template(template_str: str) -> TemplateAnalysis:
             for var in test_vars:
                 if slot.key not in triggers[var]:
                     triggers[var].append(slot.key)
+    # a slot's options that use a variable must be re-rendered when it is filled
+    for key, inner in dynamic.items():
+        for var in extract_jinja_variables(inner):
+            if key not in triggers[var]:
+                triggers[var].append(key)
 
     return TemplateAnalysis(slots=slots, triggers=dict(triggers))

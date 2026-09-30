@@ -1,6 +1,42 @@
 
 # Changelog
 
+### 0.15.0
+
+**Added**
+- Images in prompts. `attach()` wraps a path, bytes, a Pillow `Image` or a list
+  of them; in the context, an image goes where its variable is rendered, in
+  order with the surrounding text. Images are made upright, resized to
+  `image_max_side` (default 2048 px) and stripped of metadata before sending;
+  `attach(..., metadata=True)` sends the metadata as text after the image
+  instead. `complete()` and friends take `image_max_side`, `max_images`
+  (default 50) and `image_detail` (default `"auto"`). Before sending, a request
+  with too many images, an image in a system prompt, or a model known not to
+  accept images raises `StruckdownAttachmentError`; whether a model accepts
+  images is looked up from the LiteLLM proxy being called, LiteLLM's registry
+  or OpenRouter, not stored. `sd chat --attach name=path` and
+  `sd batch --as-image` do the same from the command line. Needs the new
+  `vision` extra (Pillow, pillow-heif). See docs/how-to/images.md.
+
+- Jinja in a slot's options: `[[pick:srn|{{ srns|join(',') }}]]`,
+  `[[greeting|temperature={{ temp }}]]`. The options are parsed from the
+  rendered text when the slot runs, so they can come from the context or from
+  an earlier slot, which now triggers a re-render. See Template Syntax,
+  "Options from Variables".
+
+**Fixed**
+- A template whose slots don't parse now raises a `TemplateError`. Previously
+  a parse error in any slot -- including any Jinja inside `[[...]]` -- was
+  logged as a warning and the whole body ran as if it had no slots, doing
+  nothing.
+- `sd --help` shows slot examples: `[[joke]]` was rendered as `[]` because
+  Rich read it as markup. Help now uses Markdown mode, with example blocks kept
+  on separate lines.
+- Context values rendered in a template's body are now escaped like those in
+  `<system>` and `<header>` blocks. The body was rendered without the escaping
+  hook, so a value containing `<system>` or `[[slot]]` reached the prompt
+  unescaped, contrary to the documentation.
+
 ### 0.14.0
 
 **Changed**

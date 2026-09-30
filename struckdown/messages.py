@@ -27,7 +27,7 @@ from typing import Any
 ROLES = ("system", "user", "assistant", "tool")
 
 
-def split_for_agent(messages: list[dict]) -> tuple[str, list, str]:
+def split_for_agent(messages: list[dict]) -> tuple[str, list, "str | list"]:
     """``(instructions, message_history, user_prompt)`` for ``Agent.run``.
 
     System messages become instructions, joined in order -- ``<system>`` blocks
@@ -39,15 +39,21 @@ def split_for_agent(messages: list[dict]) -> tuple[str, list, str]:
     The trailing user message, if there is one, becomes the prompt for this
     turn. Everything before it is history. A list that ends in an assistant
     message leaves the prompt empty, which is how prefill is expressed.
+
+    Image placeholders (see :mod:`struckdown.attachments`) in user messages
+    become images in place, so the prompt may be a list of text and images.
     """
+    from .attachments import expand, forbid_images
+
     instructions = "\n\n".join(
         m.get("content") or "" for m in messages if m.get("role") == "system"
     )
+    forbid_images(instructions, "a system prompt")
     rest = [m for m in messages if m.get("role") != "system"]
 
     prompt = ""
     if rest and rest[-1].get("role") == "user" and not rest[-1].get("tool_calls"):
-        prompt = rest.pop().get("content") or ""
+        prompt = expand(rest.pop().get("content") or "")
 
     return instructions, to_pydantic_messages(rest), prompt
 
@@ -65,6 +71,8 @@ def to_pydantic_messages(messages: list[dict]) -> list:
     from pydantic_ai.messages import (ModelRequest, ModelResponse, SystemPromptPart,
                                       TextPart, ToolCallPart, ToolReturnPart,
                                       UserPromptPart)
+
+    from .attachments import expand, forbid_images
 
     out: list = []
     request_parts: list = []
@@ -107,10 +115,11 @@ def to_pydantic_messages(messages: list[dict]) -> list:
             )
         elif role == "system":
             _flush_response()
+            forbid_images(content, "a system prompt")
             request_parts.append(SystemPromptPart(content=content))
         else:
             _flush_response()
-            request_parts.append(UserPromptPart(content=content))
+            request_parts.append(UserPromptPart(content=expand(content)))
 
     _flush_request()
     _flush_response()
@@ -139,7 +148,7 @@ def to_openai_messages(messages: list) -> list[dict]:
                 if isinstance(part, SystemPromptPart):
                     out.append({"role": "system", "content": part.content})
                 elif isinstance(part, UserPromptPart):
-                    out.append({"role": "user", "content": _as_text(part.content)})
+                    out.append({"role": "user", "content": _user_text(part.content)})
                 elif isinstance(part, ToolReturnPart):
                     out.append(
                         {
@@ -167,6 +176,32 @@ def to_openai_messages(messages: list) -> list[dict]:
                 row["tool_calls"] = calls
             out.append(row)
     return out
+
+
+def _user_text(content: Any) -> str:
+    """A user turn as stored text: images go back to their placeholders.
+
+    The metadata line an image brings with it is dropped here, because the
+    placeholder regenerates it when the turn is expanded again.
+    """
+    if isinstance(content, str):
+        return content
+    from pydantic_ai import BinaryContent
+
+    from .attachments import PLACEHOLDER_RE
+
+    out: list[str] = []
+    after_image = False
+    for item in content:
+        if isinstance(item, BinaryContent):
+            ident = item.identifier or ""
+            out.append(ident if PLACEHOLDER_RE.fullmatch(ident) else f"[{item.media_type}]")
+            after_image = bool(PLACEHOLDER_RE.fullmatch(ident))
+            continue
+        if not (after_image and isinstance(item, str) and item.startswith("[Metadata for ")):
+            out.append(item if isinstance(item, str) else json.dumps(item, default=str))
+        after_image = False
+    return "".join(out)
 
 
 def _as_text(content: Any) -> str:

@@ -52,6 +52,10 @@ from .incremental import (CheckpointReached, IncrementalEvent, ThinkingDelta,
 from .errors import Halted
 from .jinja_analysis import TemplateAnalysis, analyze_template
 from .messages import to_openai_messages, to_pydantic_messages
+from .attachments import (Attachment, AttachmentList, StruckdownAttachmentError,
+                          attach)
+from .attachments import new_scope as new_image_scope
+from .attachments import reset_scope as reset_image_scope
 from .segment_processor import readonly
 # Re-export from jinja_utils module
 from .jinja_utils import (SilentUndefined, escape_context_dict,
@@ -130,6 +134,21 @@ def _resolve_spec_kwargs(
 
 
 async def _complete_single_async(
+    *args,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[str] = None,
+    **kwargs,
+) -> StruckdownResult:
+    """Internal: one context, run in its own image scope (see ``attachments``)."""
+    token = new_image_scope(image_max_side, max_images, image_detail)
+    try:
+        return await _complete_single_run(*args, **kwargs)
+    finally:
+        reset_image_scope(token)
+
+
+async def _complete_single_run(
     multipart_prompt: str,
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
@@ -456,6 +475,9 @@ async def complete_async(
     deps=None,
     deps_type=None,
     limits=None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[str] = None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """
     Process a struckdown template with one or more contexts.
@@ -487,6 +509,9 @@ async def complete_async(
         strict_undefined: If True, raise error when template variables not found
         max_concurrent: Maximum concurrent requests when processing list (default: SD_MAX_CONCURRENCY)
         on_complete: Optional callback(index, result) called after each completion (list mode only)
+        image_max_side: Images are resized to at most this many px on the long side (default 2048)
+        max_images: Most images allowed in one request, counting earlier turns (default 50)
+        image_detail: Detail setting sent with each image (default "auto"; see attach())
 
     Returns:
         StruckdownResult for single context, List[StruckdownResult] for list of contexts.
@@ -520,6 +545,9 @@ async def complete_async(
                                 deps=deps,
                                 deps_type=deps_type,
                                 limits=limits,
+                                image_max_side=image_max_side,
+                                max_images=max_images,
+                                image_detail=image_detail,
                             )
                             results[index] = result
                             if on_complete:
@@ -551,6 +579,9 @@ async def complete_async(
             deps=deps,
             deps_type=deps_type,
             limits=limits,
+            image_max_side=image_max_side,
+            max_images=max_images,
+            image_detail=image_detail,
         )
 
 
@@ -575,6 +606,9 @@ def complete(
     deps=None,
     deps_type=None,
     limits=None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[str] = None,
 ) -> Union[StruckdownResult, List[StruckdownResult]]:
     """Synchronous wrapper for complete_async. Accepts single dict or list of dicts."""
     return anyio.run(
@@ -599,6 +633,9 @@ def complete(
             deps=deps,
             deps_type=deps_type,
             limits=limits,
+            image_max_side=image_max_side,
+            max_images=max_images,
+            image_detail=image_detail,
         )
     )
 
@@ -620,6 +657,9 @@ async def complete_incremental_async(
     deps=None,
     deps_type=None,
     limits=None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -654,6 +694,7 @@ async def complete_incremental_async(
         - ProcessingComplete: final event with aggregated StruckdownResult
         - ProcessingError: if an error occurs (includes partial results)
     """
+    new_image_scope(image_max_side, max_images, image_detail)
     import asyncio
 
     from .segment_processor import (extract_header_message,
@@ -1078,6 +1119,9 @@ def complete_incremental(
     deps=None,
     deps_type=None,
     limits=None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
@@ -1114,6 +1158,9 @@ def complete_incremental(
             deps=deps,
             deps_type=deps_type,
             limits=limits,
+            image_max_side=image_max_side,
+            max_images=max_images,
+            image_detail=image_detail,
             )
         ]
 
@@ -1134,6 +1181,10 @@ __all__ = [
     # Conversation storage
     "to_openai_messages",
     "to_pydantic_messages",
+    "attach",
+    "Attachment",
+    "AttachmentList",
+    "StruckdownAttachmentError",
     "get_embedding",
     "get_embedding_async",
     "get_cross_encoder_scores",
