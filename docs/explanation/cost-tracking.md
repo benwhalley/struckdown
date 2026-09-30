@@ -41,12 +41,12 @@ A priced call carries a `CostBreakdown`:
 - `output_cost` -- completion tokens, reasoning tokens included;
 - `total_cost` -- the two added together.
 
-With stored pricing, the breakdown also records the per-million-token rates it used (`input_price`, `output_price`, `cache_read_price`, `cache_write_price`). pydantic-ai and genai-prices return a cost for each side but not the rates, so for those sources the rate fields are `None`.
+With stored pricing, the breakdown also records the rates it used, per million tokens: `input_price`, `output_price`, `cache_read_price` and `cache_write_price`. pydantic-ai and genai-prices return a cost for each side but not the rates, so for those sources the rate fields are `None`.
 
 
 ## Cached prompt tokens
 
-Providers bill prompt tokens read from their own prompt cache at a discount -- Anthropic at a tenth of the input rate, OpenAI at between a tenth and a half depending on the model -- and Anthropic charges a premium, 1.25 times the input rate, to write tokens into the cache. This is the provider's cache, not struckdown's response cache (see [Caching](caching.md)).
+Providers bill prompt tokens read from their own prompt cache at a discount: Anthropic at a tenth of the input rate, OpenAI at between a tenth and a half depending on the model. Anthropic also charges a premium, 1.25 times the input rate, to write tokens into the cache. This is the provider's cache, not struckdown's response cache (see [Caching](caching.md)).
 
 pydantic-ai reports `input_tokens` as the whole prompt, cache reads and writes included. With stored pricing struckdown therefore charges:
 
@@ -68,7 +68,7 @@ For example, a call with 100,000 prompt tokens, 80,000 of them read from the cac
 
 Charged at the input rate throughout, the same call would come to $0.3150.
 
-A cache rate that is not set falls back to the input rate. That overstates the cost of cache-heavy use rather than hiding it. Set the rates with `cache_read_cost_per_mtok` and `cache_write_cost_per_mtok` on `ModelSpec` or `set_model_pricing`; in Django, `sd_update_prices` fills them on `AvailableModel` where the price source publishes them. genai-prices often publishes only the read rate; OpenRouter publishes both.
+A cache rate that is not set falls back to the input rate. That overstates the cost of cache-heavy use rather than hiding it. Set the rates with `cache_read_cost_per_mtok` and `cache_write_cost_per_mtok` on `ModelSpec` or `set_model_pricing`. In Django, `sd_update_prices` fills them on `AvailableModel` where the price source publishes them. genai-prices often publishes only the read rate; OpenRouter publishes both.
 
 pydantic-ai and genai-prices price cache tokens from their own data.
 
