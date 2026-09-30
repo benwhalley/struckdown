@@ -348,7 +348,7 @@ Container for template processing results.
 | `response` | `Any` | Last slot's output |
 | `outputs` | `Box` | All outputs as a Box dict |
 | `thinking` | `Dict[str, str]` | Reasoning text by slot name, where the model returned any |
-| `total_cost` | `float` | Total USD cost |
+| `total_cost` | `float` | Total USD cost. Counts an unknown cost as 0.0 (check `has_unknown_costs`) and cached slots at their original cost |
 | `prompt_tokens` | `int` | Total input tokens |
 | `completion_tokens` | `int` | Total output tokens |
 | `total_tokens` | `int` | Total tokens |
@@ -358,8 +358,8 @@ Container for template processing results.
 | `all_costs_unknown` | `bool` | Every cost unknown |
 | `fresh_call_count` | `int` | Fresh API calls |
 | `cached_call_count` | `int` | Cache hits |
-| `fresh_cost` | `float` | Cost of fresh calls only |
-| `cached_cost` | `float` | Cost avoided by the cache |
+| `fresh_cost` | `float` | Cost of fresh calls only: what this run spent |
+| `cached_cost` | `float` | Original cost of the slots served from the response cache: what the cache saved |
 
 **Methods:**
 
@@ -440,20 +440,27 @@ Aggregate costs across multiple results.
 from struckdown import CostSummary
 
 summary = CostSummary.from_results([result1, result2])
-print(summary)  # "Total cost: $0.0012 (5 calls, 2 cached)"
+print(summary.format_summary())
+# Total cost: $0.0012 (1,520 in / 310 out)
+#   This run: $0.0004 (3 fresh, 2 cached)
 ```
 
-**Properties:**
+`format_summary(include_breakdown=True)` returns the line the CLI prints; the second line appears only when some calls were cached. When some costs are unknown the total is shown as a lower bound (`>=$...`), and as `unknown` when none is known.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `total_cost` | `float` | Combined cost |
-| `total_tokens` | `int` | Combined tokens |
-| `prompt_tokens` | `int` | Combined input |
-| `completion_tokens` | `int` | Combined output |
-| `fresh_call_count` | `int` | Total fresh calls |
-| `cached_call_count` | `int` | Total cache hits |
-| `has_unknown_costs` | `bool` | Any unknown |
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_cost` | `float` | Combined `StruckdownResult.total_cost` |
+| `fresh_cost` | `float` | Combined `fresh_cost` |
+| `total_prompt_tokens` | `int` | Combined input tokens |
+| `total_completion_tokens` | `int` | Combined output tokens |
+| `cached_prompt_tokens` | `int` | Input tokens read from the provider's cache |
+| `cache_creation_tokens` | `int` | Input tokens written to the provider's cache |
+| `fresh_count` | `int` | Fresh API calls |
+| `cached_count` | `int` | Response-cache hits |
+| `has_unknown_costs` | `bool` | Any result has an unknown cost |
+| `all_costs_unknown` | `bool` | No result has a known cost |
 
 ---
 
@@ -534,10 +541,13 @@ credentials = spec.as_credentials()
 | `display_name` | `str` | `None` | Human-readable name |
 | `input_cost_per_mtok` | `float` | `None` | Input cost per million tokens (USD) |
 | `output_cost_per_mtok` | `float` | `None` | Output cost per million tokens (USD) |
+| `cache_read_cost_per_mtok` | `float` | `None` | Price of a prompt token read from the provider's cache (USD per million); the input rate if unset |
+| `cache_write_cost_per_mtok` | `float` | `None` | Price of a prompt token written to the provider's cache (USD per million); the input rate if unset |
+| `model_ref` | `str` | `None` | Your own identifier for this model, copied onto every usage record |
 
 **Computed fields:** `provider` (extracted from model_name), `bare_name` (model name without provider prefix), `provider_display` (human-readable provider name).
 
-When pricing fields are set, struckdown uses them for cost calculation instead of looking up prices via pydantic-ai or genai-prices.
+When both the input and output rates are set, struckdown uses them for cost calculation instead of looking up prices via pydantic-ai or genai-prices. `complete(spec=...)` sets them, with `model_ref`, for the calls it makes; `as_llm()` and `as_credentials()` do not, so a `structured_chat` call made with those needs `set_model_pricing(...)`. See [Cost Tracking](../explanation/cost-tracking.md).
 
 ---
 
@@ -612,6 +622,26 @@ with progress_tracking(on_api_call=on_call):
 
 Context manager that fires a callback after each LLM completion, for progress
 reporting without changing the `complete()` signature.
+
+### set_model_pricing
+
+```python
+from struckdown import set_model_pricing
+
+set_model_pricing(
+    input_cost_per_mtok=0.40,
+    output_cost_per_mtok=1.60,
+    cache_read_cost_per_mtok=0.10,    # optional
+    cache_write_cost_per_mtok=None,   # optional
+)
+set_model_pricing(None, None)         # clear
+```
+
+Stored pricing for the calls that follow in this context, whatever their model. `set_audio_pricing(cost_per_minute)` does the same for transcription, and `set_model_ref(ref)` names the model on usage records. All three are context variables: set them immediately before the call they belong to. See the [Usage Ledger reference](usage-ledger.md).
+
+### Usage records
+
+`register_usage_handler`, `usage_tracking`, `UsageRecord`, `CostBreakdown` and the Django ledger are documented in the [Usage Ledger reference](usage-ledger.md).
 
 ### mark_struckdown_safe
 
