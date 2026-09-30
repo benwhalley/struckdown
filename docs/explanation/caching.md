@@ -42,9 +42,9 @@ export STRUCKDOWN_CACHE=false
 ### Detecting Cache Hits
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, complete
 
-result = complete("Tell me a joke [[joke]]")
+result = complete("Tell me a joke [[joke]]", credentials=LLMCredentials.from_env())
 
 # Check if a slot's response came from the cache
 for key, slot in result.results.items():
@@ -72,18 +72,21 @@ Embeddings are cached per-text using a separate disk cache:
 ### Cache Behaviour
 
 ```python
-from struckdown import get_embedding
+from struckdown import LLMCredentials, get_embedding
+
+creds = LLMCredentials.from_env()
 
 # First call - makes API request
-results = get_embedding(["hello", "world"])
+results = get_embedding(["hello", "world"], credentials=creds)
 print(results.cached_count)  # 0
 print(results.fresh_count)   # 2
 
 # Second call - returns from cache
-results = get_embedding(["hello", "world"])
+results = get_embedding(["hello", "world"], credentials=creds)
 print(results.cached_count)  # 2
 print(results.fresh_count)   # 0
-print(results.total_cost)    # 0.0 (all cached)
+print(results.fresh_cost)    # 0.0 -- nothing spent this time
+print(results.total_cost)    # what the embeddings cost when first computed
 ```
 
 ### Partial Cache Hits
@@ -92,7 +95,7 @@ When embedding multiple texts, cached and fresh results are merged:
 
 ```python
 # "hello" is cached from before, "new text" is not
-results = get_embedding(["hello", "new text"])
+results = get_embedding(["hello", "new text"], credentials=creds)
 print(results.cached_count)  # 1
 print(results.fresh_count)   # 1
 print(results[0].cached)     # True
@@ -146,7 +149,7 @@ API calls are limited by a global semaphore to prevent overwhelming the provider
 export SD_MAX_CONCURRENCY=20
 ```
 
-This applies to both LLM completions and embedding batches.
+This limit is for LLM completions. Embedding requests have their own, lower limit, `SD_EMBEDDING_CONCURRENCY` (default 3), because self-hosted embedding endpoints are easily overwhelmed.
 
 
 ## Environment Variables Summary
@@ -154,5 +157,6 @@ This applies to both LLM completions and embedding batches.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRUCKDOWN_CACHE` | Cache directory, or `0`/`false` to disable | `~/.struckdown/cache` |
-| `SD_MAX_CONCURRENCY` | Max concurrent API calls | `20` |
+| `SD_MAX_CONCURRENCY` | Max concurrent LLM calls | `20` |
+| `SD_EMBEDDING_CONCURRENCY` | Max concurrent embedding requests | `3` |
 | `SD_EMBEDDING_BATCH_SIZE` | Texts per embedding batch | `100` |

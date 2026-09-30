@@ -45,11 +45,7 @@ Returns: `scores: [85, 92, 78, 95]` (list)
 
 ### List with Constraints
 
-```
-Ratings: 4.5, 3.8, 4.9 [[number*:ratings|min=0,max=5]]
-```
-
-Returns: `ratings: [4.5, 3.8, 4.9]` (list)
+`min` and `max` on a list slot (`[[number*:ratings|min=0,max=5]]`) currently fail with a `TypeError` when the answer is validated: the bounds are applied to the list rather than to each value. Use them on single values only, and check list values in your own code.
 
 ## Syntax
 
@@ -72,19 +68,13 @@ Or with quantifiers for lists:
 - `min=X` - Minimum value (e.g., `min=0`)
 - `max=Y` - Maximum value (e.g., `max=100`)
 - `min=X,max=Y` - Both constraints (e.g., `min=0,max=100`)
-- `required` - Makes the field required and enforces strict validation
+- `required` (or a `!` prefix, `[[!number:value]]`) - the answer may not be null
 
 **Validation Behavior:**
 
-By default (`required` not specified):
-- If the LLM returns `None` or cannot extract a number, returns `None` (no error)
-- If the LLM returns a number within constraints, returns that number
-- If the LLM returns a number outside constraints, returns `None` (lenient mode)
+`min` and `max` become constraints on the response schema (`ge` / `le`), whether or not the slot is required. An answer outside the range fails validation; pydantic-ai asks the model again, and if the retries run out the call raises. An out-of-range answer never turns into `None`.
 
-With `required` flag:
-- If the LLM returns `None`, raises `ValueError`
-- If the LLM returns a number within constraints, returns that number
-- If the LLM returns a number outside constraints, raises `ValueError` (strict mode)
+`required` only controls whether null is allowed. Without it, the model may answer null when there is no number to find, and the slot's value is `None`.
 
 ### Quantifiers
 
@@ -97,7 +87,7 @@ With `required` flag:
 
 ## Examples
 
-See `/Users/benwhalley/dev/struckdown/examples/13_number_extraction.sd` for 15 practical examples.
+See `examples/10_number_extraction.sd` for worked examples.
 
 ## How It Works
 
@@ -105,7 +95,7 @@ See `/Users/benwhalley/dev/struckdown/examples/13_number_extraction.sd` for 15 p
 
 2. **Type Selection**: The response model accepts `Union[int, float]` for single values or `List[Union[int, float]]` for lists, allowing the LLM to choose the most appropriate type.
 
-3. **Post-Extraction Validation**: After extraction, Python code validates that all values satisfy the min/max constraints. If any value is out of range, a `ValueError` is raised with a helpful error message.
+3. **Validation**: `min` and `max` are part of the response schema, so an out-of-range answer fails validation and is retried by pydantic-ai; the range is also written into the field's description, which the model sees.
 
 ## Test Suite
 
@@ -126,42 +116,34 @@ The test suite includes 43 test cases covering:
 - Quantifiers (all variants)
 - Edge cases (None values, zero, very large/small numbers)
 - Practical use cases (prices, measurements, percentages, ratings, temperatures)
-- **Validation errors with `required` flag** (strict validation)
-- **Lenient behavior without `required` flag** (returns None for violations)
-
-**Current Test Results: 43/43 passed (100% success rate)**
+- Null answers with and without `required`
 
 ## Technical Details
 
 ### Implementation Files
 
-- `struckdown/return_type_models.py` - Contains `number_response_model()` factory function
-- `struckdown/__init__.py` - Post-extraction validation logic (lines 374-413)
+- `struckdown/return_type_models.py` - `number_response_model()` and `integer_response_model()`, both built by `_build_numeric_response_model()`
 
 ### Key Design Decisions
 
 1. **Union Type**: Using `Union[int, float]` allows the LLM to choose the most natural type for each value.
 
-2. **Hints vs Validation**: Constraints are provided as suggestions in the prompt but strictly enforced after extraction. This approach:
-   - Guides the LLM towards correct values
-   - Catches edge cases where the LLM might misinterpret the text
-   - Provides clear error messages when validation fails
+2. **Hints and Validation**: Constraints appear in the field description the model reads, and are enforced by the schema, so an answer outside them is sent back for another attempt.
 
 3. **Flexible Quantifiers**: Supports the same quantifier syntax as other struckdown types (pick, date, etc.) for consistency.
 
 ## Comparison with `int` Type
 
-The `number` type is more flexible than the existing `int` type:
+`int` and `number` are built the same way and take the same options and quantifiers. The difference is the value type:
 
 | Feature | `int` | `number` |
 |---------|-------|----------|
-| Integers | ✓ | ✓ |
-| Floats | ✗ | ✓ |
-| Min/max constraints | ✗ | ✓ |
-| Lists | ✗ | ✓ |
-| Quantifiers | ✗ | ✓ |
+| Integers | yes | yes |
+| Floats | no | yes |
+| Min/max constraints | yes | yes |
+| Lists and quantifiers | yes | yes |
 
-The `int` type remains available for backward compatibility and cases where you specifically need an integer.
+Use `int` when you need an integer.
 
 ## Common Patterns
 
@@ -183,7 +165,7 @@ Product: 4.7 out of 5 stars [[number:rating|min=0,max=5]]
 ### Test Scores
 
 ```
-Exam scores: 85, 92, 78, 95 [[number*:scores|min=0,max=100]]
+Exam scores: 85, 92, 78, 95 [[number*:scores]]
 ```
 
 ### Temperature
@@ -200,54 +182,16 @@ Progress: 67.5% complete [[number:progress|min=0,max=100]]
 
 ## Error Handling
 
-If a value violates constraints, a `ValueError` is raised with a clear error message:
-
-```python
-ValueError: Numeric value -10 for field 'score' is below minimum 0.0
-```
-
-```python
-ValueError: Numeric value 150 for field 'score' exceeds maximum 100.0
-```
-
-### Important: Constraint Validation and `required` Flag
-
-The constraints are provided as **hints** to the LLM, and validation behavior depends on the `required` flag:
-
-#### Default Behavior (Lenient - `required` not set)
+An answer outside `min` / `max` is a validation failure. pydantic-ai returns the error to the model and asks again; if the answer is still out of range after its retries, the call raises. A slot without `required` can still come back as `None`, but only when the model answers null, not because a value was out of range.
 
 ```
 Give me a number greater than 10 [[number:mynum|max=10]]
 ```
 
-The LLM will likely return a number > 10 (following the prompt), but since it violates `max=10`:
-- **Result:** `mynum = None` (no error raised)
-- This is lenient mode: constraint violations return `None` instead of raising errors
+Here the prompt and the constraint conflict. The model is asked for a value of at most 10; if it keeps answering above 10, the call fails rather than returning `None`.
 
-#### Strict Behavior (with `required` flag)
-
-```
-Give me a number greater than 10 [[number:mynum|max=10,required]]
-```
-
-With the `required` flag, constraint violations raise errors:
-- **Result:** `ValueError: Numeric value 11 for field 'mynum' exceeds maximum 10.0`
-- This is strict mode: constraint violations and missing values both raise errors
-
-#### When to Use `required`
-
-- **Omit `required` (default):** For optional extractions where you want graceful handling
-  - Example: Parsing user input that might not contain numbers
-  - Constraint violations return `None` instead of crashing
-
-- **Use `required`:** When you need guaranteed valid data
-  - Example: Processing structured data where numbers are mandatory
-  - Ensures no invalid data passes through
-
-This two-stage approach (hints + validation) ensures:
-- The LLM is guided toward correct values
-- You control whether violations are errors or handled gracefully
-- Flexibility for both optional and required extractions
+- **Omit `required`** when the text may not contain a number: the model can answer null.
+- **Use `required`** (or `!`) when a number must be present.
 
 ## Future Enhancements
 

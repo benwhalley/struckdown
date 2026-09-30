@@ -41,22 +41,26 @@ Slots define where the LLM should produce output. The basic syntax is:
 ### Examples
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, complete
+
+creds = LLMCredentials.from_env()
 
 # Basic completion
-result = complete("What is the capital of France? [[answer]]")
+result = complete("What is the capital of France? [[answer]]", credentials=creds)
 print(result["answer"])  # "Paris"
 
 # Typed boolean
-result = complete("Is the sky blue? [[bool:is_blue]]")
+result = complete("Is the sky blue? [[bool:is_blue]]", credentials=creds)
 print(result["is_blue"])  # True
 
 # Pick from options
-result = complete("Classify: 'I love it!' [[pick:sentiment|positive,negative,neutral]]")
+result = complete(
+    "Classify: 'I love it!' [[pick:sentiment|positive,negative,neutral]]", credentials=creds
+)
 print(result["sentiment"])  # "positive"
 
 # Number with constraints
-result = complete("Rate 1-10: 'Great product' [[int:score|min=1,max=10]]")
+result = complete("Rate 1-10: 'Great product' [[int:score|min=1,max=10]]", credentials=creds)
 print(result["score"])  # 8
 ```
 
@@ -105,19 +109,19 @@ Add validation constraints to slots:
 [[number:score|min=0,max=100]]              # Numeric range
 [[number:price|min=0,max=1000,required]]    # Required with constraints
 [[int:count|min=1,max=10]]                  # Integer range
-[[extract:code|pattern="\\d{3}-\\d{4}"]]    # Regex pattern
+[[code|pattern="\\d{3}-\\d{4}"]]            # Regex pattern (plain slots only)
 ```
 
 ### Pattern Matching
 
-Constrain text extraction with regex:
+Constrain a free-text slot with a regex. `pattern` applies to plain (`respond`) slots; `extract` ignores it.
 
 ```bash
 # Module code: 4 letters followed by digits
-sd chat 'Module code: [[extract:code|pattern="\w{4}\d+"]]'
+sd chat 'Module code: [[code|pattern="\w{4}\d+"]]'
 
 # UK postcode
-sd chat 'Postcode: [[extract:postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]'
+sd chat 'Postcode: [[postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]'
 ```
 
 ## Template Variables
@@ -251,11 +255,11 @@ Review these items:
 
 ## File Includes
 
-Include other template files:
+Include other template files with an `<include>` tag:
 
 {% raw %}
-```jinja
-{% include 'system-prompt.sd' %}
+```
+<include src="system-prompt.sd"/>
 
 User: {{question}}
 
@@ -263,7 +267,9 @@ User: {{question}}
 ```
 {% endraw %}
 
-Include paths are resolved relative to the template file, then common locations like `templates/` and `~/.struckdown/includes/`.
+The file is looked up in the template's own directory, then in the include paths (`include_paths=` in Python, `-I` on the command line); the CLI also searches `./templates`. Includes are resolved before the template is split into segments, so an included file may contain slots and `<checkpoint>` tags.
+
+Jinja's `{% raw %}{% include %}{% endraw %}` is expanded only by `sd flat`, `sd graph` and `sd explain`. When a template runs (`complete()`, `sd chat`, `sd batch`) there is no Jinja loader, and `{% raw %}{% include %}{% endraw %}` raises an error.
 
 ## Comments
 
@@ -282,13 +288,11 @@ Actual prompt content here.
 
 ## Built-in Actions
 
-Actions perform operations without LLM calls:
+Actions perform operations without LLM calls. `@set` is registered but is currently a placeholder that always returns an empty string. See the [Actions reference](../reference/actions.md) for the full list.
 
 ```
-[[@set:varname|"literal value"]]           # Set variable without LLM
-[[@set:copy|other_variable]]               # Copy variable
 [[@fetch:content|url="https://..."]]       # Fetch URL content
-[[@search:results|query="topic",n=5]]      # Web search
+[[@search:results|query="topic",max_results=5]]  # Web search
 [[@timestamp:now]]                         # Current timestamp
 [[@timestamp:now|format="%Y-%m-%d"]]       # Formatted timestamp
 ```
@@ -385,8 +389,8 @@ Override LLM settings per-slot:
 
 ```
 [[think:reasoning|temperature=0.3]]
-[[pick:choice|red,blue|model=gpt-4]]
-[[extract:data|model=gpt-4,temperature=0.0]]
+[[pick:choice|red,blue,model="gpt-4"]]
+[[extract:data|model="gpt-4",temperature=0.0]]
 [[think:deep|thinking=high,temperature=0.3]]
 [[respond:summary|thinking=off]]
 ```
@@ -397,26 +401,27 @@ Supported per-slot parameters: `temperature`, `thinking`, `model`, `max_tokens`,
 
 Free-text slots (`respond`, `speak`, `think`, `extract`, `poem`) stream token-by-token when using the async API or CLI. Constrained slots (`pick`, `bool`, `int`, etc.) complete atomically. No template syntax changes are required -- streaming is handled automatically.
 
-## Custom Pydantic Types
+## Custom Response Types
 
-Use custom Pydantic models for complex structured output:
+Register a Pydantic model as a response type, then use its name in a slot:
 
 ```python
-from pydantic import BaseModel
-from struckdown import complete
+from struckdown import LLMCredentials, ResponseTypes, complete
+from struckdown.return_type_models import ResponseModel
 
-class Person(BaseModel):
+@ResponseTypes.register("person")
+class Person(ResponseModel):
     name: str
     age: int
     occupation: str
 
 result = complete("""
 Extract person info from: {% raw %}{{text}}{% endraw %}
-[[Person:person]]
-""", context={
-    "text": "John is a 30-year-old engineer",
-    "Person": Person
-})
+[[person:person]]
+""", context={"text": "John is a 30-year-old engineer"},
+   credentials=LLMCredentials.from_env())
 
 person = result["person"]  # Person(name="John", age=30, occupation="engineer")
 ```
+
+A type can also be defined in YAML and loaded with `sd chat --type file.yaml` (or `--type` on `sd batch`); see [Return Types](../reference/return-types.md). Passing a model class in `context` does not register it.

@@ -53,8 +53,8 @@ Override parameters on any completion slot using pipe syntax:
 [[extract:quote|temperature=0.5]]
 [[think:reasoning|temperature=0.3]]
 [[poem:verse|temperature=1.8]]
-[[extract:data|model=gpt-4o-mini]]
-[[think:analysis|temperature=0.4,model=gpt-5]]
+[[extract:data|model="gpt-4o-mini"]]
+[[think:analysis|temperature=0.4,model="gpt-5"]]
 ```
 
 Model-specific options (like `min`, `max`, `required`) are preserved alongside LLM parameters:
@@ -75,7 +75,7 @@ Use `thinking` to enable extended reasoning (chain-of-thought) on models that su
 ```
 [[think:analysis|thinking=high]]
 [[think:deep_reasoning|thinking=xhigh,temperature=0.3]]
-[[pick:choice|yes,no|thinking=low]]
+[[pick:choice|yes,no,thinking=low]]
 ```
 
 **Levels:**
@@ -96,7 +96,7 @@ First, reason through the key themes:
 [[think:reasoning|thinking=high]]
 
 Then pick the dominant theme:
-[[pick:theme|politics,economics,culture,science|thinking=off]]
+[[pick:theme|politics,economics,culture,science,thinking=off]]
 
 Finally, write a summary:
 [[respond:summary|temperature=0.7]]
@@ -120,7 +120,7 @@ For stricter handling, enable `strict_params` to raise an error instead:
 
 ```python
 # Python API
-result = complete(template, strict_params=True)
+result = complete(template, credentials=creds, strict_params=True)
 ```
 
 ```bash
@@ -135,15 +135,17 @@ This is useful for catching typos or ensuring all parameters are supported by th
 LLM parameters are applied in this priority order (highest to lowest):
 
 1. **Slot-specific overrides**: `[[type:var|temperature=X]]`
-2. **Return type defaults**: `ResponseModel.llm_config`
-3. **Global extra_kwargs**: Passed to `complete()` function
+2. **Global extra_kwargs**: passed to `complete()`
+3. **Return type defaults**: `ResponseModel.llm_config`, which only fill in `temperature`, `seed` or `thinking` when neither of the above set them
 
 ## Examples
 
 ### Basic usage
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, complete
+
+creds = LLMCredentials.from_env()
 
 # uses default temperature for each type
 result = complete("""
@@ -155,7 +157,7 @@ Think about it:
 
 Be creative:
 [[poem:verse]]
-""")
+""", credentials=creds)
 
 # quote uses temp=0.0 (deterministic)
 # analysis uses temp=0.5 (balanced)
@@ -173,8 +175,8 @@ Think very precisely:
 [[think:analysis|temperature=0.2]]
 
 Use a specific model:
-[[think:reasoning|model=gpt-4o-mini]]
-""")
+[[think:reasoning|model="gpt-4o-mini"]]
+""", credentials=creds)
 ```
 
 ### With thinking
@@ -185,8 +187,8 @@ Reason deeply about this problem:
 [[think:reasoning|thinking=high]]
 
 Quick classification (no extended reasoning needed):
-[[pick:category|A,B,C|thinking=off]]
-""")
+[[pick:category|A,B,C,thinking=off]]
+""", credentials=creds)
 ```
 
 ### Cost optimisation
@@ -194,9 +196,9 @@ Quick classification (no extended reasoning needed):
 ```python
 result = complete("""
 Simple extraction (cheap, deterministic):
-[[extract:data|model=gpt-4o-mini,temperature=0.0]]
+[[extract:data|model="gpt-4o-mini",temperature=0.0]]
 
 Complex reasoning (expensive, careful):
-[[think:analysis|model=gpt-5,temperature=0.3,thinking=high]]
-""")
+[[think:analysis|model="gpt-5",temperature=0.3,thinking=high]]
+""", credentials=creds)
 ```

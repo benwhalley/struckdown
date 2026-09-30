@@ -16,7 +16,7 @@ Struckdown makes it easy to extract structured, typed data from text using LLMs.
 Turn unstructured text into structured data:
 
 ```bash
-sd batch *.txt "Purpose, <5 words: [[purpose]]"
+sd batch -i '*.txt' "Purpose, <5 words: [[purpose]]"
 ```
 
 Output:
@@ -30,7 +30,7 @@ Output:
 Or with type constraints:
 
 ```bash
-sd batch *.txt "Price: [[number:price]] Currency: [[pick:currency|USD,GBP,EUR]]"
+sd batch -i '*.txt' "Price: [[number:price]] Currency: [[pick:currency|USD,GBP,EUR]]"
 ```
 
 ## Key Features
@@ -78,13 +78,13 @@ sd chat "Rate 1-10: 'Great!' [[int:rating|min=1,max=10]]"
 
 ```bash
 # Process files to JSON
-sd batch *.txt "Summarise: [[summary]]" -o results.json
+sd batch -i '*.txt' "Summarise: [[summary]]" -o results.json
 
 # Extract to CSV
-sd batch documents/*.txt "Name: [[extract:name]] Email: [[extract:email]]" -o contacts.csv
+sd batch -i 'documents/*.txt' "Name: [[extract:name]] Email: [[extract:email]]" -o contacts.csv
 
 # Chain operations
-sd batch *.txt "Company: [[extract:company]]" | \
+sd batch -i '*.txt' "Company: [[extract:company]]" | \
   sd batch "Find {{company}} stock ticker: [[ticker]]" -k
 ```
 
@@ -105,14 +105,15 @@ Recommendation: [[recommendation]]
 ## Python API
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, complete
 
 result = complete("""
 Analyse this review: {{review}}
 
 Sentiment: [[pick:sentiment|positive,negative,neutral]]
 Rating: [[int:rating|min=1,max=5]]
-""", context={"review": "Great product but slow shipping"})
+""", context={"review": "Great product but slow shipping"},
+   credentials=LLMCredentials.from_env())
 
 print(result["sentiment"])  # "positive"
 print(result["rating"])     # 4
@@ -138,10 +139,12 @@ print(result.total_cost)    # 0.0001 (USD)
 |----------|-------------|---------|
 | `LLM_API_KEY` | API key for LLM provider | Required |
 | `LLM_API_BASE` | API base URL (OpenAI-compatible) | OpenAI default |
-| `DEFAULT_LLM` | Default model name | `gpt-4o-mini` |
+| `DEFAULT_LLM` | Default model name | `gpt-4.1-mini` |
 | `STRUCKDOWN_CACHE` | Cache directory (0 to disable) | `~/.struckdown/cache` |
 | `STRUCKDOWN_CACHE_SIZE` | Cache size limit in MB | `10240` (10 GB) |
 | `SD_MAX_CONCURRENCY` | Max concurrent API calls | `20` |
+
+`LLM_API_KEY`, `LLM_API_BASE` and `DEFAULT_LLM` are defaults for the `sd` command. Code that uses struckdown as a library passes credentials explicitly, for example with `LLMCredentials.from_env()`.
 
 ## Links
 

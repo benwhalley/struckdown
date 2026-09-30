@@ -23,7 +23,7 @@ Actions allow you to register Python functions that can be called from templates
 ### Register an Action
 
 ```python
-from struckdown import Actions, complete
+from struckdown import Actions, LLMCredentials, complete
 
 @Actions.register('uppercase')
 def uppercase_text(context, text: str):
@@ -77,7 +77,10 @@ Extract name: [[name]]
 Greet them: [[@greet:greeting|name=name]]
 """
 
-result = complete(template, context={"input": "My name is Bob"})
+# a template with LLM slots needs credentials; action-only templates do not
+result = complete(
+    template, context={"input": "My name is Bob"}, credentials=LLMCredentials.from_env()
+)
 print(result['greeting'])  # "Hello, Bob!"
 ```
 
@@ -128,7 +131,8 @@ Supported types:
 - `str` (default)
 - `int`, `float`
 - `bool` ("true"/"false" converted)
-- `List[T]`, `Dict[str, T]` (JSON parsing)
+
+Coercion uses pydantic's lax mode, which does not parse JSON strings, so a `List[str]` or `dict` parameter receives the raw string. If any one parameter fails coercion, every parameter is passed through uncoerced, as strings.
 
 ## Accessing Context
 
@@ -220,7 +224,7 @@ def search(context, query: str):
 ### RAG with Vector Search
 
 ```python
-from struckdown import Actions, complete
+from struckdown import Actions, LLMCredentials, complete
 import chromadb
 
 # Initialize your vector database
@@ -256,7 +260,11 @@ Answer the question: {{question}}
 [[answer]]
 """
 
-result = complete(template, context={"question": "How do I use actions?"})
+result = complete(
+    template,
+    context={"question": "How do I use actions?"},
+    credentials=LLMCredentials.from_env(),
+)
 ```
 
 ### Database Query
@@ -377,20 +385,14 @@ def add(context, a, b):
     return str(int(a) + int(b))  # Manual conversion
 ```
 
-### 2. Return Strings
+### 2. Return Strings Where the Value Goes into the Prompt
 
-Actions should always return strings (they're inserted into templates):
+An action may return any value; it becomes the slot's output. A string is inserted into the prompt as it is, so return a string when the value is meant to be read by the model:
 
 ```python
-# Good
 @Actions.register('count')
-def count(context, items: List[str]):
-    return str(len(items))
-
-# Bad (returns int, will cause errors)
-@Actions.register('count')
-def count(context, items: List[str]):
-    return len(items)
+def count(context, text: str):
+    return f"{len(text.split())} words"
 ```
 
 ### 3. Error Handling

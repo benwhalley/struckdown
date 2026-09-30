@@ -15,6 +15,7 @@ Practical guides for common tasks.
 | [Custom Actions](custom-actions) | Extend struckdown with Python functions |
 | [Agent Loops](agent-loops) | Let the model call your tools, with guards and budgets |
 | [Model Overrides](model-overrides) | Per-slot temperature and model control |
+| [Providers](providers) | Configure OpenAI, Anthropic, Azure, Ollama and proxies |
 | [Number Extraction](number-extraction) | Extract and validate numeric values |
 | [Record LLM Usage](usage-ledger) | A record of every call: tokens, cost, slot |
 | [Record Usage in Django](django-usage-ledger) | Ledger tables, spans, the costs page and retention |

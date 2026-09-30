@@ -18,7 +18,7 @@ It provides real-time syntax validation, dynamic input fields, batch processing,
 # Edit a new or existing file
 sd edit myfile.sd
 
-# Auto-creates untitled.sd if no file specified
+# With no path, opens a workspace browser on the current directory
 sd edit
 
 # Use a specific port
@@ -60,15 +60,17 @@ The playground opens in your default browser at `http://localhost:9000` (or next
 ## CLI Options
 
 ```
-sd edit [FILE] [OPTIONS]
+sd edit [PATH] [OPTIONS]
 
 Arguments:
-  FILE    Struckdown file to edit (default: untitled.sd)
+  PATH    File or directory to edit (default: the current directory, as a workspace)
 
 Options:
   -p, --port INTEGER       Port to run server on (default: auto 9000+)
   --no-browser             Don't open browser automatically
   -I, --include PATH       Additional include paths for actions and types
+  -r, --reload             Auto-reload the server on file changes (development)
+  -m, --models TEXT        Comma-separated list of allowed models
   --help                   Show help message
 ```
 
@@ -213,46 +215,13 @@ server {
 
 **2. Rate Limiting**
 
-Add rate limiting to prevent abuse. Example with Flask-Limiter:
-
-```python
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-
-app = create_app(remote_mode=True)
-
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://",
-)
-
-# Stricter limits for execution endpoints
-@limiter.limit("10 per minute")
-@app.route("/api/run", methods=["POST"])
-def run_limited():
-    # The original route handles the logic
-    pass
-```
+Remote mode applies rate limits itself, with Flask-Limiter. Adjust them with the `STRUCKDOWN_RATE_LIMIT`, `STRUCKDOWN_UPLOAD_RATE_LIMIT`, `STRUCKDOWN_PROMPT_RATE_LIMIT` and `STRUCKDOWN_PROMPT_LOAD_RATE_LIMIT` environment variables (Flask-Limiter format, e.g. `100/hour`). The limits are held in memory, so each worker process counts separately.
 
 **3. Request Size Limits**
 
-Configure maximum request sizes:
+Uploads are capped at `STRUCKDOWN_MAX_UPLOAD_SIZE` bytes (5 MB by default) and templates at `STRUCKDOWN_MAX_SYNTAX_LENGTH` characters. See [Environment Variables](#environment-variables).
 
-```python
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB max upload
-```
-
-**4. Execution Timeouts**
-
-The LLM calls should have timeouts. Configure via environment:
-
-```bash
-export LLM_TIMEOUT=60  # seconds
-```
-
-**5. Action Restrictions**
+**4. Action Restrictions**
 
 In remote mode, consider restricting which actions are available:
 
@@ -326,8 +295,8 @@ Internet
 |----------|-------------|---------|
 | `LLM_API_KEY` | API key for LLM provider (local mode only -- not read in remote mode) | (required in local mode) |
 | `LLM_API_BASE` | Custom API base URL | Provider default |
-| `DEFAULT_LLM` | Default model name | `openai/gpt-4o-mini` |
-| `STRUCKDOWN_CACHE` | Cache directory (`0` to disable) | `~/.cache/struckdown` |
+| `DEFAULT_LLM` | Default model name | `gpt-4.1-mini` |
+| `STRUCKDOWN_CACHE` | Cache directory (`0` to disable) | `~/.struckdown/cache` |
 
 ### Security Settings (Remote Mode)
 
@@ -407,7 +376,8 @@ Response:
   "valid": true,
   "error": null,
   "inputs_required": ["topic"],
-  "slots_defined": ["response"]
+  "slots_defined": ["response"],
+  "uses_history": false
 }
 ```
 
@@ -419,7 +389,7 @@ curl -X POST http://localhost:9000/api/run \
   -d '{
     "syntax": "Tell me a joke about {{topic}}\n\n[[joke]]",
     "inputs": {"topic": "programming"},
-    "model": "openai/gpt-4o-mini"
+    "model": "openai:gpt-4o-mini"
   }'
 ```
 
@@ -428,7 +398,7 @@ Response:
 ```json
 {
   "outputs": {"joke": "Why do programmers prefer dark mode? Because light attracts bugs!"},
-  "cost": {"total_tokens": 45, "total_cost": 0.0001},
+  "cost": {"total_cost": 0.0001, "total_tokens": 45, "input_tokens": 30, "output_tokens": 15},
   "error": null
 }
 ```

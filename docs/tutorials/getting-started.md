@@ -38,9 +38,11 @@ sd chat "The sky is blue. Is this true? [[bool:is_true]]"
 ```
 
 Output:
-```json
-{"is_true": true}
 ```
+is_true: True
+```
+
+Add `-o result.json` to write the slots as JSON.
 
 Compare this to a raw LLM call -- you'd get "Yes, that's correct!" and have to parse it yourself.
 
@@ -74,17 +76,17 @@ Process hundreds of files with one command:
 
 ```bash
 # Summarise all text files
-sd batch *.txt "Summarise in 5 words: [[summary]]" -o summaries.json
+sd batch -i '*.txt' "Summarise in 5 words: [[summary]]" -o summaries.json
 
 # Extract structured data from documents
-sd batch documents/*.txt "
+sd batch -i 'documents/*.txt' "
 Name: [[extract:name]]
 Email: [[extract:email]]
 Phone: [[extract:phone]]
 " -o contacts.csv
 
 # Classify with multiple fields
-sd batch reviews/*.txt "
+sd batch -i 'reviews/*.txt' "
 Sentiment: [[pick:sentiment|positive,negative,neutral]]
 Urgent: [[bool:urgent]]
 Topic: [[pick:topic|billing,support,sales,other]]
@@ -122,7 +124,7 @@ sd chat "Extract the price: 'Contact us for pricing' [[!number:price]]"
 # Will indicate no valid price found rather than guessing
 
 # Pattern matching
-sd chat 'Find the module code: "PSYC2001 is great" [[extract:code|pattern="\w{4}\d+"]]'
+sd chat 'Find the module code: "PSYC2001 is great" [[code|pattern="\w{4}\d+"]]'
 # {"code": "PSYC2001"}
 ```
 
@@ -131,7 +133,7 @@ sd chat 'Find the module code: "PSYC2001 is great" [[extract:code|pattern="\w{4}
 ### Extract Structured Data from Files
 
 ```bash
-sd batch invoices/*.pdf "
+sd batch -i 'invoices/*.pdf' "
 Invoice number: [[extract:invoice_no]]
 Date: [[date:date]]
 Total: [[number:total]]
@@ -142,7 +144,7 @@ Paid: [[bool:paid]]
 ### Classify and Route
 
 ```bash
-sd batch emails/*.txt "
+sd batch -i 'emails/*.txt' "
 Priority: [[pick:priority|high,medium,low]]
 Department: [[pick:dept|sales,support,billing,hr]]
 Requires response: [[bool:needs_reply]]
@@ -154,7 +156,7 @@ Requires response: [[bool:needs_reply]]
 Pipe JSON output through multiple processing steps:
 
 ```bash
-sd batch *.txt "Extract company name: [[extract:company]]" | \
+sd batch -i '*.txt' "Extract company name: [[extract:company]]" | \
   sd batch "Find {{company}} stock ticker: [[extract:ticker]]" -k
 ```
 
@@ -170,7 +172,7 @@ sd chat "{{source}} Extract the main product and price [[extract:product]] [[num
   -s https://example.com/product
 
 # Or use the @search action for web search
-sd chat "[[@search:results|query='best python testing frameworks']] Summarise the top 3: [[summary]]"
+sd chat "[[@search:results|query="best python testing frameworks"]] Summarise the top 3: [[summary]]"
 ```
 
 ## Using Prompt Files
@@ -197,15 +199,17 @@ Analysis:
 Run with:
 
 ```bash
-sd batch feedback/*.txt -p feedback_classifier.sd -o analysis.xlsx
+sd batch -i 'feedback/*.txt' -p feedback_classifier.sd -o analysis.xlsx
 ```
 
 ## Python API
 
-Use struckdown programmatically:
+Use struckdown programmatically. As a library, struckdown does not read credentials from the environment on its own: pass them explicitly. `LLMCredentials.from_env()` builds them from `LLM_API_KEY` and `LLM_API_BASE`.
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, complete
+
+creds = LLMCredentials.from_env()
 
 result = complete("""
 Analyse this customer review:
@@ -214,7 +218,7 @@ Analyse this customer review:
 Sentiment: [[pick:sentiment|positive,negative,neutral]]
 Rating: [[int:rating|min=1,max=5]]
 Key points: [[extract+:points]]
-""", context={"review": "Great product but shipping was slow"})
+""", context={"review": "Great product but shipping was slow"}, credentials=creds)
 
 print(result["sentiment"])  # "positive"
 print(result["rating"])     # 4
@@ -225,12 +229,16 @@ print(result.total_cost)    # 0.0001 (USD)
 For async processing:
 
 ```python
-from struckdown import complete_async
 import asyncio
+from struckdown import LLMCredentials, complete_async
+
+creds = LLMCredentials.from_env()
 
 async def process_many(reviews):
     tasks = [
-        complete_async("Sentiment: [[pick:sentiment|pos,neg]] {{r}}", context={"r": r})
+        complete_async(
+            "Sentiment: [[pick:sentiment|pos,neg]] {{r}}", context={"r": r}, credentials=creds
+        )
         for r in reviews
     ]
     return await asyncio.gather(*tasks)

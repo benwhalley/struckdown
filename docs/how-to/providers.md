@@ -118,13 +118,13 @@ You can use different models for different slots within the same template:
 
 ```
 Quickly extract the key quote:
-[[extract:quote|model=openai:gpt-4o-mini]]
+[[extract:quote|model="openai:gpt-4o-mini"]]
 
 Now reason carefully about it:
-[[think:analysis|model=anthropic:claude-sonnet-4-20250514,thinking=high]]
+[[think:analysis|model="anthropic:claude-sonnet-4-20250514",thinking=high]]
 ```
 
-Note: per-slot model overrides use the same `provider:model` format. The provider prefix in the slot override determines the provider, and the credentials must be available (via env vars or database).
+Note: per-slot model overrides use the same `provider:model` format, in double quotes (an unquoted value may contain only letters, digits and underscores). The provider prefix in the slot override determines the provider, and the credentials must be available (via env vars or database).
 
 ## Python API
 
@@ -158,6 +158,7 @@ spec = ModelSpec(
     api_key="sk-...",
     input_cost_per_mtok=2.50,
     output_cost_per_mtok=10.0,
+    cache_read_cost_per_mtok=1.25,   # optional; the input rate if unset
 )
 
 result = complete("Tell a joke [[joke]]", spec=spec)
@@ -165,4 +166,4 @@ result = complete("Tell a joke [[joke]]", spec=spec)
 
 ### Django integration
 
-When using struckdown with Django, credentials are stored in the database via `struckdown.contrib.django` models (`Credential`, `AvailableModel`, `ModelSet`). See the Django contrib documentation for details. Environment variables are not used for credentials in this context.
+When using struckdown with Django, credentials are stored in the database via `struckdown.contrib.django` models (`Credential`, `AvailableModel`, `ModelSet`); `AvailableModel.to_spec()` builds a `ModelSpec` from a row, prices included. Environment variables are not used for credentials in this context. To record each call's usage and cost in the database, see [Record Usage in Django](django-usage-ledger.md).
