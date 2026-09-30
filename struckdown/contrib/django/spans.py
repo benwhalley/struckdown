@@ -328,14 +328,13 @@ def _wrap_streaming(response, handle: SpanHandle) -> None:
     """Run a streaming body under ``handle``, chunk by chunk.
 
     The body is produced after the middleware has returned, in whatever
-    context iterates it, so the handle is set around each chunk rather than
-    left in the context (where a reused thread would carry it into the next
-    request).
+    context iterates it, so the handle is set around each step of the body
+    (``next()`` or ``__anext__()``, while it computes a chunk) and reset
+    before the chunk is passed on. It is never left in the consumer's
+    context, where a reused thread would carry it into the next request.
 
-    The sync wrapper sets the handle around ``next()``, while the body
-    computes a chunk. The async wrapper sets it around ``yield``, while the
-    consumer holds the chunk, so calls an async body makes are not attributed
-    to the request span; such a body should open a span of its own.
+    A span the body opens itself is carried from one step to the next, so it
+    stays current across chunks until the body closes it.
     """
     from django.http import FileResponse
 
@@ -346,12 +345,28 @@ def _wrap_streaming(response, handle: SpanHandle) -> None:
         source = response.streaming_content
 
         async def agen():
-            async for chunk in source:
-                token = _current.set(handle)
-                try:
+            iterator = source.__aiter__()
+            inner = handle
+            try:
+                while True:
+                    token = _current.set(inner)
+                    try:
+                        chunk = await iterator.__anext__()
+                    except StopAsyncIteration:
+                        return
+                    finally:
+                        inner = _current.get()
+                        _current.reset(token)
                     yield chunk
-                finally:
-                    _current.reset(token)
+            finally:
+                # a consumer that stops early closes the body under the span too
+                aclose = getattr(iterator, "aclose", None)
+                if aclose is not None:
+                    token = _current.set(inner)
+                    try:
+                        await aclose()
+                    finally:
+                        _current.reset(token)
 
         response.streaming_content = agen()
         return
@@ -360,13 +375,15 @@ def _wrap_streaming(response, handle: SpanHandle) -> None:
 
     def gen():
         iterator = iter(source)
+        inner = handle
         while True:
-            token = _current.set(handle)
+            token = _current.set(inner)
             try:
                 chunk = next(iterator)
             except StopIteration:
                 return
             finally:
+                inner = _current.get()
                 _current.reset(token)
             yield chunk
 

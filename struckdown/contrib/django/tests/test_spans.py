@@ -113,6 +113,32 @@ class TestRequestSpans:
         response = client.get("/stream/")
         assert b"".join(response.streaming_content) == b"http:streaming_view"
 
+    @pytest.mark.django_db(transaction=True)
+    def test_calls_an_async_streaming_body_makes_carry_the_request_span(self, async_client):
+        async def consume():
+            response = await async_client.get("/astream/")
+            chunks = [chunk async for chunk in response.streaming_content]
+            # the consumer's own context never holds the request's handle
+            assert current_span() is None
+            return b"".join(chunks)
+
+        body = async_to_sync(consume)()
+        assert body == b"http:async_streaming_view;http:async_streaming_view;"
+        calls = LLMCall.objects.order_by("model_name")
+        assert [c.model_name for c in calls] == ["stub-0", "stub-1"]
+        assert {c.span.name for c in calls} == {"http:async_streaming_view"}
+
+    @pytest.mark.django_db(transaction=True)
+    def test_a_span_an_async_body_opens_lasts_across_its_chunks(self, async_client):
+        async def consume():
+            response = await async_client.get("/astream/?own=1")
+            return b"".join([chunk async for chunk in response.streaming_content])
+
+        assert async_to_sync(consume)() == b"body;body;"
+        calls = LLMCall.objects.all()
+        assert {c.span.name for c in calls} == {"body"}
+        assert {c.root_name for c in calls} == {"http:async_streaming_view"}
+
 
 class TestCelerySpans:
     def test_prerun_and_postrun_open_and_close_a_root_span(self):
