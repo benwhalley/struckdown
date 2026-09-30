@@ -94,6 +94,7 @@ Batch operations accept JSON, so you can chain commands:
 - **Custom actions** -- Extend with Python functions (RAG, APIs, databases)
 - **Multiple outputs** -- JSON, CSV, Excel, or stdout
 - **Web search and URL fetching** -- Extract data directly from web pages
+- **Usage and cost records** -- One record per provider request, with tokens and cost; optional Django tables and a costs page
 
 
 
@@ -156,7 +157,14 @@ Example with parameters:
 - **[Building a RAG System](docs/tutorials/rag-retrieval.md)** -- Extract → Search → Generate pattern
 - **[Custom Actions](docs/how-to/custom-actions.md)** -- Extend with Python plugins
 
+### How-to
+- **[Record LLM Usage](docs/how-to/usage-ledger.md)** -- A record of every call, with tokens and cost
+- **[Record Usage in Django](docs/how-to/django-usage-ledger.md)** -- Ledger tables, spans and a costs page
+
 ### Reference
+- **[API](docs/reference/api.md)** -- Python API
+- **[Usage Ledger](docs/reference/usage-ledger.md)** -- Usage records and the Django ledger tables
+- **[Cost Tracking](docs/explanation/cost-tracking.md)** -- How costs are computed
 - **[Examples](examples/)** -- Real-world examples and test cases
 - **[Security](docs/explanation/security.md)** -- Security guidelines and best practices
 
@@ -414,6 +422,18 @@ embeddings = get_embedding(texts, model="local/all-MiniLM-L6-v2")
 ```
 
 Use `local/model-name` prefix for any sentence-transformers model. API embeddings use `LLM_API_KEY` and `LLM_API_BASE` environment variables.
+
+## Usage and costs
+
+Each result carries its token counts and cost (`result.total_cost`, `result.has_unknown_costs`). To keep a record of every provider request -- completions, tool-loop rounds, embedding batches, transcriptions, cache hits and failures -- register a handler:
+
+```python
+import struckdown as sd
+
+sd.register_usage_handler(lambda record: print(record.model_name, record.total_cost))
+```
+
+In a Django project, `struckdown.contrib.django` writes these records to tables, attributes them to the request, task or feature they ran in, and adds a costs page to the admin. See [Record LLM Usage](docs/how-to/usage-ledger.md) and [Record Usage in Django](docs/how-to/django-usage-ledger.md).
 
 ## Advanced Features
 

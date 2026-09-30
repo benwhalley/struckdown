@@ -128,6 +128,8 @@ print(result.total_cost)    # 0.0001 (USD)
 | [CLI Reference](reference/cli.md) | All CLI commands |
 | [Custom Actions](how-to/custom-actions.md) | Extend with Python plugins |
 | [Caching](explanation/caching.md) | How caching works |
+| [Cost Tracking](explanation/cost-tracking.md) | How costs are computed |
+| [Record LLM Usage](how-to/usage-ledger.md) | A record of every call, and the Django costs page |
 | [API Reference](reference/api.md) | Python API documentation |
 
 ## Environment Variables
