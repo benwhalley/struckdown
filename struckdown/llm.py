@@ -1135,14 +1135,18 @@ def _profile_flag(profile, key: str) -> bool:
 
 def _reasoning_is_active(profile, settings: ModelSettings) -> bool:
     """Whether reasoning will be on for this request. Explicit effort wins,
-    then the unified ``thinking`` setting, then the model's own default."""
+    then the unified ``thinking`` setting, then the model's own default
+    (``openai_reasoning_enabled_by_default`` in pydantic-ai v1,
+    ``thinking_enabled_by_default`` in v2)."""
     effort = settings.get("openai_reasoning_effort")
     if effort is not None:
         return effort != "none"
     thinking = settings.get("thinking")
     if thinking is not None:
         return thinking is not False
-    return _profile_flag(profile, "openai_reasoning_enabled_by_default")
+    return _profile_flag(profile, "openai_reasoning_enabled_by_default") or _profile_flag(
+        profile, "thinking_enabled_by_default"
+    )
 
 
 def _without_sampling_params(model: PydanticAIModel, settings: ModelSettings) -> ModelSettings:
