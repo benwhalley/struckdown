@@ -7,22 +7,62 @@ nav_order: 4
 
 # Return Types
 
-Slots can specify return types to control how the LLM's response is parsed and validated.
+Slots can specify a return type, which controls the schema the model is asked
+to fill and how its response is validated.
 
 ## Syntax
 
 ```
-[[name]]                # Default: string
-[[type:name]]           # Built-in type
-[[type:name|opts]]      # With constraints
-[[CustomModel:name]]    # Pydantic model from context
+[[name]]                # Default: text (the `default` type)
+[[type:name]]           # Registered type
+[[type:name|opts]]      # With options
 ```
 
-## Built-in Types
+A slot has one `|`; all options follow it, separated by commas:
+`[[pick:colour|red,blue,thinking=low]]`. Unquoted option values must be
+identifiers or numbers; anything else, including model names, needs double
+quotes: `[[summary|model="gpt-4o-mini"]]`.
 
-### str / respond (default)
+The type name must be registered. An unknown name such as `[[str:x]]` or
+`[[Team:x]]` fails at parse time with `Unknown type 'Team'` and a list of the
+available types.
 
-String output. This is the default if no type is specified.
+## Registered Types
+
+These are the types registered when struckdown is imported:
+
+| Type | Returns | Notes |
+|------|---------|-------|
+| `default`, `respond` | `str` | Used when no type is given. Accepts `pattern`, `min_length`, `max_length` |
+| `extract` | `str` | Verbatim text from the input; temperature 0 |
+| `think` | `str` | Step-by-step reasoning notes |
+| `speak` | `str` | A spoken reply, continuing the conversation |
+| `poem` | `str` | A reply in verse; temperature 1.5 |
+| `int` | `int` | Accepts `min`, `max`; temperature 0 |
+| `number` | `int` or `float` | Accepts `min`, `max` |
+| `bool`, `boolean`, `decide` | `bool` | Three names for one type |
+| `pick` | `str` | One of the listed options |
+| `date` | `datetime.date` | |
+| `datetime` | `datetime.datetime` | |
+| `time` | `datetime.time` | |
+| `duration` | `datetime.timedelta` | |
+| `date_rule` | RRULE parameters | Used internally to expand recurring dates |
+| `json` | Any JSON value | Object, array, string, number, boolean or null |
+| `record` | `dict` | A JSON object with string keys |
+| `chunked_conversation` | list of segments | Each segment has `description`, `start`, `end` |
+| `halt` | Verdict object | A guard that can stop the run; see [halt](#halt) |
+
+`sd chat`, `sd batch` and the playground also load YAML types from `types/`
+directories (see [Custom Types](#custom-types)). This includes the examples
+shipped in `struckdown/types/`, which add `product` and `superhero` and
+redefine `extract`, `poem`, `speak` and `think` from YAML.
+
+Unless a slot is marked required (see [Required values](#required-values)),
+most types allow the model to return null when nothing fits.
+
+### default / respond
+
+Text output. This is the type used when none is given.
 
 ```
 [[response]]
@@ -31,7 +71,8 @@ String output. This is the default if no type is specified.
 
 ### extract
 
-Verbatim text extraction -- captures exact text from the input.
+Verbatim text extraction -- the model is told to copy text exactly as it
+appears in the input.
 
 ```
 [[extract:quote]]
@@ -40,10 +81,19 @@ Verbatim text extraction -- captures exact text from the input.
 
 ### think
 
-Internal reasoning -- for chain-of-thought before final answers.
+Internal reasoning -- for chain-of-thought before a final answer.
 
 ```
 [[think:analysis]]
+```
+
+### speak
+
+A spoken reply that continues the conversation, without speaker labels or
+quotes.
+
+```
+[[speak:reply]]
 ```
 
 ### int
@@ -55,53 +105,60 @@ Integer output.
 [[int:age|min=0,max=150]]
 ```
 
-### number / float
+### number
 
-Decimal or integer number.
+An integer or a decimal. There is no separate `float` type.
 
 ```
 [[number:price]]
 [[number:score|min=0.0,max=1.0]]
 ```
 
-### bool
+### bool / boolean / decide
 
-Boolean value. The LLM returns `true` or `false`.
+Boolean value. The model returns `true` or `false`.
 
 ```
 [[bool:is_valid]]
-[[bool:should_continue]]
+[[decide:should_continue]]
 ```
 
 ### pick
 
-Choose from predefined options.
+Choose from listed options.
 
 ```
 [[pick:sentiment|positive,negative,neutral]]
 [[pick:priority|low,medium,high,critical]]
 ```
 
-### date / datetime / time
+### date / datetime / time / duration
 
-Temporal extraction.
+Temporal extraction. Relative expressions ("next Tuesday") are resolved
+against the current date and time.
 
 ```
 [[date:deadline]]
 [[datetime:appointment]]
 [[time:start_time]]
+[[duration:length]]
 ```
+
+For `date` and `datetime`, the model may return a recurring pattern ("every
+Tuesday in October") as a string instead of a value. Struckdown then makes a
+second call with the `date_rule` type to turn the pattern into RRULE
+parameters, and expands them into concrete dates.
 
 ### json
 
-Arbitrary JSON value.
+Any JSON value.
 
 ```
 [[json:data]]
 [[json:metadata]]
 ```
 
-Returns a Python dict or list.
+Returns a Python dict, list, string, number, boolean or `None`.
 
 ### record
 
@@ -112,9 +169,9 @@ JSON object with string keys.
 [[record:info]]
 ```
 
-## Type Constraints
+## Options
 
-Add constraints after the type with `|`:
+Options go after the single `|`, separated by commas.
 
 ### Numeric Constraints
 
@@ -124,23 +181,30 @@ Add constraints after the type with `|`:
 [[int:count|min=0]]
 ```
 
-### Required Fields
+### Required Values
 
 ```
 [[!number:price]]           # ! prefix = required
 [[number:price|required]]   # Explicit required option
 ```
 
-### Pattern Constraints
+### Text Constraints
+
+`pattern`, `min_length` and `max_length` apply to plain text slots (`default`
+/ `respond`):
 
 ```
-[[extract:code|pattern="\w{4}\d+"]]
-[[extract:postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]
+[[code|pattern="\w{4}\d+"]]
+[[postcode|pattern="[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"]]
+[[summary|min_length=10,max_length=100]]
 ```
+
+Other types, including `extract`, accept these options without error but
+ignore them.
 
 ## Quantifiers (Lists)
 
-Extract multiple items:
+Extract several items:
 
 ```
 [[type*:var]]           # Zero or more items
@@ -158,21 +222,33 @@ Examples:
 [[date*:holidays]]          # Zero or more dates
 ```
 
-## Custom Pydantic Models
+## Custom Types
 
-Pass Pydantic models in the context to use complex types:
+A slot type must be registered by name before the template is parsed. A
+Pydantic class placed in `context` is not a type: `context` only supplies
+template variables. There are two ways to register one.
 
+### In Python: `ResponseTypes.register`
+
+Subclass `ResponseModel` and register it under the name the template will
+use:
+
+{% raw %}
 ```python
-from pydantic import BaseModel, Field
 from typing import List
-from struckdown import complete
+
+from pydantic import BaseModel, Field
+
+from struckdown import LLMCredentials, ResponseTypes, complete
+from struckdown.return_type_models import ResponseModel
 
 class Person(BaseModel):
     name: str
     age: int = Field(ge=0, le=150)
     occupation: str
 
-class Team(BaseModel):
+@ResponseTypes.register("team")
+class Team(ResponseModel):
     name: str
     members: List[Person]
 
@@ -181,49 +257,72 @@ Extract the team information:
 
 {{text}}
 
-[[Team:team]]
+[[team:team]]
 """, context={
     "text": "The Alpha team has John (30, engineer) and Jane (25, designer)",
-    "Team": Team,
-    "Person": Person,
-})
+}, credentials=LLMCredentials.from_env())
 
 team = result["team"]
 print(team.name)              # "Alpha"
 print(team.members[0].name)   # "John"
 ```
+{% endraw %}
 
-### Nested Models
+The registry is global to the process, so register once, at import time.
+Nested models (`Person` above) do not need registering; only the name used
+in the slot does.
 
-Models can reference other models:
+If the model has a field called `response`, the slot's value is that field;
+otherwise it is the whole model instance. With a quantifier (`[[team*:teams]]`)
+the value is a list of instances.
 
-```python
-class Address(BaseModel):
-    street: str
-    city: str
-    country: str
+`ResponseTypes.register` also accepts a factory function
+`(options, quantifier, required_prefix) -> model class`, which is how
+built-in types such as `pick` and `int` read their options.
 
-class Company(BaseModel):
-    name: str
-    address: Address
-    employee_count: int
+### In YAML: `types/` files
 
-result = complete("""
-Extract company info: {{text}}
-[[Company:company]]
-""", context={
-    "text": "Acme Inc at 123 Main St, NYC, USA has 500 employees",
-    "Company": Company,
-    "Address": Address,
-})
+A YAML file describes the model's fields:
+
+```yaml
+name: product
+description: A generic product record for data extraction
+llm_config:
+  temperature: .2
+fields:
+  name:
+    type: str
+    required: true
+    description: The name of the product
+  price:
+    type: float
+    description: The price of the product
+  currency:
+    type: str
+    min_length: 3
+    max_length: 3
+    description: The 3 letter currency code (e.g. USD, GBP, EUR)
 ```
+
+The CLI and playground load `*.yaml` files from `types/` next to the
+template, then `types/` in the current directory, then the built-in
+`struckdown/types/`. A later file with the same `name` replaces an earlier
+one, so a local type named `product` or `superhero` (or `extract`, `poem`,
+`speak`, `think`) is replaced by the built-in example; use a different name. `sd chat --type` and `sd batch -t` load extra
+files or directories. From Python, call
+`struckdown.type_loader.load_yaml_types([Path("types")])` before `complete()`.
+
+Field types are `str`, `int`, `float`, `bool`, `date`, `datetime`, `time` and
+`duration`, `list[T]`, `optional[T]`, or the name of another YAML or registered
+type. An unrecognised type name is logged as a warning and treated as `str`.
+See `struckdown/types/` for working examples.
 
 ### Optional Fields
 
 ```python
 from typing import Optional
 
-class Product(BaseModel):
+class Product(ResponseModel):
     name: str
     price: float
     description: Optional[str] = None
@@ -236,37 +335,15 @@ Use Pydantic's `Field` for additional validation:
 ```python
 from pydantic import Field
 
-class Review(BaseModel):
+class Review(ResponseModel):
     rating: int = Field(ge=1, le=5, description="Star rating 1-5")
     text: str = Field(min_length=10, max_length=500)
     verified: bool = False
 ```
 
-## Special Return Types
+Field descriptions are part of the schema the model sees.
 
-### theme / themes
-
-For qualitative analysis, extract themes:
-
-```
-[[theme:main_theme]]
-[[themes:all_themes]]
-```
-
-Returns structured theme objects with name, description, and supporting quotes.
-
-### code / codes
-
-Extract qualitative codes:
-
-```
-[[code:primary_code]]
-[[codes:all_codes]]
-```
-
-Returns code objects with name, description, and evidence.
-
-### halt
+## halt
 
 A guard. The model judges the condition stated above the slot, and the run
 stops when the verdict holds:
@@ -301,39 +378,34 @@ returns those results instead of raising. See
 
 ## Error Handling
 
-If the LLM response cannot be parsed into the requested type:
+If the model's response does not validate against the slot's type:
 
-1. Struckdown retries with validation feedback (up to `max_retries`)
-2. If all retries fail, raises a validation error
+1. pydantic-ai sends the validation error back to the model and asks again.
+   The agent is built with `retries=2`.
+2. If structured output still fails in tool-calling mode, struckdown tries
+   once more in prompted mode, with the JSON schema written into the prompt
+   (again with `retries=2`).
+3. If that fails, the call raises `struckdown.BadRequestError`, a subclass of
+   `LLMError`.
 
 ```python
-from struckdown import complete
+from struckdown import LLMCredentials, LLMError, complete
 
 try:
-    result = complete("Give me a number [[int:num]]")
-except Exception as e:
-    print(f"Failed to parse: {e}")
+    result = complete("Give me a number [[int:num]]", credentials=LLMCredentials.from_env())
+except LLMError as e:
+    print(f"Failed: {e}")
 ```
-
-### Validation Messages
-
-When validation fails, the error message is sent back to the LLM:
-
-```
-Validation error: value is not a valid integer
-Please provide a valid integer.
-```
-
-This allows the model to self-correct.
 
 ## Type Coercion
 
-Struckdown attempts reasonable type coercion:
+Validation uses Pydantic in lax mode, so reasonable string forms are
+accepted:
 
 | Input | Target | Result |
 |-------|--------|--------|
 | `"42"` | `int` | `42` |
-| `"3.14"` | `float` | `3.14` |
+| `"3.14"` | `number` | `3.14` |
 | `"true"` | `bool` | `True` |
 | `"yes"` | `bool` | `True` |
-| `["a", "b"]` | `list` | `["a", "b"]` |
+| `["a", "b"]` | list (`[[x*:v]]`) | `["a", "b"]` |
