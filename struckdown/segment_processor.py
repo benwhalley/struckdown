@@ -223,7 +223,7 @@ async def _process_together_group(
 
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
-    from .ledger import deferred_usage, flush_usage_async, slot_context
+    from .ledger import aheld_usage, slot_context
     from .llm import structured_chat
     from .results import SlotResult, get_progress_callback
 
@@ -305,19 +305,19 @@ async def _process_together_group(
             call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
-            with slot_context(slot_key), deferred_usage() as pending:
-                res, completion_obj = await anyio.to_thread.run_sync(
-                    lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
-                        messages=msgs,
-                        return_type=rt,
-                        llm=llm,
-                        credentials=credentials,
-                        extra_kwargs=kw,
-                        strict_params=strict_params,
-                    ),
-                    abandon_on_cancel=True,
-                )
-            await flush_usage_async(pending)
+            with slot_context(slot_key):
+                async with aheld_usage():
+                    res, completion_obj = await anyio.to_thread.run_sync(
+                        lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
+                            messages=msgs,
+                            return_type=rt,
+                            llm=llm,
+                            credentials=credentials,
+                            extra_kwargs=kw,
+                            strict_params=strict_params,
+                        ),
+                        abandon_on_cancel=True,
+                    )
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
         logger.debug(

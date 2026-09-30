@@ -34,11 +34,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Iterator, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Optional, Union
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -309,9 +309,9 @@ def deferred_usage() -> Iterator[list]:
     list is shared with any context copied from this one, so a record made on
     the other side of the hop lands in it.
 
-    Nothing is dispatched on exit: the caller flushes after the block. The
-    call sites in struckdown flush after the ``with`` rather than in a
-    ``finally``, so if the hop raises, the records it held are dropped.
+    Nothing is dispatched on exit: the caller flushes after the block, and
+    should do so in a ``finally`` so that a hop which raises still hands on
+    the records it holds. :func:`held_usage` and :func:`aheld_usage` do both.
     """
     pending: list = []
     token = _deferred.set(pending)
@@ -359,6 +359,41 @@ async def flush_usage_async(pending: list) -> None:
             await emit_async(pending.pop(0))
     finally:
         _deferred.reset(token)
+
+
+@contextmanager
+def held_usage() -> Iterator[list]:
+    """Defer records for the block, then flush them in this thread.
+
+    The flush runs whether or not the block raises, so the records of calls
+    made before a failure, and the failure's own record, are kept.
+    """
+    pending: list = []
+    token = _deferred.set(pending)
+    try:
+        yield pending
+    finally:
+        _deferred.reset(token)
+        flush_usage(pending)
+
+
+@asynccontextmanager
+async def aheld_usage() -> AsyncIterator[list]:
+    """:func:`held_usage` for async code: the records are flushed on this loop.
+
+    The flush is shielded from cancellation, so a slot cancelled because a
+    sibling failed still hands on what it holds.
+    """
+    import anyio
+
+    pending: list = []
+    token = _deferred.set(pending)
+    try:
+        yield pending
+    finally:
+        _deferred.reset(token)
+        with anyio.CancelScope(shield=True):
+            await flush_usage_async(pending)
 
 
 def emit(record: UsageRecord) -> None:

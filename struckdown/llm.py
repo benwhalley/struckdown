@@ -287,9 +287,8 @@ from .errors import ConnectionError as SDConnectionError
 from .errors import ContentFilterError, ContextWindowError, LLMError
 from .errors import RateLimitError as SDRateLimitError
 from .ledger import (CostBreakdown, ResponseStandIn, StoredPricing, UsagePayload,
-                     cost_from_price_calc, cost_from_stored, deferred_usage, emit,
-                     emit_async, flush_usage, flush_usage_async,
-                     record_from_response, wants_payload)
+                     aheld_usage, cost_from_price_calc, cost_from_stored, emit,
+                     emit_async, held_usage, record_from_response, wants_payload)
 from .ledger import now as _utcnow
 from .messages import split_for_agent, to_openai_messages
 
@@ -1602,7 +1601,7 @@ async def structured_chat_async(
     if not stream:
         # non-streaming: wrap existing sync path in a thread. Its usage records
         # are dispatched here, on the loop, not from the worker thread.
-        with deferred_usage() as pending:
+        async with aheld_usage():
             res, com = await anyio.to_thread.run_sync(
                 lambda: structured_chat(
                     messages=messages,
@@ -1615,7 +1614,6 @@ async def structured_chat_async(
                 ),
                 abandon_on_cancel=True,
             )
-        await flush_usage_async(pending)
         yield (res, com, True)
         return
 
@@ -1768,7 +1766,7 @@ async def structured_chat_async(
 
     # non-streaming fallback: use run_sync which supports retries
     if streaming_failed:
-        with deferred_usage() as pending:
+        async with aheld_usage():
             res_dict, com_dict = await anyio.to_thread.run_sync(
                 lambda: structured_chat(
                     messages=messages,
@@ -1780,7 +1778,6 @@ async def structured_chat_async(
                     strict_params=strict_params,
                 )
             )
-        await flush_usage_async(pending)
         com_dict["_cached"] = False
         # reconstruct the output as a pydantic model for consistency
         if hasattr(return_type, "model_validate"):
@@ -2434,10 +2431,8 @@ def get_embedding(texts: List[str], **kwargs) -> EmbeddingResultList:
         if "no running event loop" not in str(e):
             raise
 
-    with deferred_usage() as pending:
-        result = asyncio.run(get_embedding_async(texts, **kwargs))
-    flush_usage(pending)
-    return result
+    with held_usage():
+        return asyncio.run(get_embedding_async(texts, **kwargs))
 
 
 # --- Cross-encoder similarity ---
@@ -2752,8 +2747,22 @@ async def run_agent_with_tools(
 
     started_at = _utcnow()
 
+    async def _record_failure(exc):
+        # the rounds already made are inside pydantic-ai's run and not
+        # reachable from here; one record says the run was attempted and failed
+        await emit_async(
+            _failure_record(
+                llm.model_name, credentials, type(exc).__name__, started_at,
+                (_time.monotonic() - started) * 1000,
+            )
+        )
+
     if not stream:
-        result = await agent.run(user_prompt, **run_kwargs)
+        try:
+            result = await agent.run(user_prompt, **run_kwargs)
+        except Exception as exc:
+            await _record_failure(exc)
+            raise
         elapsed_ms = (_time.monotonic() - started) * 1000
         completion = _completion_dict_for_run(
             result, llm.model_name, messages, elapsed_ms
@@ -2800,6 +2809,8 @@ async def run_agent_with_tools(
                     await emit_async(record)
                 await out.put((output, Box(completion), True))
         except BaseException as exc:  # re-raised on the consumer's side
+            if isinstance(exc, Exception):
+                await _record_failure(exc)
             await out.put(exc)
         finally:
             await out.put(sentinel)

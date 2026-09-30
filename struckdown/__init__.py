@@ -61,7 +61,7 @@ from .jinja_utils import (SilentUndefined, escape_context_dict,
 # Re-export from llm module
 from .model_spec import PROVIDERS, ModelRegistry, ModelSpec, ProviderInfo
 from .ledger import (CostBreakdown, UsagePayload, UsageRecord, deferred_usage,
-                     flush_usage, register_usage_handler, set_model_ref,
+                     flush_usage, held_usage, register_usage_handler, set_model_ref,
                      unregister_usage_handler, usage_tracking)
 from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   MAX_EMBEDDING_TOKENS_PER_BATCH, MAX_LLM_CONCURRENCY,
@@ -586,10 +586,11 @@ def complete(
     """Synchronous wrapper for complete_async. Accepts single dict or list of dicts.
 
     Usage records made inside the run are dispatched here, in the caller's
-    thread, once the loop has finished (see ``ledger.deferred_usage``).
+    thread once the loop has finished, whether or not it raised (see
+    ``ledger.held_usage``).
     """
-    with deferred_usage() as pending:
-        result = anyio.run(
+    with held_usage():
+        return anyio.run(
         partial(
             complete_async,
             multipart_prompt,
@@ -613,8 +614,6 @@ def complete(
             limits=limits,
         )
     )
-    flush_usage(pending)
-    return result
 
 
 async def complete_incremental_async(
@@ -1131,9 +1130,8 @@ def complete_incremental(
             )
         ]
 
-    with deferred_usage() as pending:
+    with held_usage():
         events = anyio.run(collect)
-    flush_usage(pending)
     yield from events
 
 

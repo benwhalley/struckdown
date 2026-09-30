@@ -303,3 +303,110 @@ class TranscriptionTests(unittest.TestCase):
         self.assertAlmostEqual(record.cost.input_cost, 0.006 * 1.5)
         self.assertEqual(record.cost.output_cost, 0.0)
         self.assertAlmostEqual(result.cost, 0.009)
+
+
+class FailedRunTests(unittest.TestCase):
+    """A run that raises keeps the records of the calls it made."""
+
+    def setUp(self):
+        sd.clear_cache()
+
+    @staticmethod
+    def _second_call_fails():
+        calls = []
+
+        def model(self, creds=None):
+            calls.append(1)
+            if len(calls) > 1:
+                raise RuntimeError("no network")
+            return TestModel()
+
+        return patch.object(sd.LLM, "get_pydantic_model", model)
+
+    def _assert_first_kept_and_failure_recorded(self, records):
+        self.assertEqual([r.ok for r in records], [True, False])
+        self.assertEqual([r.slot for r in records], ["joke", "rating"])
+        self.assertEqual(records[1].error_class, "RuntimeError")
+
+    def test_a_sync_run_whose_second_slot_raises(self):
+        records, handler = _collector()
+        with usage_tracking(handler), self._second_call_fails():
+            with self.assertRaises(Exception):
+                sd.complete(
+                    "Tell a joke 41d.\n[[joke]]\nRate it.\n[[int:rating]]",
+                    model=MODEL,
+                    credentials=CREDS,
+                )
+        self._assert_first_kept_and_failure_recorded(records)
+
+    def test_an_async_run_whose_second_slot_raises(self):
+        records, handler = _collector()
+
+        async def go():
+            with usage_tracking(handler):
+                await sd.complete_async(
+                    "Tell a joke 52e.\n[[joke]]\nRate it.\n[[int:rating]]",
+                    model=MODEL,
+                    credentials=CREDS,
+                )
+
+        with self._second_call_fails():
+            with self.assertRaises(Exception):
+                asyncio.run(go())
+        self._assert_first_kept_and_failure_recorded(records)
+
+    def test_a_failed_transcription_is_recorded_from_async_code(self):
+        from struckdown import audio
+
+        records, handler = _collector()
+
+        class FailingClient:
+            class audio:
+                class transcriptions:
+                    @staticmethod
+                    def create(**kwargs):
+                        raise ConnectionError("down")
+
+        async def go():
+            with usage_tracking(handler):
+                await audio.transcribe_async(b"", model="openai:whisper-1", credentials=CREDS)
+
+        with patch.object(
+            audio, "_build_client", lambda model, creds: (FailingClient(), "whisper-1")
+        ), patch.object(
+            audio,
+            "validate_audio_for_transcription",
+            lambda a: type("V", (), {"duration_s": 1.0, "size_bytes": 10})(),
+        ), patch.object(audio, "_coerce_audio_file", lambda a, v: (b"", "a.mp3")):
+            with self.assertRaises(ConnectionError):
+                asyncio.run(go())
+        (record,) = records
+        self.assertFalse(record.ok)
+        self.assertEqual(record.error_class, "ConnectionError")
+
+    def test_a_failed_tool_run_is_recorded(self):
+        from pydantic_ai.usage import UsageLimits
+
+        records, handler = _collector()
+
+        def lookup(term: str) -> str:
+            """Look a thing up."""
+            return "found"
+
+        async def go():
+            with usage_tracking(handler):
+                await sd.complete_async(
+                    "Use the tool 63f.\n[[answer|use_tools=true, max_iter=3]]",
+                    model=MODEL,
+                    credentials=CREDS,
+                    tools=[lookup],
+                    # the tool round and the answer need two requests
+                    limits=UsageLimits(request_limit=1),
+                )
+
+        with _served_by_test_model():
+            with self.assertRaises(Exception):
+                asyncio.run(go())
+        (record,) = records
+        self.assertFalse(record.ok)
+        self.assertEqual(record.slot, "answer")

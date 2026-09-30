@@ -21,8 +21,7 @@ from .audio_probe import (
     AudioValidation,
     validate_audio_for_transcription,
 )
-from .ledger import (CostBreakdown, deferred_usage, emit, flush_usage_async,
-                     record_from_response)
+from .ledger import CostBreakdown, aheld_usage, emit, record_from_response
 from .ledger import now as _utcnow
 from .llm import LLMCredentials, parse_model_id
 
@@ -212,8 +211,8 @@ async def transcribe_async(
 ) -> TranscriptionResult:
     """Async wrapper. The OpenAI SDK's audio endpoint is sync-only, so we offload
     the blocking call to a worker thread."""
-    with deferred_usage() as pending:
-        result = await asyncio.to_thread(
+    async with aheld_usage():
+        return await asyncio.to_thread(
             transcribe,
             audio,
             model,
@@ -222,5 +221,3 @@ async def transcribe_async(
             prompt=prompt,
             response_format=response_format,
         )
-    await flush_usage_async(pending)
-    return result
