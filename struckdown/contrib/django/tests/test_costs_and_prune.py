@@ -149,3 +149,40 @@ class TestPrune:
         LLMCall.objects.filter(pk=call.pk).update(created_at=timezone.now() - timedelta(days=5000))
         call_command("sd_prune_ledger", stdout=StringIO())
         assert LLMCall.objects.count() == 1
+
+    def test_the_dry_run_counts_exactly_what_the_real_run_deletes(self, settings):
+        settings.STRUCKDOWN_LEDGER_PAYLOAD_DAYS = 0  # payloads go only with their calls
+        settings.STRUCKDOWN_LEDGER_CALL_DAYS = 400
+        old = timezone.now() - timedelta(days=401)
+
+        def span(name, *call_ages):
+            row = LLMSpan.objects.create(name=name, started_at=old)
+            for days in call_ages:
+                call = LLMCall.objects.create(
+                    span=row,
+                    kind="chat",
+                    model_name="m",
+                    created_at=timezone.now() - timedelta(days=days),
+                )
+                LLMCallPayload.objects.create(call=call, request={}, response={})
+            return row
+
+        span("emptied", 401, 402)  # both calls go, so the span does too
+        span("empty")
+        span("mixed", 401, 10)  # keeps a call, so stays
+        young = span("young", 10)
+        LLMSpan.objects.filter(pk=young.pk).update(started_at=timezone.now())
+
+        dry = StringIO()
+        call_command("sd_prune_ledger", "--dry-run", stdout=dry)
+        assert "Would delete: 3 payloads (> 0 d), 3 calls and 2 empty spans (> 400 d)" in (
+            dry.getvalue()
+        )
+        before = (LLMCallPayload.objects.count(), LLMCall.objects.count(), LLMSpan.objects.count())
+
+        real = StringIO()
+        call_command("sd_prune_ledger", stdout=real)
+        after = (LLMCallPayload.objects.count(), LLMCall.objects.count(), LLMSpan.objects.count())
+        assert tuple(b - a for b, a in zip(before, after)) == (3, 3, 2)
+        assert real.getvalue().replace("Deleted", "Would delete") == dry.getvalue()
+        assert set(LLMSpan.objects.values_list("name", flat=True)) == {"mixed", "young"}
