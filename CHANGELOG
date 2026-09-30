@@ -3,41 +3,90 @@
 
 ### 0.16.0
 
+**Breaking**
+- Django projects: `struckdown.contrib.django` now needs
+  `django.contrib.contenttypes` and `django.contrib.auth` in `INSTALLED_APPS`,
+  and has a new migration (`0008_usage_ledger`, `0009_llmcosts`). Once the app
+  is loaded it writes a ledger row for every call the process makes (turn off
+  with `STRUCKDOWN_LEDGER_ENABLED = False`). Run `migrate` before deploying:
+  until the tables exist each write fails and is logged, though the calls
+  themselves succeed. The ledger admins are registered on the default admin
+  site.
+- Stored pricing (`ModelSpec` rates, `set_model_pricing`,
+  `AvailableModel.get_llm_and_credentials()`) now charges cached prompt tokens
+  at the cache rate when one is set. Figures for cache-heavy use go down;
+  earlier versions charged every prompt token at the full input rate.
+- A tool slot's completion dict now carries the run's `response_cost` (the sum
+  over its rounds, or `None` if any round is unpriced) instead of always
+  `None`. `StruckdownResult.total_cost` therefore includes tool slots, and
+  `has_unknown_costs` is no longer true merely because a template has one.
+- `_calc_cost_from_usage` returns a `CostBreakdown`, not a float, and the
+  `_model_pricing` context variable holds a `StoredPricing` rather than a
+  tuple. Both are private, but were reachable.
+- Completion dicts (`SlotResult.completion`) carry new keys: `_cost_breakdown`
+  (a `CostBreakdown` dataclass), `_output`, `_provider_response_id` and
+  `_finish_reason`. `json.dumps` on a raw completion dict now needs a
+  `default=` for the dataclass; pydantic serialisation of a
+  `StruckdownResult` is unaffected.
+
 **Added**
 - A usage ledger. Every provider request struckdown makes -- a completion, a
-  round of a tool loop, an embedding batch, a transcription, a cache hit, a
-  failed request -- is reported as a `UsageRecord` to whoever is listening:
-  `register_usage_handler(fn)` for the process, `usage_tracking(fn)` for a
-  block. The record carries the model, token counts (cache reads and writes
-  apart), a `CostBreakdown` with the input and output sides and the prices
-  used, timing, the slot it ran in, and, when a handler asks, the request and
-  response bodies. From async code a handler may return an awaitable and it is
-  awaited; records made on a worker thread on the caller's behalf are
-  dispatched in the caller's own thread. See docs/how-to/usage-ledger.md.
+  round of a tool loop, an embedding batch, a transcription, a response-cache
+  hit, a failed request -- is reported as a `UsageRecord` to whoever is
+  listening: `register_usage_handler(fn)` for the process,
+  `usage_tracking(fn)` for a block. The record carries the model, token counts
+  (cache reads and writes apart), a `CostBreakdown` with the input and output
+  sides and the prices used, timing, the slot it ran in, and, when a handler
+  sets `wants_payload`, the request and response bodies. From async code a
+  handler may return an awaitable and it is awaited; records made on a worker
+  thread on the caller's behalf are dispatched in the caller's own thread
+  (`deferred_usage` / `flush_usage`). Field names map to the OpenTelemetry
+  `gen_ai` conventions (`ledger.SEMCONV`). See docs/how-to/usage-ledger.md.
 - `struckdown.contrib.django` gains the ledger's tables: `LLMSpan` (what a
   call belonged to: the request or task, with the user and a link to the
   record that holds the text), `LLMCall` (one row per request, with the prices
-  and model details copied onto it and `total_cost` a generated column) and
-  `LLMCallPayload` (bodies, opt-in, on a short retention window). With them:
-  `llm_span(...)` for naming a block of calls, `SpanMiddleware` and
-  `install_celery_hooks()` for a root span per request and task, a costs page
-  at `/admin/sd_models/llmcosts/`, read-only changelists, `ledger.record_call`
-  / `record_openai_response` for calls made outside struckdown, and
-  `sd_prune_ledger`. Needs `django.contrib.contenttypes`.
-- `AvailableModel.cache_read_cost_per_mtok` and `cache_write_cost_per_mtok`,
-  filled by `sd_update_prices` where the price source publishes them.
-  `ModelSpec` and `set_model_pricing` take the same two rates, and
-  `ModelSpec.model_ref` names the caller's own model record on every usage
-  record. `get_llm_and_credentials()` sets both.
+  and model details copied onto it, cost null when unpriced, and `total_cost`
+  a generated column) and `LLMCallPayload` (bodies, opt-in, on a short
+  retention window). With them: `llm_span(...)`, `open_span` / `close_span`
+  and `aopen_span` / `aclose_span` for naming a block of calls;
+  `SpanMiddleware` and `install_celery_hooks()` for a root span per request
+  and task; a costs page at `/admin/sd_models/llmcosts/` with read-only
+  changelists; `ledger.record_call` / `record_openai_response` for calls made
+  outside struckdown; the `sd_prune_ledger` command; and the settings
+  `STRUCKDOWN_LEDGER_ENABLED`, `STRUCKDOWN_LEDGER_CAPTURE_PAYLOADS`,
+  `STRUCKDOWN_LEDGER_PAYLOAD_DAYS` (30) and `STRUCKDOWN_LEDGER_CALL_DAYS`
+  (400). See docs/how-to/django-usage-ledger.md.
+- Cache prices: `AvailableModel.cache_read_cost_per_mtok` and
+  `cache_write_cost_per_mtok`, filled by `sd_update_prices` where the price
+  source publishes them (`PriceLookup` gains the same two fields).
+  `ModelSpec` and `set_model_pricing` take the same two rates.
+- `ModelSpec.model_ref` and `set_model_ref()` name the caller's own model
+  record on every usage record. `AvailableModel.to_spec()` and
+  `get_llm_and_credentials()` set it to the row's id, and
+  `AvailableModel.stored_pricing()` returns the row's rates.
 - A Django test harness for the contrib app (`pip install struckdown[test]`).
 
-**Changed**
-- `_calc_cost_from_usage` returns a `CostBreakdown`, not a float; the
-  completion dict's `response_cost` is unchanged. Stored pricing now charges
-  cached prompt tokens at the cache rate when one is known (previously the full
-  input rate, which overstated cache-heavy use).
-- A tool loop's completion dict now carries the run's `response_cost` (the sum
-  over its responses) instead of `None`.
+**Known limitations**
+- Pricing and `model_ref` are context variables. Resolving a second model (an
+  embedding model, say) between resolving a model and calling it re-points
+  them, so the call is priced and linked as the second model. Resolve
+  immediately before the call.
+- `SpanMiddleware`'s wrapper for an async streaming body sets the request's
+  span around each `yield`, not while the body computes the next chunk, and
+  the middleware discards a span the view opened before returning a stream.
+  Open spans for streamed work inside the body.
+- Records held back across a thread or loop hop are dispatched after the hop,
+  not in a `finally`: when a call raises, its failure record and, for a sync
+  `complete()`, the records of the whole run are lost. A tool loop's records
+  are emitted only when the run finishes.
+- The costs page's "per call" average counts failed calls in its
+  denominator.
+- Anthropic cache writes reported through OpenRouter's OpenAI-shaped usage
+  have no cache-write count and are charged at the input rate.
+- An API embedding whose batch could not be priced reports `cost` 0.0 on the
+  `EmbeddingResult` (its usage record correctly has no cost).
+
+See docs/explanation/cost-tracking.md#limitations.
 
 ### 0.14.0
 
