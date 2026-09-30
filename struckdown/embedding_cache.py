@@ -73,7 +73,7 @@ class CachedEmbedding:
     __slots__ = ("embedding", "tokens", "cost")
 
     def __init__(
-        self, embedding: List[float], tokens: int = 0, cost: float = 0.0
+        self, embedding: List[float], tokens: int = 0, cost: Optional[float] = 0.0
     ) -> None:
         self.embedding = embedding
         self.tokens = tokens

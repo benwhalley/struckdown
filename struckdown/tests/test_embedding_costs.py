@@ -219,3 +219,34 @@ class TestBackwardsCompatibility:
         # cosine similarity matrix
         similarity = np.dot(matrix, matrix.T)
         assert similarity.shape == (2, 2)
+
+
+class TestUnpricedApiEmbedding:
+    """An API batch that could not be priced reports unknown cost, not zero."""
+
+    def test_fresh_embeddings_carry_none(self, monkeypatch):
+        import asyncio
+
+        from struckdown import llm
+        from struckdown.llm import LLMCredentials, get_embedding_async
+
+        async def unpriced_batch(texts, *args, **kwargs):
+            return [[0.1, 0.2] for _ in texts], 7 * len(texts), None
+
+        monkeypatch.setenv("STRUCKDOWN_CACHE", "0")
+        monkeypatch.setattr(llm, "_get_api_embedding_batch_async", unpriced_batch)
+        seen = []
+        results = asyncio.run(
+            get_embedding_async(
+                ["one", "two"],
+                model="text-embedding-3-small",
+                credentials=LLMCredentials(api_key="x", base_url="http://example.invalid/v1"),
+                cost_callback=lambda *a: seen.append(a),
+            )
+        )
+        assert [e.cost for e in results] == [None, None]
+        assert results.has_unknown_costs
+        assert results.total_cost is None
+        assert results.fresh_cost is None
+        assert results.total_tokens == 14
+        assert seen == []

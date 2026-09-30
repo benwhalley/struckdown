@@ -2348,10 +2348,10 @@ async def get_embedding_async(
         )
         # Note: API embeddings are cached incrementally in _compute_embeddings_async
 
-    # Calculate per-embedding cost (distribute evenly among fresh embeddings)
+    # distribute the cost evenly among fresh embeddings; unknown stays None
     n_fresh = len(missing)
     if total_cost is None:
-        per_embedding_cost = 0.0
+        per_embedding_cost = None
     elif n_fresh > 0:
         per_embedding_cost = total_cost / n_fresh
     else:
