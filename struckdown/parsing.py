@@ -1879,9 +1879,15 @@ def validate_jinja_syntax(syntax: str) -> None:
 
 
 def parse_syntax(syntax):
-    """Parse struckdown syntax into sections"""
+    """Parse struckdown syntax into sections.
+
+    A slot with Jinja in its options, as in ``[[pick:x|{{ choices }}]]``, is parsed
+    as ``complete()`` parses it before rendering: its options are the single
+    placeholder ``DYNAMIC_TOKEN``, since the real ones exist only once rendered.
+    """
     validate_jinja_syntax(syntax)
-    preprocessed = _add_default_completion_if_needed(syntax)
+    masked, _ = mask_slot_jinja(syntax)
+    preprocessed = _add_default_completion_if_needed(masked)
     return parser().parse(preprocessed.strip())
 
 

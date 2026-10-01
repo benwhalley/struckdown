@@ -5,7 +5,7 @@ import random
 import string
 import sys
 import traceback
-from functools import partial
+from functools import partial, reduce
 from glob import glob
 from pathlib import Path
 from typing import List, Optional
@@ -108,7 +108,7 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     from jinja2.sandbox import ImmutableSandboxedEnvironment
 
     from struckdown import SilentUndefined
-    from struckdown.parsing import resolve_includes
+    from struckdown.parsing import DYNAMIC_TOKEN, mask_slot_jinja, resolve_includes
 
     # Read template
     template_text = prompt_file.read_text()
@@ -136,9 +136,17 @@ def _resolve_template_includes(prompt_file: Path) -> str:
     env = ImmutableSandboxedEnvironment(
         undefined=SilentUndefined, loader=FileSystemLoader(search_paths)
     )
-    template = env.from_string(template_text)
-    # Render with empty context (just expand includes, don't substitute {{vars}})
-    return template.render()
+    # rendering with an empty context blanks every {{ }}, which would leave a slot
+    # with Jinja in its options as [[pick:x|]]; mask those options and restore them
+    masked, dynamic = mask_slot_jinja(template_text)
+    rendered = env.from_string(masked).render()
+    return reduce(
+        lambda text, inner: text.replace(
+            f"[[{inner.partition('|')[0]}|{DYNAMIC_TOKEN}]]", f"[[{inner}]]"
+        ),
+        dynamic.values(),
+        rendered,
+    )
 
 
 def auto_prepend_input(prompt: str) -> str:

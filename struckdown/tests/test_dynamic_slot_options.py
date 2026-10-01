@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 import struckdown as sd
 from struckdown.errors import TemplateError
 from struckdown.jinja_analysis import analyze_template
+from struckdown.parsing import DYNAMIC_TOKEN, get_slot_names, parse_syntax
 from struckdown.sd_cli import app
 
 CREDS = sd.LLMCredentials(api_key="test")
@@ -86,3 +87,50 @@ def test_invalid_slot_syntax_raises_instead_of_running_nothing():
 def test_help_keeps_slot_brackets():
     result = CliRunner().invoke(app, ["chat", "--help"], terminal_width=120)
     assert 'sd chat "tell a joke [[joke]]"' in result.output
+
+
+# --- parse_syntax: static validation of templates that use dynamic options -----
+
+DYNAMIC = "Mood? [[pick:mood|{{ moods|join(',') }}]]\n\nSay hi [[greeting|temperature={{ temp }}]]"
+
+
+def test_parse_syntax_accepts_jinja_in_slot_options():
+    """Editors and validators call parse_syntax; it rejected what complete() runs."""
+    [section] = parse_syntax(DYNAMIC)
+    assert list(section) == ["mood", "greeting"]
+    assert section["mood"].action_type == "pick"
+
+
+def test_parse_syntax_marks_options_that_come_from_a_render():
+    [section] = parse_syntax(DYNAMIC)
+    assert [o.value for o in section["mood"].options] == [DYNAMIC_TOKEN]
+
+
+def test_get_slot_names_sees_slots_with_dynamic_options():
+    assert get_slot_names(DYNAMIC) == {"mood", "greeting"}
+
+
+def test_parse_syntax_still_rejects_jinja_in_slot_name_or_type():
+    with pytest.raises(TemplateError, match="only go in a slot's options"):
+        parse_syntax("[[pick:{{ name }}|a,b]]")
+
+
+def test_parse_syntax_still_rejects_broken_slots():
+    with pytest.raises(Exception, match="Unexpected"):
+        parse_syntax("Choose [[pick:x|red,]]")
+
+
+def test_parse_syntax_agrees_with_complete():
+    """What complete() can run, parse_syntax accepts."""
+    parse_syntax(DYNAMIC)
+    result, _ = run(DYNAMIC, {"moods": ["happy", "sad"], "temp": 0.2})
+    assert result.results["mood"].output in {"happy", "sad"}
+
+
+def test_explain_handles_dynamic_options(tmp_path):
+    prompt = tmp_path / "dynamic.sd"
+    prompt.write_text(DYNAMIC)
+    result = CliRunner().invoke(app, ["explain", str(prompt)], terminal_width=120)
+    assert result.exit_code == 0, result.output
+    assert "mood" in result.output
+    assert "Unexpected token" not in result.output
