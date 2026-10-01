@@ -67,9 +67,16 @@ vision = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["struckdown*",]
+exclude = ["struckdown.tests*", "struckdown.contrib.django.tests*"]
 
 [tool.setuptools.package-data]
 struckdown = ["**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/fixtures/*.json", "contrib/django/test_audio.mp3"]
+
+# tests stay in the sdist but not the wheel; include-package-data would otherwise
+# pick them up as data files of the struckdown package
+[tool.setuptools.exclude-package-data]
+struckdown = ["tests/*"]
+"struckdown.contrib.django" = ["tests/*"]
 
 [project.scripts]
 sd = "struckdown.sd_cli:app"

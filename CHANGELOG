@@ -23,6 +23,13 @@
 - `_calc_cost_from_usage` returns a `CostBreakdown`, not a float, and the
   `_model_pricing` context variable holds a `StoredPricing` rather than a
   tuple. Both are private, but were reachable.
+- A template whose slots don't parse now raises a `TemplateError`. Previously
+  a parse error in any slot -- including any Jinja inside `[[...]]` -- was
+  logged as a warning and the whole body ran as if it had no slots, doing
+  nothing. Templates that used to run silently will now fail: check stored
+  templates with `parse_syntax` before upgrading.
+- Wheels no longer include the test suite (`struckdown.tests`,
+  `struckdown.contrib.django.tests`). It is still in the sdist.
 
 **Added**
 - A usage ledger. Every provider request struckdown makes -- a completion, a
@@ -84,7 +91,9 @@
 - Jinja in a slot's options: `[[pick:srn|{{ srns|join(',') }}]]`,
   `[[greeting|temperature={{ temp }}]]`. The options are parsed from the
   rendered text when the slot runs, so they can come from the context or from
-  an earlier slot, which now triggers a re-render. See Template Syntax,
+  an earlier slot, which now triggers a re-render. `parse_syntax`,
+  `sd explain` and `sd graph` accept such templates; before rendering, the
+  slot's options are the placeholder `DYNAMIC_TOKEN`. See Template Syntax,
   "Options from Variables".
 
 **Fixed**
@@ -103,10 +112,6 @@
 - Reasoning models no longer receive sampling parameters under pydantic-ai
   2.x, which renamed the profile flag struckdown read to decide whether
   reasoning is on by default.
-- A template whose slots don't parse now raises a `TemplateError`. Previously
-  a parse error in any slot -- including any Jinja inside `[[...]]` -- was
-  logged as a warning and the whole body ran as if it had no slots, doing
-  nothing.
 - `sd --help` shows slot examples: `[[joke]]` was rendered as `[]` because
   Rich read it as markup. Help now uses Markdown mode, with example blocks kept
   on separate lines.
@@ -114,6 +119,13 @@
   `<system>` and `<header>` blocks. The body was rendered without the escaping
   hook, so a value containing `<system>` or `[[slot]]` reached the prompt
   unescaped, contrary to the documentation.
+- Each `<system>` and `<header>` block reaches the provider once. Since
+  0.13 every block was sent twice: segments were handed the blocks of every
+  segment in their batch, their own included, and then added their own again.
+- Emoji built from sequences parse as unquoted pick options: variation
+  selectors (`❤️`), zero-width-joined emoji (`❤‍🔥`, `🤷‍♂️`), flags (`🇬🇧`)
+  and symbols outside the two blocks the grammar knew (`🆒`, `⭐`, `⌚`). They
+  failed to parse, taking the whole template with them.
 
 **Known limitations**
 - Pricing and `model_ref` are context variables. Resolving a second model (an
