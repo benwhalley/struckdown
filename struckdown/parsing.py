@@ -165,8 +165,8 @@ option_value: STRING -> literal_string
                  | EMOJI -> literal_emoji
                  | CNAME -> literal_cname
 
-// Emoji terminal - covers common emoji ranges (emoticons, symbols, dingbats)
-EMOJI: /[\\U0001F300-\\U0001FAFF\\U00002600-\\U000027BF]+/
+// Emoji terminal: see grammar.lark
+EMOJI: /(?:[\\U0001F000-\\U0001FAFF\\u2190-\\u21FF\\u2300-\\u23FF\\u2600-\\u27BF\\u2B00-\\u2BFF\\u3030\\u303D\\u3297\\u3299][\\uFE0F\\U000E0020-\\U000E007F]*(?:\\u200D[\\U0001F000-\\U0001FAFF\\u2190-\\u21FF\\u2300-\\u23FF\\u2600-\\u27BF\\u2B00-\\u2BFF\\u3030\\u303D\\u3297\\u3299][\\uFE0F\\U000E0020-\\U000E007F]*)*)+/
 
 %import common.CNAME
 %import common.INT -> NUMBER
