@@ -140,6 +140,17 @@ def _resolve_spec_kwargs(
     return model, credentials
 
 
+def _earlier_blocks(segment_data, batch, seg_idx, key, context) -> List[str]:
+    """Rendered `key` blocks (system or header) of batch segments before `seg_idx`."""
+    return [
+        ImmutableSandboxedEnvironment(undefined=SilentUndefined, finalize=struckdown_finalize)
+        .from_string(segment_data[i][key])
+        .render(**context)
+        for i in sorted(batch)
+        if i < seg_idx and segment_data[i][key]
+    ]
+
+
 async def _complete_single_async(
     *args,
     image_max_side: Optional[int] = None,
@@ -368,36 +379,16 @@ async def _complete_single_run(
         if len(batch) > 1:
             logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
-        # For parallel batches, pre-collect system/header from all segments in the batch
-        # so all segments see globals from earlier-indexed segments in the same batch
-        batch_globals = accumulated_globals.copy()
-        batch_header_globals = accumulated_header_globals.copy()
-
-        for seg_idx in sorted(batch):
-            data = segment_data[seg_idx]
-            if data["system_template"]:
-                env = ImmutableSandboxedEnvironment(
-                    undefined=SilentUndefined, finalize=struckdown_finalize
-                )
-                rendered = env.from_string(data["system_template"]).render(
-                    **accumulated_context
-                )
-                batch_globals.append(rendered)
-            if data["header_template"]:
-                env = ImmutableSandboxedEnvironment(
-                    undefined=SilentUndefined, finalize=struckdown_finalize
-                )
-                rendered = env.from_string(data["header_template"]).render(
-                    **accumulated_context
-                )
-                batch_header_globals.append(rendered)
-
+        # each segment in a parallel batch also sees the blocks of earlier-indexed
+        # segments in the batch; it adds its own, so they are left out here
         tasks = [
             process_single_segment(
                 seg_idx,
                 accumulated_context,
-                batch_globals,
-                batch_header_globals,
+                accumulated_globals
+                + _earlier_blocks(segment_data, batch, seg_idx, "system_template", accumulated_context),
+                accumulated_header_globals
+                + _earlier_blocks(segment_data, batch, seg_idx, "header_template", accumulated_context),
             )
             for seg_idx in batch
         ]
@@ -916,37 +907,13 @@ async def complete_incremental_async(
             if len(batch) > 1:
                 logger.debug(f"Processing {len(batch)} segments in parallel: {batch}")
 
-            # For parallel batches, pre-collect system/header from all segments in the batch
-            # so all segments see globals from earlier-indexed segments in the same batch
-            batch_globals = accumulated_globals.copy()
-            batch_header_globals = accumulated_header_globals.copy()
-
-            for seg_idx in sorted(batch):
-                data = segment_data[seg_idx]
-                if data["system_template"]:
-                    env = ImmutableSandboxedEnvironment(
-                        undefined=SilentUndefined, finalize=struckdown_finalize
-                    )
-                    rendered = env.from_string(data["system_template"]).render(
-                        **accumulated_context
-                    )
-                    batch_globals.append(rendered)
-                if data["header_template"]:
-                    env = ImmutableSandboxedEnvironment(
-                        undefined=SilentUndefined, finalize=struckdown_finalize
-                    )
-                    rendered = env.from_string(data["header_template"]).render(
-                        **accumulated_context
-                    )
-                    batch_header_globals.append(rendered)
-
             if len(batch) == 1 and stream:
                 # single-segment batch: yield events directly for real-time
                 # streaming (don't buffer into a list)
                 seg_idx = batch[0]
                 data = segment_data[seg_idx]
-                local_globals = batch_globals.copy()
-                local_header_globals = batch_header_globals.copy()
+                local_globals = accumulated_globals.copy()
+                local_header_globals = accumulated_header_globals.copy()
                 if data["system_template"]:
                     env = ImmutableSandboxedEnvironment(
                         undefined=SilentUndefined,
@@ -1006,13 +973,21 @@ async def complete_incremental_async(
                     data["name"],
                 )]
             else:
-                # multi-segment batch: collect all events then yield in order
+                # multi-segment batch: collect all events then yield in order.
+                # each segment also sees the blocks of earlier-indexed segments in
+                # the batch; it adds its own, so they are left out here
                 tasks = [
                     process_segment_collect_events(
                         seg_idx,
                         accumulated_context,
-                        batch_globals,
-                        batch_header_globals,
+                        accumulated_globals
+                        + _earlier_blocks(
+                            segment_data, batch, seg_idx, "system_template", accumulated_context
+                        ),
+                        accumulated_header_globals
+                        + _earlier_blocks(
+                            segment_data, batch, seg_idx, "header_template", accumulated_context
+                        ),
                     )
                     for seg_idx in batch
                 ]
