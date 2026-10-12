@@ -132,6 +132,28 @@ Choose from listed options.
 [[pick:priority|low,medium,high,critical]]
 ```
 
+### decide
+
+A decision answered by a [decision model](../how-to/decision-models.md), with calibrated
+probabilities on the slot's `.decision`. Without options it is yes/no; with options it
+picks one. The run fails if no decision model is available.
+
+```
+[[decide:urgent]]
+[[decide:team|billing,engineering,support]]
+```
+
+### score
+
+An ordinal rating. Levels are listed lowest first; the value is the level index (0 for the
+first). On a decision model (`mode=decision`) it is the probability-weighted index, so it
+can fall between levels.
+
+```
+[[score:risk|none,low,moderate,high]]
+[[score:urgency|"no follow-up","routine","same day",mode=decision]]
+```
+
 ### date / datetime / time / duration
 
 Temporal extraction. Relative expressions ("next Tuesday") are resolved

@@ -196,6 +196,15 @@ class AvailableModelAdmin(admin.ModelAdmin):
                         f"(cost: ${result['cost']:.6f})",
                         messages.SUCCESS,
                     )
+                elif model.model_type == AvailableModel.ModelType.DECISION:
+                    probs = ", ".join(f"{k} {v:.2f}" for k, v in result["probabilities"].items())
+                    self.message_user(
+                        request,
+                        "Connection successful! "
+                        f"{connection_debug} Decision: \"{result['response']}\" "
+                        f"(probabilities: {probs}; cost: ${result['cost']:.6f})",
+                        messages.SUCCESS,
+                    )
                 elif model.model_type == AvailableModel.ModelType.TRANSCRIPTION:
                     duration = result.get("duration_s")
                     estimated = result.get("estimated_duration_s")
@@ -272,10 +281,18 @@ class AvailableModelAdmin(admin.ModelAdmin):
         if model.model_type == AvailableModel.ModelType.LLM:
             pydantic_model = llm_obj.get_pydantic_model(creds)
 
+        # decision models speak the systemone protocol; show the URL actually called
+        if model.model_type == AvailableModel.ModelType.DECISION:
+            from struckdown.decision import _connection
+
+            endpoint = _connection(model.model_name, creds)[0]
+        else:
+            endpoint = None
+
         return {
             "creds": creds,
             "pydantic_model": pydantic_model,
-            "endpoint": str(
+            "endpoint": endpoint or str(
                 getattr(pydantic_model, "base_url", None)
                 or creds.base_url
                 or "(unknown)"
@@ -319,6 +336,24 @@ class AvailableModelAdmin(admin.ModelAdmin):
             cost = getattr(result, "fresh_cost", 0) or 0
             return {"success": True, "response": str(text)[:100], "cost": cost}
 
+        def _run_decision():
+            from struckdown import complete
+
+            result = complete(
+                "Ticket: I was charged twice for my subscription this month.\n\n"
+                "Which team should handle this ticket? "
+                "[[decide:team|billing,engineering,\"customer support\"]]",
+                model=llm,
+                credentials=credentials,
+            )
+            slot = result.results["team"]
+            return {
+                "success": True,
+                "response": slot.output,
+                "probabilities": slot.decision["probabilities"],
+                "cost": getattr(result, "fresh_cost", 0) or 0,
+            }
+
         def _run_embedding():
             from struckdown import get_embedding
 
@@ -353,6 +388,7 @@ class AvailableModelAdmin(admin.ModelAdmin):
             AvailableModel.ModelType.LLM: _run_llm,
             AvailableModel.ModelType.EMBEDDING: _run_embedding,
             AvailableModel.ModelType.TRANSCRIPTION: _run_transcription,
+            AvailableModel.ModelType.DECISION: _run_decision,
         }
         fn = fn_map.get(model.model_type, _run_llm)
         with ThreadPoolExecutor(max_workers=1) as pool:

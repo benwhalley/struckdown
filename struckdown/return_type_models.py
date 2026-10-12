@@ -23,6 +23,9 @@ class LLMConfig(BaseModel):
 
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     model: Optional[str] = None
+    mode: Optional[Literal["decision"]] = Field(
+        default=None, description="'decision' routes the slot to a decision model"
+    )
     max_tokens: Optional[int] = Field(default=None, gt=0)
     seed: Optional[int] = Field(default=None, ge=0)
     thinking: Optional[str] = Field(
@@ -390,6 +393,7 @@ def selection_response_model(valid_options, quantifier=None, required_prefix=Fal
         model.llm_config = LLMConfig(
             temperature=0.0, model=None
         )  # Deterministic selection
+        model.decision_question = {"type": "choice", "options": list(selection_options)}
         return model
 
 
@@ -405,6 +409,7 @@ class BooleanResponse(ResponseModel):
 BooleanResponse.llm_config = LLMConfig(
     temperature=0.0, model=None
 )  # Deterministic boolean
+BooleanResponse.decision_question = {"type": "noul"}
 
 
 class IntegerResponse(ResponseModel):
@@ -704,7 +709,6 @@ def integer_response_model(options=None, quantifier=None, required_prefix=False)
 
 @ResponseTypes.register("boolean")
 @ResponseTypes.register("bool")
-@ResponseTypes.register("decide")
 def boolean_response_model(options=None, quantifier=None, required_prefix=False):
     """Factory to produce boolean response models with optional list support.
 
@@ -771,7 +775,53 @@ def boolean_response_model(options=None, quantifier=None, required_prefix=False)
                 __module__=__name__,
             )
             model.llm_config = LLMConfig(temperature=0.0, model=None)
+            model.decision_question = {"type": "noul"}
             return model
+
+
+@ResponseTypes.register("decide")
+def decide_response_model(options=None, quantifier=None, required_prefix=False):
+    """`[[decide:x]]` (yes/no) or `[[decide:x|a,b,c]]` (one of), answered by a decision model.
+
+    Same answer types as bool and pick, but the slot is always routed to a decision model
+    (see struckdown.routing) and the run fails if none is available.
+    """
+    if quantifier:
+        raise ValueError("decide picks exactly one answer; use several decide slots instead")
+    if parse_options(options).positional:
+        return selection_response_model(options, required_prefix=True)
+    return BooleanResponse
+
+
+@ResponseTypes.register("score")
+def score_response_model(options=None, quantifier=None, required_prefix=False):
+    """Factory for ordinal scores: `[[score:risk|none,low,moderate,high]]`.
+
+    Levels are listed lowest first. The response is a level index (0 = first level).
+    Decision models return the probability-weighted index, so it can fall between levels.
+    """
+    levels = parse_options(options).positional
+    if len(levels) < 2:
+        raise ValueError("score needs at least two levels, lowest first")
+
+    legend = "; ".join(f"{i} = {lvl}" for i, lvl in enumerate(levels))
+    model = create_model(
+        "ScoreResponse",
+        __base__=ResponseModel,
+        response=(
+            float,
+            Field(
+                ...,
+                ge=0,
+                le=len(levels) - 1,
+                description=f"The level that best applies, as its number ({legend}).",
+            ),
+        ),
+        __module__=__name__,
+    )
+    model.llm_config = LLMConfig(temperature=0.0, model=None)
+    model.decision_question = {"type": "score", "levels": list(levels)}
+    return model
 
 
 @ResponseTypes.register("extract")
@@ -1368,7 +1418,7 @@ class SlotCategory(str, Enum):
 
 # action types that produce short, structured outputs
 _CONSTRAINED_TYPES = frozenset({
-    "pick", "bool", "boolean", "decide",
+    "pick", "bool", "boolean", "decide", "score",
     "int", "number", "date", "datetime", "time", "duration",
     "json", "record",
 })
@@ -1438,6 +1488,11 @@ class HaltResponse(ResponseModel):
 
 
 HaltResponse.llm_config = LLMConfig(temperature=0.0, model=None)
+HaltResponse.decision_question = {
+    "type": "noul",
+    "field": "triggered",
+    "defaults": {"reason": "Decision model: P(yes) = {noul:.2f}"},
+}
 
 
 @ResponseTypes.register("halt")

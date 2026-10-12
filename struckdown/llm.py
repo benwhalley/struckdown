@@ -10,7 +10,8 @@ import time
 import traceback
 import warnings
 from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, Union
+from typing import (Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Tuple,
+                    Union)
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -291,6 +292,7 @@ from .ledger import (CostBreakdown, ResponseStandIn, StoredPricing, UsagePayload
                      aheld_usage, cost_from_price_calc, cost_from_stored, emit,
                      emit_async, held_usage, record_from_response, wants_payload)
 from .ledger import now as _utcnow
+from .decision import call_decision_model, chat_answer
 from .messages import split_for_agent, to_openai_messages
 
 
@@ -459,29 +461,59 @@ def set_model_pricing(
     its model, until something sets it again. Set it immediately before the
     call it belongs to.
     """
-    if input_cost_per_mtok is not None and output_cost_per_mtok is not None:
-        _model_pricing.set(
-            StoredPricing(
-                input_per_mtok=float(input_cost_per_mtok),
-                output_per_mtok=float(output_cost_per_mtok),
-                cache_read_per_mtok=(
-                    float(cache_read_cost_per_mtok)
-                    if cache_read_cost_per_mtok is not None
-                    else None
-                ),
-                cache_write_per_mtok=(
-                    float(cache_write_cost_per_mtok)
-                    if cache_write_cost_per_mtok is not None
-                    else None
-                ),
-            )
+    _model_pricing.set(
+        stored_pricing(
+            input_cost_per_mtok,
+            output_cost_per_mtok,
+            cache_read_cost_per_mtok,
+            cache_write_cost_per_mtok,
         )
-    else:
-        _model_pricing.set(None)
+    )
+
+
+def stored_pricing(
+    input_cost_per_mtok: Optional[float],
+    output_cost_per_mtok: Optional[float],
+    cache_read_cost_per_mtok: Optional[float] = None,
+    cache_write_cost_per_mtok: Optional[float] = None,
+) -> Optional[StoredPricing]:
+    """StoredPricing from per-Mtok rates, or None unless both input and output are set."""
+    if input_cost_per_mtok is None or output_cost_per_mtok is None:
+        return None
+    as_float = lambda v: float(v) if v is not None else None  # noqa: E731
+    return StoredPricing(
+        input_per_mtok=float(input_cost_per_mtok),
+        output_per_mtok=float(output_cost_per_mtok),
+        cache_read_per_mtok=as_float(cache_read_cost_per_mtok),
+        cache_write_per_mtok=as_float(cache_write_cost_per_mtok),
+    )
 
 
 def get_model_pricing() -> Optional[StoredPricing]:
     return _model_pricing.get()
+
+
+# Pricing for every model passed to complete() (registry=), keyed by model_name and bare
+# name, so slots routed to another model with model= are priced as that model. A None value
+# means "no caller-supplied price": skip the run-level pricing and look the model up.
+_registry_pricing: ContextVar[Dict[str, Optional[StoredPricing]]] = ContextVar(
+    "registry_pricing", default={}
+)
+
+
+def set_registry_pricing(specs) -> None:
+    """Record caller-supplied pricing for each ModelSpec (see _registry_pricing)."""
+    _registry_pricing.set({
+        name: stored_pricing(
+            s.input_cost_per_mtok,
+            s.output_cost_per_mtok,
+            s.cache_read_cost_per_mtok,
+            s.cache_write_cost_per_mtok,
+        )
+        for s in specs
+        for name in (s.model_name, s.bare_name)
+    })
+
 
 # Shared concurrency control for all LLM calls
 # This limits concurrent API calls across templates AND within together blocks
@@ -591,7 +623,7 @@ KNOWN_MODEL_SETTINGS = frozenset({
 })
 
 # internal keys consumed elsewhere in the pipeline, not model settings
-_INTERNAL_KEYS = frozenset({"stream_debounce_ms", "model"})
+_INTERNAL_KEYS = frozenset({"stream_debounce_ms", "model", "mode"})
 
 
 def _translate_kwargs(
@@ -769,6 +801,11 @@ class LLM(BaseModel):
     model_name: Optional[str] = Field(
         default_factory=lambda: env_config("DEFAULT_LLM", "gpt-4.1-mini"),
         exclude=True,
+    )
+    model_type: Literal["llm", "decision"] = Field(
+        default="llm",
+        exclude=True,
+        description="'decision' sends calls to the systemone endpoint (see struckdown.decision)",
     )
 
     def get_pydantic_model(self, credentials: Optional[LLMCredentials] = None) -> PydanticAIModel:
@@ -1008,7 +1045,10 @@ def _calc_cost_from_usage(model_response, model_name: str) -> Optional[CostBreak
     output_tokens = getattr(usage, "output_tokens", 0) or 0
 
     # 1. Check for caller-supplied pricing from ModelSpec
-    pricing = _model_pricing.get()
+    registry_prices = _registry_pricing.get()
+    pricing = (
+        registry_prices[model_name] if model_name in registry_prices else _model_pricing.get()
+    )
     if pricing is not None:
         return cost_from_stored(
             pricing,
@@ -1327,6 +1367,11 @@ def _call_llm_cached(
     logger.debug(f"LLM CALL: {mm}")
     logger.debug(f"\n\n{LC.BLUE}Messages: {messages}{LC.RESET}\n\n")
 
+    if llm.model_type == "decision":
+        res_dict, com_dict = call_decision_model(messages, return_type, model_name, credentials)
+        _cache_miss_marker.set(True)
+        return res_dict, com_dict
+
     # build model settings from extra_kwargs + return_type llm_config
     call_kwargs = _merge_llm_config_defaults(extra_kwargs, return_type)
     if max_tokens and "max_tokens" not in call_kwargs:
@@ -1551,6 +1596,9 @@ def structured_chat(
     # Determine if this was a cache hit or fresh call using the marker
     was_cached = not _cache_miss_marker.get()
     com_dict["_cached"] = was_cached
+    spec = getattr(return_type, "decision_question", None)
+    if spec and "_decision" not in com_dict:
+        com_dict["_decision"] = chat_answer(spec, getattr(res, spec.get("field", "response")))
     com = Box(com_dict)
 
     elapsed_ms = (time.monotonic() - start_time) * 1000

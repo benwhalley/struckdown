@@ -80,6 +80,18 @@ class SlotResult(BaseModel):
             return self.completion.get("_thinking")
         return getattr(self.completion, "_thinking", None)
 
+    @property
+    def decision(self) -> Optional[Dict[str, Any]]:
+        """The raw decision-model answer (probabilities, confidence, noul, score), if any.
+
+        Set only when the slot was answered by a decision model (see struckdown.decision).
+        """
+        if not self.completion:
+            return None
+        if isinstance(self.completion, dict):
+            return self.completion.get("_decision")
+        return getattr(self.completion, "_decision", None)
+
     def get_schema_summary(self) -> str:
         """Extract key constraints from response schema.
 

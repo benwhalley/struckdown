@@ -74,7 +74,8 @@ from .llm import (LC, LLM, MAX_EMBEDDING_CONCURRENCY,
                   disable_api_debug, enable_api_debug,
                   get_cross_encoder_scores, get_embedding, get_embedding_async,
                   get_embedding_semaphore, get_llm_semaphore, set_llm_concurrency,
-                  set_model_pricing, structured_chat, structured_chat_async)
+                  set_model_pricing, set_registry_pricing, structured_chat,
+                  structured_chat_async)
 from .audio import (TranscriptionResult, set_audio_pricing, transcribe,
                     transcribe_async)
 from .audio_probe import (AudioValidation, probe_audio_duration,
@@ -99,6 +100,7 @@ from .results import (StruckdownResult, CostSummary, SlotResult,
                       progress_tracking)
 from .return_type_models import (ACTION_LOOKUP, LLMConfig, SlotCategory,
                                 THINKING_LEVELS, classify_slot)
+from .routing import set_active_registry
 from .segment_processor import (process_segment_with_delta,
                                 process_segment_with_delta_incremental)
 from .validation import (ParsedOptions, parse_options,
@@ -113,8 +115,13 @@ def _resolve_spec_kwargs(
 ):
     """Resolve spec/registry kwargs to model + credentials, for backwards compat.
 
-    Also sets pricing context var if the resolved spec has pricing fields.
+    Also sets pricing context var if the resolved spec has pricing fields, and makes the
+    registry (a ModelRegistry or a list of ModelSpec) available to per-slot `model=` options.
     """
+    if isinstance(registry, list):
+        registry = ModelRegistry.from_specs(registry)
+    set_active_registry(registry)
+    set_registry_pricing(registry.models.values() if registry is not None else [])
     resolved_spec = None
     if spec is not None and model is None:
         resolved_spec = spec
@@ -459,7 +466,7 @@ async def complete_async(
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
     spec: Optional[ModelSpec] = None,
-    registry: Optional[ModelRegistry] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
@@ -500,7 +507,8 @@ async def complete_async(
         credentials: API credentials -- required; pass explicitly, or via spec/registry,
             or use LLMCredentials.from_env() for env-based config
         spec: ModelSpec combining model + credentials (alternative to model/credentials)
-        registry: ModelRegistry for alias resolution (alternative to model/credentials)
+        registry: ModelRegistry, or a list of ModelSpec, for alias resolution and per-slot
+            `model=` options (alternative to model/credentials)
         extra_kwargs: Additional LLM parameters
         template_path: Path to template file (for includes)
         include_paths: Additional directories to search for <include> files
@@ -590,7 +598,7 @@ def complete(
     model: LLM = None,
     credentials: Optional[LLMCredentials] = None,
     spec: Optional[ModelSpec] = None,
-    registry: Optional[ModelRegistry] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
     extra_kwargs=None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
@@ -666,7 +674,7 @@ async def complete_incremental_async(
     image_detail: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
-    registry: Optional[ModelRegistry] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
 ) -> AsyncGenerator[IncrementalEvent, None]:
     """
     Process a struckdown template, yielding events as slots complete.
@@ -1112,7 +1120,7 @@ def complete_incremental(
     image_detail: Optional[str] = None,
     *,
     spec: Optional[ModelSpec] = None,
-    registry: Optional[ModelRegistry] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
 ) -> Generator[IncrementalEvent, None, None]:
     """Synchronous wrapper for complete_incremental_async.
 

@@ -219,14 +219,17 @@ async def _process_together_group(
         SlotCompleted events for each slot in the group
     """
     import anyio
+    from box import Box
 
     from struckdown.actions import MessageList
 
+    from .decision import call_decision_batch
     from .incremental import SlotCompleted
     from .jinja_utils import escape_struckdown_syntax
     from .ledger import aheld_usage, slot_context
     from .llm import structured_chat
     from .results import SlotResult, get_progress_callback
+    from .routing import resolve_slot_model
 
     # Find all unfilled slots in this together group
     group_slots = [
@@ -306,14 +309,15 @@ async def _process_together_group(
             call_kwargs = dict(extra_kwargs) if extra_kwargs else {}
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
+            slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
             with slot_context(slot_key):
                 async with aheld_usage():
                     res, completion_obj = await anyio.to_thread.run_sync(
                         lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
                             messages=msgs,
                             return_type=rt,
-                            llm=llm,
-                            credentials=credentials,
+                            llm=slot_llm,
+                            credentials=slot_creds,
                             extra_kwargs=kw,
                             strict_params=strict_params,
                         ),
@@ -336,7 +340,11 @@ async def _process_together_group(
 
     # Build tasks for parallel execution
     # Each slot gets: shared_preamble + its own question (not other slots' questions)
+    # Slots routed to a decision model go out as one request per model: same state, one
+    # question each. <together> already promises the slots are independent.
     tasks = []
+    decision_batches: Dict[Tuple[str, Optional[str]], List[Tuple]] = {}
+    positions = {}
     prev_end = together_content_start
 
     for key, start, end, inner in group_slots_sorted:
@@ -344,8 +352,39 @@ async def _process_together_group(
         slot_specific = rendered[prev_end:start]
         # Full content is shared preamble + slot-specific question
         content_before = shared_preamble + slot_specific
-        tasks.append(process_single_slot(key, start, content_before))
+        positions[key] = start
+        slot_llm, slot_creds = resolve_slot_model(slot_info_map[key], llm, credentials)
+        if slot_llm.model_type == "decision" and not slot_info_map[key].is_function:
+            decision_batches.setdefault((slot_llm.model_name, slot_creds.base_url), []).append(
+                (key, slot_specific, content_before, slot_llm, slot_creds)
+            )
+        else:
+            tasks.append(process_single_slot(key, start, content_before))
         prev_end = end
+
+    async def process_decision_batch(batch):
+        *_, slot_llm, slot_creds = batch[0]
+        slots = {key: (slot_info_map[key].return_type, specific) for key, specific, *_ in batch}
+        start_time = time.monotonic()
+        answers, was_cached = await anyio.to_thread.run_sync(
+            lambda: call_decision_batch(
+                messages, shared_preamble, slots, slot_llm.model_name, slot_creds
+            ),
+            abandon_on_cancel=True,
+        )
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        return [
+            (
+                key,
+                slot_info_map[key].return_type.model_validate(answers[key][0]),
+                Box({**answers[key][1], "_cached": was_cached}),
+                elapsed_ms,
+                slot_info_map[key],
+                content_before,
+                [*messages, *split_content_by_role(content_before)],
+            )
+            for key, _, content_before, *_ in batch
+        ]
 
     # Execute all slots in parallel, respecting shared LLM concurrency limit
     from .llm import get_llm_semaphore
@@ -356,7 +395,14 @@ async def _process_together_group(
         async with sem:
             return await task_coro
 
-    results = await asyncio.gather(*[run_with_semaphore(t) for t in tasks])
+    async def as_list(task_coro):
+        return [await task_coro]
+
+    batched = await asyncio.gather(
+        *[run_with_semaphore(as_list(t)) for t in tasks],
+        *[run_with_semaphore(process_decision_batch(b)) for b in decision_batches.values()],
+    )
+    results = sorted((r for rs in batched for r in rs), key=lambda r: positions[r[0]])
 
     # Process results and yield events
     # Also collect Q&A pairs to return for adding to conversation history
@@ -536,6 +582,7 @@ async def process_segment_with_delta_incremental(
     from .llm import structured_chat, structured_chat_async
     from .results import SlotResult, get_progress_callback
     from .return_type_models import SlotCategory, classify_slot
+    from .routing import resolve_slot_model
 
     # template_str is the body only (system already extracted by caller)
     body_template = template_str
@@ -598,13 +645,16 @@ async def process_segment_with_delta_incremental(
 
     async def _run_halt(slot_info, snapshot):
         from .llm import structured_chat_async
+        from .routing import resolve_slot_model
 
+        call_kwargs = {**(extra_kwargs or {}), **(slot_info.llm_kwargs or {})}
+        slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
         async for partial, com, is_final in structured_chat_async(
             messages=snapshot,
             return_type=slot_info.return_type,
-            llm=llm,
-            credentials=credentials,
-            extra_kwargs=extra_kwargs,
+            llm=slot_llm,
+            credentials=slot_creds,
+            extra_kwargs=call_kwargs,
             stream=False,
             strict_params=strict_params,
         ):
@@ -817,11 +867,12 @@ async def process_segment_with_delta_incremental(
             category = classify_slot(slot_info.action_type, return_type)
             should_stream = stream and category == SlotCategory.FREE_TEXT
 
+            slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
             agen = run_agent_with_tools(
                 messages.copy(),
                 return_type,
-                llm,
-                credentials,
+                slot_llm,
+                slot_creds,
                 tools=tools,
                 deps=deps,
                 deps_type=deps_type,
@@ -935,14 +986,15 @@ async def process_segment_with_delta_incremental(
             # unified async path
             prev_text = ""
             completion_obj = None
+            slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
             slot_scope = slot_context(slot_key)
             slot_scope.__enter__()
             try:
                 async for partial, com, is_final in structured_chat_async(
                     messages=messages.copy(),
                     return_type=return_type,
-                    llm=llm,
-                    credentials=credentials,
+                    llm=slot_llm,
+                    credentials=slot_creds,
                     extra_kwargs=call_kwargs,
                     stream=should_stream,
                     strict_params=strict_params,

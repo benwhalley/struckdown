@@ -119,6 +119,7 @@ class AvailableModel(LifecycleModelMixin, models.Model):
         LLM = "llm", "Language Model"
         EMBEDDING = "embedding", "Embedding Model"
         TRANSCRIPTION = "transcription", "Speech-to-Text"
+        DECISION = "decision", "Decision Model"
         # not yet wired through struckdown -- enable when supported:
         # TTS = "tts", "Text-to-Speech"
         # VISION = "vision", "Vision (Image Understanding)"
@@ -374,7 +375,10 @@ class AvailableModel(LifecycleModelMixin, models.Model):
             else None
         )
         return (
-            LLM(model_name=self.model_name),
+            LLM(
+                model_name=self.model_name,
+                model_type="decision" if self.model_type == self.ModelType.DECISION else "llm",
+            ),
             LLMCredentials(
                 api_key=(cred.api_key if cred else None),
                 base_url=(cred.base_url if cred else None) or None,
@@ -537,6 +541,16 @@ class ModelSet(models.Model):
         related_name="+",
         limit_choices_to={"model_type": AvailableModel.ModelType.EMBEDDING},
     )
+    default_decision_model = models.ForeignKey(
+        AvailableModel,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        limit_choices_to={"model_type": AvailableModel.ModelType.DECISION},
+        help_text="Answers [[decide]] and mode=decision slots. Without one, those slots "
+        "use the set's only decision model, or fail.",
+    )
 
     default_credential = models.ForeignKey(
         Credential,
@@ -583,6 +597,13 @@ class ModelSet(models.Model):
             is_active=True,
         )
 
+    def get_decision_models(self):
+        """Get all active decision models in this set."""
+        return self.available_models.filter(
+            model_type=AvailableModel.ModelType.DECISION,
+            is_active=True,
+        )
+
     @property
     def data_regions(self) -> set:
         """Set of unique data residency values across all active models."""
@@ -619,6 +640,11 @@ class ModelSet(models.Model):
             default_embedding=(
                 self.default_embedding_model.model_name
                 if self.default_embedding_model
+                else None
+            ),
+            default_decision=(
+                self.default_decision_model.model_name
+                if self.default_decision_model
                 else None
             ),
         )

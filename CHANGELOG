@@ -1,6 +1,60 @@
 
 # Changelog
 
+### 0.17.0
+
+**Breaking**
+- `[[decide:x]]` is no longer another name for `bool`. It is answered by a
+  decision model, and the run fails if none is available. Use `bool` for a
+  yes/no answer from the chat model.
+- A slot's `model=` option now takes effect. It was silently ignored before,
+  so templates that set it ran every slot on the run's model; they will now
+  call the model they name. It is matched against the models passed with
+  `registry=`, or used as given, with the run's credentials, when none were
+  passed.
+- Django projects: a new migration (`0010_decision_models`). Run `migrate`.
+
+**Added**
+- Decision models: Microsoft-Decision-1 on Azure AI Foundry, TypeSafe's Jev,
+  or either behind a gateway that serves `/v1/systemone` (a LiteLLM proxy, for
+  example). They return calibrated probabilities over a fixed set of answers
+  instead of text. A model is a decision model only when its `ModelSpec` /
+  `LLM` says `model_type="decision"`; the provider prefix picks the endpoint
+  (`azure:<deployment>`, `typesafe:<model>`, or a bare name with a
+  `base_url`). See docs/how-to/decision-models.md and
+  examples/decision_demo.py.
+  - `[[decide:x]]` asks a yes/no question, `[[decide:x|a,b,c]]` picks one
+    option (up to 255); `pick`, `bool`, `score` and `halt` slots go to the
+    decision model with `mode=decision`.
+  - A new `score` type for ordered levels, lowest first (2 to 10 on a
+    decision model): `[[score:risk|none,low,high]]`. The value is the level
+    index; from a decision model it is the probability-weighted index.
+  - `SlotResult.decision` holds the answer: P(yes), or a probability per
+    option or level, the confidence, and the request sent. Slots a chat model
+    filled get the same shape with `calibrated: False`.
+  - Inside `<together>`, the decision slots for one model go as a single
+    request.
+  - Decision calls are priced at the vendors' rate ($0.042 per million input
+    tokens, output free), recorded on the usage ledger (one record per
+    batched request), cached, and retried on rate limits and server errors.
+- Per-slot models. `registry=` takes a list of `ModelSpec`s as well as a
+  `ModelRegistry`, and a slot's `model=` picks one of them by alias, full name
+  or bare name, each with its own credentials and pricing. A partial match
+  runs with a loud `FUZZY MODEL MATCH` warning; no match, or several, is an
+  error. `ModelSpec` gains `alias`, and `ModelRegistry` gains `match()`,
+  `default_decision` and `resolve_decision()`.
+- Django: a "Decision Model" type for `AvailableModel`,
+  `ModelSet.default_decision_model`, and a decision test for the admin's
+  "Test model" button. `AvailableModel.get_llm_and_credentials()` returns a
+  decision `LLM` for a decision row.
+
+**Fixed**
+- `ModelSpec` accepts `model_type="transcription"`, so
+  `ModelSet.to_registry()` no longer fails for a set containing a
+  speech-to-text model.
+- Doc examples that used a second `|` in a slot, or an unquoted hyphenated
+  `model=` value, neither of which parses.
+
 ### 0.16.0
 
 **Breaking**

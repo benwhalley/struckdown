@@ -5,9 +5,13 @@ specify models, credentials, and aliases. Downstream projects (soaking, Django
 apps) build on these types rather than passing LLM + LLMCredentials separately.
 """
 
-from typing import Dict, List, Literal, Optional
+import logging
+from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, SecretStr, computed_field
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderInfo(BaseModel):
@@ -75,6 +79,12 @@ PROVIDERS: Dict[str, ProviderInfo] = {
         default_residency="other",
         docs_url="https://ollama.com",
     ),
+    "typesafe": ProviderInfo(
+        name="TypeSafe (decision models)",
+        default_residency="us",
+        key_env_var="TYPESAFE_API_KEY",
+        docs_url="https://docs.typesafe.ai",
+    ),
     "openai-compatible": ProviderInfo(
         name="OpenAI-Compatible",
         default_residency="other",
@@ -95,7 +105,10 @@ class ModelSpec(BaseModel):
     """
 
     model_name: str = Field(description="Model identifier in provider:model format")
-    model_type: Literal["llm", "embedding"] = "llm"
+    model_type: Literal["llm", "embedding", "transcription", "decision"] = "llm"
+    alias: Optional[str] = Field(
+        default=None, description="Short name templates use in a slot's model= option"
+    )
     api_key: Optional[SecretStr] = Field(default=None, repr=False)
     base_url: Optional[str] = None
     data_residency: Optional[str] = None
@@ -150,7 +163,10 @@ class ModelSpec(BaseModel):
         """Convert to struckdown's internal LLM object."""
         from .llm import LLM
 
-        return LLM(model_name=self.model_name)
+        return LLM(
+            model_name=self.model_name,
+            model_type="decision" if self.model_type == "decision" else "llm",
+        )
 
     def as_credentials(self) -> "LLMCredentials":
         """Convert to struckdown's internal LLMCredentials object."""
@@ -174,10 +190,50 @@ class ModelRegistry(BaseModel):
     aliases: Dict[str, str] = Field(default_factory=dict)
     default_llm: Optional[str] = None
     default_embedding: Optional[str] = None
+    default_decision: Optional[str] = None
+
+    @classmethod
+    def from_specs(cls, specs: List[ModelSpec], **kwargs) -> "ModelRegistry":
+        """Build a registry from a list of specs; each spec's `alias` is registered."""
+        registry = cls(**kwargs)
+        for spec in specs:
+            registry.register(spec)
+        return registry
 
     def register(self, spec: ModelSpec) -> None:
         """Add a model to the registry."""
         self.models[spec.model_name] = spec
+        if spec.alias:
+            self.aliases[spec.alias] = spec.model_name
+
+    def match(self, name: str) -> Tuple[ModelSpec, bool]:
+        """Find a registered model by alias or name; return (spec, exact).
+
+        Exact: an alias, model_name or bare name. Otherwise a case-insensitive substring
+        match against those and display_name, which must be unique. Raises ValueError if
+        nothing (or more than one model) matches -- unlike resolve(), never invents a spec.
+        """
+        target = self.aliases.get(name, name)
+        exact = self.models.get(target) or next(
+            (s for s in self.models.values() if s.bare_name == target), None
+        )
+        if exact:
+            return exact, True
+
+        def names(spec):
+            aliases = [a for a, m in self.aliases.items() if m == spec.model_name]
+            return [spec.model_name, spec.display_name or "", *aliases]
+
+        needle = name.lower()
+        hits = [s for s in self.models.values() if any(needle in n.lower() for n in names(s))]
+        available = sorted([*self.aliases, *self.models])
+        if not hits:
+            raise ValueError(f"No model matches '{name}'. Available: {available}")
+        if len(hits) > 1:
+            raise ValueError(
+                f"'{name}' matches several models: {[h.model_name for h in hits]}"
+            )
+        return hits[0], False
 
     def resolve(self, name_or_alias: Optional[str] = None) -> ModelSpec:
         """Resolve a name or alias to a ModelSpec.
@@ -216,6 +272,23 @@ class ModelRegistry(BaseModel):
         if name is None:
             raise ValueError("No embedding model specified and no default_embedding set")
         return self.resolve(name)
+
+    def resolve_decision(self, name: Optional[str] = None) -> ModelSpec:
+        """The decision model to use: `name`, else default_decision, else the only one."""
+        name = name or self.default_decision
+        if name:
+            return self.match(name)[0]
+        decisions = self.decisions()
+        if len(decisions) != 1:
+            raise ValueError(
+                f"No decision model available: set default_decision or pass exactly one "
+                f"decision model (found {[d.model_name for d in decisions]})"
+            )
+        return decisions[0]
+
+    def decisions(self) -> List[ModelSpec]:
+        """All registered decision-model specs."""
+        return [s for s in self.models.values() if s.model_type == "decision"]
 
     def llms(self) -> List[ModelSpec]:
         """All registered LLM specs."""

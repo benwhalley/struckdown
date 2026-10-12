@@ -17,7 +17,8 @@ Struckdown supports per-slot control over LLM parameters -- temperature, thinkin
 |-----------|------|----------------|-------------|
 | `temperature` | float | 0.0 -- 2.0 | Randomness. Lower = deterministic, higher = creative |
 | `thinking` | string | off, minimal, low, medium, high, xhigh | Extended reasoning level (provider-dependent) |
-| `model` | string | any model name | Override the LLM model for this slot |
+| `model` | string | alias or model name | Run this slot on another model (see below) |
+| `mode` | string | decision | Send this slot to a [decision model](decision-models) |
 | `max_tokens` | int | > 0 | Maximum tokens in response |
 | `seed` | int | >= 0 | For reproducible outputs |
 
@@ -37,7 +38,7 @@ Each response type has a sensible default temperature:
 | Response Type | Default Temp | Rationale |
 |--------------|--------------|-----------|
 | `extract` | 0.0 | Deterministic verbatim extraction |
-| `pick`/`decide`/`bool` | 0.0 | Consistent selection/decision making |
+| `pick`/`decide`/`bool`/`score` | 0.0 | Consistent selection/decision making |
 | `int`/`date_rule` | 0.0 | Structured data needs precision |
 | `number`/`date`/`time`/`duration` | 0.1 | Slight flexibility for interpretation |
 | `think` | 0.5 | Balanced reasoning |
@@ -53,8 +54,8 @@ Override parameters on any completion slot using pipe syntax:
 [[extract:quote|temperature=0.5]]
 [[think:reasoning|temperature=0.3]]
 [[poem:verse|temperature=1.8]]
-[[extract:data|model="gpt-4o-mini"]]
-[[think:analysis|temperature=0.4,model="gpt-5"]]
+[[extract:data|model=fast]]
+[[think:analysis|temperature=0.4,model="openai:gpt-5"]]
 ```
 
 Model-specific options (like `min`, `max`, `required`) are preserved alongside LLM parameters:
@@ -65,8 +66,31 @@ Model-specific options (like `min`, `max`, `required`) are preserved alongside L
 ```
 
 The parser separates:
-- **LLM parameters**: `temperature`, `thinking`, `model`, `max_tokens`, `seed` -- passed to the LLM
+- **LLM parameters**: `temperature`, `thinking`, `model`, `mode`, `max_tokens`, `seed` -- passed to the LLM
 - **Slot options**: `min`, `max`, `required` -- used by response model factories
+
+## Choosing a Model per Slot
+
+`model=` is matched against the models passed to `complete()`:
+
+```python
+models = [
+    ModelSpec(model_name="openai:gpt-4.1-mini", alias="fast", api_key=...),
+    ModelSpec(model_name="anthropic:claude-opus-5-5", alias="careful", api_key=...),
+]
+complete(template, model=LLM(model_name="openai:gpt-4.1-mini"), credentials=..., registry=models)
+```
+
+- An alias, a full model name or a bare name (`gpt-4.1-mini`) is an exact match.
+- Otherwise a unique, case-insensitive substring of a name, alias or `display_name`
+  matches too, and struckdown logs a loud `FUZZY MODEL MATCH` warning saying which model
+  it used. A name that matches nothing, or several models, is an error.
+- A matched model uses its own credentials and pricing.
+- With no models passed, `model=` is used as given, with the call's credentials: a full
+  `provider:model` name, or a bare name a proxy knows (`model="gpt-4.1-mini"`).
+
+Unquoted values must be plain words (`model=fast`). Quote anything with a colon or hyphen:
+`model="openai:gpt-4.1-mini"`.
 
 ## Thinking / Extended Reasoning
 
@@ -175,8 +199,8 @@ Think very precisely:
 [[think:analysis|temperature=0.2]]
 
 Use a specific model:
-[[think:reasoning|model="gpt-4o-mini"]]
-""", credentials=creds)
+[[think:reasoning|model=fast]]
+""", credentials=creds, registry=models)
 ```
 
 ### With thinking
@@ -196,9 +220,9 @@ Quick classification (no extended reasoning needed):
 ```python
 result = complete("""
 Simple extraction (cheap, deterministic):
-[[extract:data|model="gpt-4o-mini",temperature=0.0]]
+[[extract:data|model=fast,temperature=0.0]]
 
 Complex reasoning (expensive, careful):
-[[think:analysis|model="gpt-5",temperature=0.3,thinking=high]]
-""", credentials=creds)
+[[think:analysis|model=careful,temperature=0.3,thinking=high]]
+""", credentials=creds, registry=models)
 ```

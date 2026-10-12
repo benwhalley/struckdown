@@ -411,13 +411,14 @@ Override LLM settings per-slot:
 
 ```
 [[think:reasoning|temperature=0.3]]
-[[pick:choice|red,blue,model="gpt-4"]]
-[[extract:data|model="gpt-4",temperature=0.0]]
+[[pick:choice|red,blue,model=fast]]
+[[extract:data|model="openai:gpt-4.1",temperature=0.0]]
+[[decide:urgent]]
 [[think:deep|thinking=high,temperature=0.3]]
 [[respond:summary|thinking=off]]
 ```
 
-Supported per-slot parameters: `temperature`, `thinking`, `model`, `max_tokens`, `seed`. See [Model Overrides](../how-to/model-overrides.md) for details.
+Supported per-slot parameters: `temperature`, `thinking`, `model`, `mode`, `max_tokens`, `seed`. `model=` takes an alias or name from the models passed to `complete(registry=...)`. See [Model Overrides](../how-to/model-overrides.md) and [Decision Models](../how-to/decision-models.md).
 
 ## Streaming
 
