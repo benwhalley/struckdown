@@ -8,6 +8,9 @@
   now booked to that model. Its usage records carried the run's `model_ref`,
   so a Django ledger joined them to the run's `AvailableModel` row. A routed
   `ModelSpec` without a `model_ref` now records none, rather than the run's.
+- The playground browser tests match the current playground (its editor, Run
+  button, offcanvas panels and CSRF header); they had been failing since the
+  editor was replaced.
 
 ### 0.17.0
 
