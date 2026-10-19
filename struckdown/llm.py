@@ -807,6 +807,12 @@ class LLM(BaseModel):
         exclude=True,
         description="'decision' sends calls to the systemone endpoint (see struckdown.decision)",
     )
+    model_ref: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Set on a model a slot was routed to: its ModelSpec.model_ref, or '' "
+        "if it has none, so its calls are not booked to the run's model",
+    )
 
     def get_pydantic_model(self, credentials: Optional[LLMCredentials] = None) -> PydanticAIModel:
         """Create a pydantic-ai model instance for this LLM + credentials.

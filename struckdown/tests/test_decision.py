@@ -315,3 +315,33 @@ def test_rate_limits_are_retried(monkeypatch, chat_calls):
     res = run("Q? [[decide:x]]", registry=[DECISION, CHAT])
     assert len(sent) == 3
     assert res["x"] is True
+
+
+def test_routed_calls_are_booked_to_their_own_model_ref(requests_seen, chat_calls):
+    """A host names the run's model with set_model_ref; a slot routed elsewhere must not
+    inherit it, or its spend joins back to the wrong row."""
+    from struckdown.ledger import get_model_ref, set_model_ref
+
+    records = []
+    set_model_ref("7")
+    try:
+        with usage_tracking(records.append):
+            run(
+                "Comment: the deadlines all landed in one week.\n\n"
+                "Is it about workload? [[decide:solo]]\n\n"
+                "Urgency? [[score:urgency|none,low,high,now,mode=decision]]\n\n"
+                "Summarise. [[summary]]\n\n"
+                "<together>\n"
+                "Is the student at risk? [[decide:risk]]\n\n"
+                "Topic? [[decide:topic|teaching,workload,other]]\n"
+                "</together>\n\n"
+                "Again. [[anon|model=unreffed]]",
+                registry=[DECISION.model_copy(update={"model_ref": "42"}), CHAT,
+                          ModelSpec(model_name="openai:unreffed", alias="unreffed")],
+            )
+        assert get_model_ref() == "7"
+    finally:
+        set_model_ref(None)
+    refs = {r.slot: r.model_ref for r in records}
+    assert refs == {"solo": "42", "urgency": "42", "summary": "7", "risk,topic": "42",
+                    "anon": None}

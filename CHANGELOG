@@ -1,6 +1,14 @@
 
 # Changelog
 
+### 0.17.1
+
+**Fixed**
+- A slot routed to another model (`model=`, `[[decide]]`, `mode=decision`) is
+  now booked to that model. Its usage records carried the run's `model_ref`,
+  so a Django ledger joined them to the run's `AvailableModel` row. A routed
+  `ModelSpec` without a `model_ref` now records none, rather than the run's.
+
 ### 0.17.0
 
 **Breaking**

@@ -310,7 +310,7 @@ async def _process_together_group(
             if slot_info.llm_kwargs:
                 call_kwargs.update(slot_info.llm_kwargs)
             slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
-            with slot_context(slot_key):
+            with slot_context(slot_key, slot_llm.model_ref):
                 async with aheld_usage():
                     res, completion_obj = await anyio.to_thread.run_sync(
                         lambda rt=return_type, msgs=slot_messages, kw=call_kwargs: structured_chat(
@@ -368,7 +368,8 @@ async def _process_together_group(
         start_time = time.monotonic()
         answers, was_cached = await anyio.to_thread.run_sync(
             lambda: call_decision_batch(
-                messages, shared_preamble, slots, slot_llm.model_name, slot_creds
+                messages, shared_preamble, slots, slot_llm.model_name, slot_creds,
+                model_ref=slot_llm.model_ref,
             ),
             abandon_on_cancel=True,
         )
@@ -644,11 +645,15 @@ async def process_segment_with_delta_incremental(
     pending_halts: Dict[str, Any] = {}
 
     async def _run_halt(slot_info, snapshot):
+        from .ledger import set_model_ref
         from .llm import structured_chat_async
         from .routing import resolve_slot_model
 
         call_kwargs = {**(extra_kwargs or {}), **(slot_info.llm_kwargs or {})}
         slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
+        if slot_llm.model_ref is not None:
+            # this task runs in its own copy of the context
+            set_model_ref(slot_llm.model_ref or None)
         async for partial, com, is_final in structured_chat_async(
             messages=snapshot,
             return_type=slot_info.return_type,
@@ -899,7 +904,7 @@ async def process_segment_with_delta_incremental(
                 else:
                     await queue.put(("ended", None))
 
-            with slot_context(slot_key):
+            with slot_context(slot_key, slot_llm.model_ref):
                 feeder = _asyncio.ensure_future(_feed())
 
             res = None
@@ -987,7 +992,7 @@ async def process_segment_with_delta_incremental(
             prev_text = ""
             completion_obj = None
             slot_llm, slot_creds = resolve_slot_model(slot_info, llm, credentials)
-            slot_scope = slot_context(slot_key)
+            slot_scope = slot_context(slot_key, slot_llm.model_ref)
             slot_scope.__enter__()
             try:
                 async for partial, com, is_final in structured_chat_async(

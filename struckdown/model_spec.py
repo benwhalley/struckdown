@@ -166,6 +166,7 @@ class ModelSpec(BaseModel):
         return LLM(
             model_name=self.model_name,
             model_type="decision" if self.model_type == "decision" else "llm",
+            model_ref=str(self.model_ref) if self.model_ref is not None else "",
         )
 
     def as_credentials(self) -> "LLMCredentials":

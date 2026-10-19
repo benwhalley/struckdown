@@ -240,12 +240,19 @@ def get_model_ref() -> Optional[str]:
 
 
 @contextmanager
-def slot_context(name: Optional[str]) -> Iterator[None]:
-    """The slot whose call is about to be made, for the records it produces."""
+def slot_context(name: Optional[str], model_ref: Optional[str] = None) -> Iterator[None]:
+    """The slot whose call is about to be made, for the records it produces.
+
+    ``model_ref`` names the model the slot was routed to (``LLM.model_ref``) for
+    these records only. ``""`` means a model with no ref; None leaves the run's ref.
+    """
     token = _current_slot.set(name)
+    ref_token = _model_ref.set(model_ref) if model_ref is not None else None
     try:
         yield
     finally:
+        if ref_token is not None:
+            _model_ref.reset(ref_token)
         _current_slot.reset(token)
 
 
@@ -497,7 +504,7 @@ def record_from_response(
         model_name=model_name,
         provider=provider or "",
         base_url_host=host_of(getattr(credentials, "base_url", None)),
-        model_ref=get_model_ref(),
+        model_ref=get_model_ref() or None,
         input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
         output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
         cache_read_tokens=int(getattr(usage, "cache_read_tokens", 0) or 0),

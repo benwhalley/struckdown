@@ -26,7 +26,7 @@ fields of the return type to fill in; str.format templates over the answer, e.g.
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 import tenacity
@@ -233,6 +233,7 @@ def call_decision_batch(
     slots: dict[str, tuple[Any, str]],
     model_name: str,
     credentials,
+    model_ref: Optional[str] = None,
 ) -> tuple[dict[str, tuple[dict, dict]], bool]:
     """Ask several independent questions about the same state in one request.
 
@@ -260,7 +261,7 @@ def call_decision_batch(
     }
     # one ledger record for the request (single-question calls are recorded by structured_chat)
     first_com = results[first][1]
-    with slot_context(",".join(slots)[:120]):
+    with slot_context(",".join(slots)[:120], model_ref):
         emit(record_from_response(
             kind="chat",
             model_name=model_name,
