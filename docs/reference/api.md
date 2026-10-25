@@ -14,36 +14,38 @@ nav_order: 2
 ```python
 def complete(
     multipart_prompt: str,
-    context: Union[dict, List[dict]] = {},
+    context: Dict[str, Any] = {},
     *,
-    model: LLM = None,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
-    extra_kwargs=None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
-    max_concurrent: Optional[int] = None,
-    on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
-) -> Union[StruckdownResult, List[StruckdownResult]]
+    on_halt: Literal["raise", "return"] = "raise",
+    tools: Optional[Sequence[Tool | Callable]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[Literal["auto", "low", "high", "original"]] = None,
+) -> StruckdownResult
 ```
 
-Process a struckdown template with one or more contexts.
+Process a struckdown template with one context. For many contexts, use
+[`complete_batch`](#complete_batch).
 
 **Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `multipart_prompt` | `str` | Struckdown template string |
-| `context` | `dict` or `List[dict]` | Variables for template rendering. A list runs the template once per context |
+| `context` | `dict` | Variables for template rendering |
 | `model` | `LLM` | Model configuration |
 | `credentials` | `LLMCredentials` | API credentials -- pass explicitly when using struckdown as a library |
 | `spec` | `ModelSpec` | Model and credentials together, instead of `model` + `credentials` |
@@ -53,8 +55,6 @@ Process a struckdown template with one or more contexts.
 | `include_paths` | `List[Path]` | Additional include search paths |
 | `strict_undefined` | `bool` | Raise on undefined template variables |
 | `strict_params` | `bool` | Raise on unsupported LLM parameters instead of warning |
-| `max_concurrent` | `int` | Max concurrent requests (list mode) |
-| `on_complete` | `callable` | Callback after each completion |
 | `stop_at` | `str` | Slot name to stop after; later segments are skipped |
 | `on_halt` | `str` | `"raise"` (default) or `"return"` -- see [Halting](#halting) |
 | `tools` | `list` | Python functions a `use_tools=true` slot may call |
@@ -62,7 +62,7 @@ Process a struckdown template with one or more contexts.
 | `deps_type` | `type` | Type of `deps`, for tool signatures |
 | `limits` | `UsageLimits` | Ceiling on requests, tool calls and output tokens for tool slots |
 
-**Returns:** `StruckdownResult` for a single context, `List[StruckdownResult]` for a list.
+**Returns:** `StruckdownResult`. Passing a list as `context` raises `TypeError`.
 
 **Raises:** `Halted` when a `[[halt:...]]` slot trips and `on_halt="raise"`.
 
@@ -82,9 +82,9 @@ print(result["joke"])
 ```python
 async def complete_async(
     multipart_prompt: str,
-    context: Union[dict, List[dict]] = {},
+    context: Dict[str, Any] = {},
     **kwargs
-) -> Union[StruckdownResult, List[StruckdownResult]]
+) -> StruckdownResult
 ```
 
 Async version of `complete()`. Same parameters.
@@ -104,15 +104,57 @@ asyncio.run(main())
 
 ---
 
+### complete_batch
+
+```python
+def complete_batch(
+    multipart_prompt: str,
+    contexts: Sequence[Dict[str, Any]],
+    *,
+    max_concurrent: Optional[int] = None,
+    on_complete: Optional[Callable[[int, StruckdownResult | Exception], None]] = None,
+    **kwargs,  # as for complete()
+) -> List[StruckdownResult | Exception]
+```
+
+Run the template once per context, in parallel. A context that fails does not
+stop the others: its exception takes its place in the returned list, which is
+in the order of `contexts`. `complete_batch_async` is the async version.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `contexts` | `Sequence[dict]` | One dict of template variables per run |
+| `max_concurrent` | `int` | Most runs at once (default: `SD_MAX_CONCURRENCY`) |
+| `on_complete` | `callable` | Called with `(index, result or exception)` as each run finishes |
+
+**Example:**
+
+```python
+from struckdown import complete_batch
+
+results = complete_batch(
+    "Tell a joke about {{topic}} [[joke]]",
+    [{"topic": "cats"}, {"topic": "dogs"}],
+    credentials=creds,
+)
+for r in results:
+    if isinstance(r, Exception):
+        continue
+    print(r["joke"])
+```
+
+---
+
 ### complete_incremental_async
 
 ```python
 async def complete_incremental_async(
     multipart_prompt: str,
-    model: LLM = None,
+    *,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
-    context={},
-    extra_kwargs=None,
+    context: Dict[str, Any] = {},
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
@@ -124,14 +166,14 @@ async def complete_incremental_async(
     deps=None,
     deps_type=None,
     limits=None,
-    *,
     spec: Optional[ModelSpec] = None,
     registry: Optional[ModelRegistry] = None,
 ) -> AsyncGenerator[IncrementalEvent, None]
 ```
 
 Process a template one slot at a time, yielding events as work completes.
-Takes a single context, not a list. With `stream=True` (the default),
+Takes a single context, not a list. Every argument after the prompt is
+keyword-only. With `stream=True` (the default),
 free-text slots also yield their tokens as they arrive.
 
 **Events:**

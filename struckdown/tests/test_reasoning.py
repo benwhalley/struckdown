@@ -78,3 +78,109 @@ def test_no_retry_when_provider_offers_only_rejected_value():
     error = ModelHTTPError(400, "gpt-5", {"error": message})
     settings = _translate_kwargs({"thinking": "off"}, model_name="gpt-5")
     assert not _retry_effort(error, "gpt-5", settings)
+
+
+# what Azure behind LiteLLM sent for thinking=minimal on gpt-5.4: the parameter is
+# "reasoning.effort", the wording differs, and str(exc) shows the body's repr, so the
+# quotes arrive backslash-escaped
+AZURE_BODY = {
+    "message": (
+        "litellm.BadRequestError: AzureException BadRequestError - {\n"
+        '  "error": {\n'
+        "    \"message\": \"Unsupported value: 'minimal' is not supported with the "
+        "'gpt-5.4-2026-03-05' model. Supported values are: 'none', 'low', 'medium', "
+        "'high', and 'xhigh'.\",\n"
+        '    "type": "invalid_request_error",\n'
+        '    "param": "reasoning.effort",\n'
+        '    "code": "unsupported_value"\n  }\n}'
+    ),
+    "type": "invalid_request_error",
+}
+
+
+def test_a_refused_level_is_retried_at_the_nearest_supported_one():
+    error = ModelHTTPError(400, "gpt-5.4", AZURE_BODY)
+    settings = _translate_kwargs({"thinking": "minimal"}, model_name="gpt-5.4")
+
+    assert _retry_effort(error, "gpt-5.4", settings)
+    assert settings["thinking"] == "low"
+
+
+def test_the_replacement_level_is_used_from_then_on():
+    error = ModelHTTPError(400, "gpt-5.4", AZURE_BODY)
+    _retry_effort(error, "gpt-5.4", _translate_kwargs({"thinking": "minimal"}, model_name="gpt-5.4"))
+
+    assert _translate_kwargs({"thinking": "minimal"}, model_name="GPT-5.4")["thinking"] == "low"
+    # only that level, and only that model
+    assert _translate_kwargs({"thinking": "high"}, model_name="gpt-5.4")["thinking"] == "high"
+    assert _translate_kwargs({"thinking": "minimal"}, model_name="gpt-5")["thinking"] == "minimal"
+
+
+@pytest.mark.parametrize(
+    "level, offered, expected",
+    [
+        ("minimal", ["none", "low", "medium"], "low"),  # never turned off
+        ("xhigh", ["low", "medium", "high"], "high"),
+        ("medium", ["low", "high"], "high"),  # a tie goes up
+        ("minimal", ["none", "minimal"], None),  # nothing else on offer
+    ],
+)
+def test_nearest_level(level, offered, expected):
+    assert reasoning.nearest_level(level, offered) == expected
+
+
+def test_the_azure_wording_also_drives_the_off_negotiation():
+    error = ModelHTTPError(400, "gpt-5.4", AZURE_BODY)
+    settings = _translate_kwargs({"thinking": "off"}, model_name="gpt-5.4")
+
+    assert _retry_effort(error, "gpt-5.4", settings)
+    assert settings["openai_reasoning_effort"] == "none"
+
+
+# an OpenAI-style body whose wording the text patterns do not know (no
+# "unsupported" anywhere, so str(exc) does not match either), but whose "param"
+# still names the effort
+def _reworded(param="reasoning_effort"):
+    return {
+        "error": {
+            "message": "The requested reasoning level is not available for this model.",
+            "type": "invalid_request_error",
+            "param": param,
+            "code": "invalid_value",
+        }
+    }
+
+
+def test_a_reworded_refusal_is_recognised_by_its_param():
+    error = ModelHTTPError(400, "gpt-5.4", _reworded("reasoning.effort"))
+    settings = _translate_kwargs({"thinking": "minimal"}, model_name="gpt-5.4")
+
+    assert _retry_effort(error, "gpt-5.4", settings)
+    assert settings["thinking"] == "low"
+
+
+def test_a_refused_off_without_a_list_falls_back_to_safe_off():
+    error = ModelHTTPError(400, "gpt-5.4", _reworded())
+    settings = _translate_kwargs({"thinking": "off"}, model_name="gpt-5.4")
+    settings["openai_reasoning_effort"] = "none"
+
+    assert _retry_effort(error, "gpt-5.4", settings)
+    assert settings["openai_reasoning_effort"] == reasoning.SAFE_OFF
+
+
+def test_an_unresolvable_refusal_is_not_retried_and_is_logged(caplog):
+    error = ModelHTTPError(400, "gpt-5.4", _reworded())
+    settings = _translate_kwargs({"thinking": "medium"}, model_name="gpt-5.4")
+
+    with caplog.at_level(logging.WARNING, logger="struckdown.reasoning"):
+        assert not _retry_effort(error, "gpt-5.4", settings)
+    assert "reasoning level is not available" in caplog.text
+
+
+def test_an_error_about_another_param_is_left_alone(caplog):
+    error = ModelHTTPError(400, "gpt-5.4", _reworded("temperature"))
+    settings = _translate_kwargs({"thinking": "minimal"}, model_name="gpt-5.4")
+
+    with caplog.at_level(logging.WARNING, logger="struckdown.reasoning"):
+        assert not _retry_effort(error, "gpt-5.4", settings)
+    assert caplog.text == ""

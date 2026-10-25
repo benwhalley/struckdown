@@ -16,7 +16,8 @@ import logging
 import warnings
 from functools import partial
 from pathlib import Path
-from typing import AsyncGenerator, Generator, List, Optional, Union
+from typing import (Any, AsyncGenerator, Callable, Dict, Generator, List, Optional,
+                    Sequence, Union)
 
 import anyio
 from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -49,11 +50,11 @@ from .incremental import (CheckpointReached, IncrementalEvent, ThinkingDelta,
                           SlotRetracted,
                           SlotStreamStart, TokenDelta)
 # Import internal modules for complete implementation
-from .errors import Halted
+from .errors import Halted, OnHalt
 from .jinja_analysis import TemplateAnalysis, analyze_template
 from .messages import to_openai_messages, to_pydantic_messages
-from .attachments import (Attachment, AttachmentList, StruckdownAttachmentError,
-                          attach)
+from .attachments import (Attachment, AttachmentList, ImageDetail,
+                          StruckdownAttachmentError, attach)
 from .attachments import new_scope as new_image_scope
 from .attachments import reset_scope as reset_image_scope
 from .segment_processor import readonly
@@ -105,6 +106,11 @@ from .segment_processor import (process_segment_with_delta,
                                 process_segment_with_delta_incremental)
 from .validation import (ParsedOptions, parse_options,
                          validate_number_constraints)
+from pydantic_ai import Tool
+from pydantic_ai.usage import UsageLimits
+
+# a tool for [[slot|use_tools=true]]: a pydantic-ai Tool or a plain function
+ToolLike = Union[Tool, Callable[..., Any]]
 
 
 def _resolve_spec_kwargs(
@@ -162,7 +168,7 @@ async def _complete_single_async(
     *args,
     image_max_side: Optional[int] = None,
     max_images: Optional[int] = None,
-    image_detail: Optional[str] = None,
+    image_detail: Optional[ImageDetail] = None,
     **kwargs,
 ) -> StruckdownResult:
     """Internal: one context, run in its own image scope (see ``attachments``)."""
@@ -175,20 +181,20 @@ async def _complete_single_async(
 
 async def _complete_single_run(
     multipart_prompt: str,
-    model: LLM = None,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
-    context={},
-    extra_kwargs=None,
+    context: Dict[str, Any] = {},
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
 ) -> StruckdownResult:
     """Internal: process a single context through a struckdown template."""
     import asyncio
@@ -461,48 +467,38 @@ async def _complete_single_run(
 
 async def complete_async(
     multipart_prompt: str,
-    context: Union[dict, List[dict]] = {},
+    context: Dict[str, Any] = {},
     *,
-    model: LLM = None,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
     spec: Optional[ModelSpec] = None,
     registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
-    extra_kwargs=None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
-    max_concurrent: Optional[int] = None,
-    on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
     image_max_side: Optional[int] = None,
     max_images: Optional[int] = None,
-    image_detail: Optional[str] = None,
-) -> Union[StruckdownResult, List[StruckdownResult]]:
+    image_detail: Optional[ImageDetail] = None,
+) -> StruckdownResult:
     """
-    Process a struckdown template with one or more contexts.
+    Process a struckdown template with one context.
 
-    Accepts either a single context dict or a list of context dicts.
-    When given a list, processes all contexts in parallel with concurrency control.
+    For many contexts in parallel, use complete_batch_async().
 
-    Examples:
-        # Single context - returns StruckdownResult
-        result = await complete_async("tell a joke [[joke]]", {"topic": "cats"})
-
-        # Multiple contexts - returns List[StruckdownResult]
-        results = await complete_async(
-            "tell a joke about {{topic}} [[joke]]",
-            [{"topic": "cats"}, {"topic": "dogs"}]
-        )
+    Example:
+        result = await complete_async("tell a joke about {{topic}} [[joke]]", {"topic": "cats"})
 
     Args:
         multipart_prompt: Struckdown template string
-        context: Single context dict OR list of context dicts
+        context: Variables for the template
         model: LLM configuration (default: LLM() reads DEFAULT_LLM)
         credentials: API credentials -- required; pass explicitly, or via spec/registry,
             or use LLMCredentials.from_env() for env-based config
@@ -513,110 +509,59 @@ async def complete_async(
         template_path: Path to template file (for includes)
         include_paths: Additional directories to search for <include> files
         strict_undefined: If True, raise error when template variables not found
-        max_concurrent: Maximum concurrent requests when processing list (default: SD_MAX_CONCURRENCY)
-        on_complete: Optional callback(index, result) called after each completion (list mode only)
         image_max_side: Images are resized to at most this many px on the long side (default 2048)
         max_images: Most images allowed in one request, counting earlier turns (default 50)
         image_detail: Detail setting sent with each image (default "auto"; see attach())
-
-    Returns:
-        StruckdownResult for single context, List[StruckdownResult] for list of contexts.
     """
-    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
-
     if isinstance(context, list):
-        # Multiple contexts - process in parallel
-        sem = anyio.Semaphore(max_concurrent) if max_concurrent else get_llm_semaphore()
-        results: List[StruckdownResult | Exception] = [None] * len(context)
-
-        async with anyio.create_task_group() as tg:
-            for idx, ctx in enumerate(context):
-
-                async def run_and_store(index=idx, context_item=ctx):
-                    async with sem:
-                        try:
-                            result = await _complete_single_async(
-                                multipart_prompt=multipart_prompt,
-                                context=context_item,
-                                model=model,
-                                credentials=credentials,
-                                extra_kwargs=extra_kwargs,
-                                template_path=template_path,
-                                include_paths=include_paths,
-                                strict_undefined=strict_undefined,
-                                strict_params=strict_params,
-                                stop_at=stop_at,
-                                on_halt=on_halt,
-                                tools=tools,
-                                deps=deps,
-                                deps_type=deps_type,
-                                limits=limits,
-                                image_max_side=image_max_side,
-                                max_images=max_images,
-                                image_detail=image_detail,
-                            )
-                            results[index] = result
-                            if on_complete:
-                                on_complete(index, result)
-                        except Exception as e:
-                            logger.error(f"Error processing context {index}: {e}")
-                            results[index] = e
-                            if on_complete:
-                                on_complete(index, e)
-
-                tg.start_soon(run_and_store)
-
-        return results
-    else:
-        # Single context
-        return await _complete_single_async(
-            multipart_prompt=multipart_prompt,
-            context=context,
-            model=model,
-            credentials=credentials,
-            extra_kwargs=extra_kwargs,
-            template_path=template_path,
-            include_paths=include_paths,
-            strict_undefined=strict_undefined,
-            strict_params=strict_params,
-            stop_at=stop_at,
-            on_halt=on_halt,
-            tools=tools,
-            deps=deps,
-            deps_type=deps_type,
-            limits=limits,
-            image_max_side=image_max_side,
-            max_images=max_images,
-            image_detail=image_detail,
-        )
+        raise TypeError("complete() takes one context dict; use complete_batch() for a list")
+    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
+    return await _complete_single_async(
+        multipart_prompt=multipart_prompt,
+        context=context,
+        model=model,
+        credentials=credentials,
+        extra_kwargs=extra_kwargs,
+        template_path=template_path,
+        include_paths=include_paths,
+        strict_undefined=strict_undefined,
+        strict_params=strict_params,
+        stop_at=stop_at,
+        on_halt=on_halt,
+        tools=tools,
+        deps=deps,
+        deps_type=deps_type,
+        limits=limits,
+        image_max_side=image_max_side,
+        max_images=max_images,
+        image_detail=image_detail,
+    )
 
 
 def complete(
     multipart_prompt: str,
-    context: Union[dict, List[dict]] = {},
+    context: Dict[str, Any] = {},
     *,
-    model: LLM = None,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
     spec: Optional[ModelSpec] = None,
     registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
-    extra_kwargs=None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     strict_params: bool = False,
-    max_concurrent: Optional[int] = None,
-    on_complete: Optional[callable] = None,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
     image_max_side: Optional[int] = None,
     max_images: Optional[int] = None,
-    image_detail: Optional[str] = None,
-) -> Union[StruckdownResult, List[StruckdownResult]]:
-    """Synchronous wrapper for complete_async. Accepts single dict or list of dicts.
+    image_detail: Optional[ImageDetail] = None,
+) -> StruckdownResult:
+    """Synchronous wrapper for complete_async.
 
     Usage records made inside the run are dispatched here, in the caller's
     thread once the loop has finished, whether or not it raised (see
@@ -624,55 +569,194 @@ def complete(
     """
     with held_usage():
         return anyio.run(
-        partial(
-            complete_async,
-            multipart_prompt,
-            context,
-            model=model,
-            credentials=credentials,
-            spec=spec,
-            registry=registry,
-            extra_kwargs=extra_kwargs,
-            template_path=template_path,
-            include_paths=include_paths,
-            strict_undefined=strict_undefined,
-            strict_params=strict_params,
-            max_concurrent=max_concurrent,
-            on_complete=on_complete,
-            stop_at=stop_at,
-            on_halt=on_halt,
-            tools=tools,
-            deps=deps,
-            deps_type=deps_type,
-            limits=limits,
-            image_max_side=image_max_side,
-            max_images=max_images,
-            image_detail=image_detail,
+            partial(
+                complete_async,
+                multipart_prompt,
+                context,
+                model=model,
+                credentials=credentials,
+                spec=spec,
+                registry=registry,
+                extra_kwargs=extra_kwargs,
+                template_path=template_path,
+                include_paths=include_paths,
+                strict_undefined=strict_undefined,
+                strict_params=strict_params,
+                stop_at=stop_at,
+                on_halt=on_halt,
+                tools=tools,
+                deps=deps,
+                deps_type=deps_type,
+                limits=limits,
+                image_max_side=image_max_side,
+                max_images=max_images,
+                image_detail=image_detail,
+            )
         )
-    )
+
+
+async def complete_batch_async(
+    multipart_prompt: str,
+    contexts: Sequence[Dict[str, Any]],
+    *,
+    model: Optional[LLM] = None,
+    credentials: Optional[LLMCredentials] = None,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
+    template_path: Optional[Path] = None,
+    include_paths: Optional[List[Path]] = None,
+    strict_undefined: bool = False,
+    strict_params: bool = False,
+    max_concurrent: Optional[int] = None,
+    on_complete: Optional[Callable[[int, Union[StruckdownResult, Exception]], None]] = None,
+    stop_at: Optional[str] = None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[ImageDetail] = None,
+) -> List[Union[StruckdownResult, Exception]]:
+    """
+    Process a struckdown template once per context, in parallel.
+
+    A context that fails does not stop the others: its exception takes its place
+    in the returned list, which is in the order of ``contexts``.
+
+    Example:
+        results = await complete_batch_async(
+            "tell a joke about {{topic}} [[joke]]",
+            [{"topic": "cats"}, {"topic": "dogs"}],
+        )
+
+    Args:
+        contexts: One dict of template variables per run
+        max_concurrent: Most runs at once (default: SD_MAX_CONCURRENCY)
+        on_complete: Called with (index, result or exception) as each run finishes
+
+    Other arguments are as for complete_async().
+    """
+    model, credentials = _resolve_spec_kwargs(model, credentials, spec, registry)
+    sem = anyio.Semaphore(max_concurrent) if max_concurrent else get_llm_semaphore()
+    results: List[Union[StruckdownResult, Exception]] = [None] * len(contexts)
+
+    async def run_and_store(index: int, context: Dict[str, Any]) -> None:
+        async with sem:
+            try:
+                result = await _complete_single_async(
+                    multipart_prompt=multipart_prompt,
+                    context=context,
+                    model=model,
+                    credentials=credentials,
+                    extra_kwargs=extra_kwargs,
+                    template_path=template_path,
+                    include_paths=include_paths,
+                    strict_undefined=strict_undefined,
+                    strict_params=strict_params,
+                    stop_at=stop_at,
+                    on_halt=on_halt,
+                    tools=tools,
+                    deps=deps,
+                    deps_type=deps_type,
+                    limits=limits,
+                    image_max_side=image_max_side,
+                    max_images=max_images,
+                    image_detail=image_detail,
+                )
+            except Exception as e:
+                logger.error(f"Error processing context {index}: {e}")
+                result = e
+            results[index] = result
+            if on_complete:
+                on_complete(index, result)
+
+    async with anyio.create_task_group() as tg:
+        for index, context in enumerate(contexts):
+            tg.start_soon(run_and_store, index, context)
+
+    return results
+
+
+def complete_batch(
+    multipart_prompt: str,
+    contexts: Sequence[Dict[str, Any]],
+    *,
+    model: Optional[LLM] = None,
+    credentials: Optional[LLMCredentials] = None,
+    spec: Optional[ModelSpec] = None,
+    registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
+    template_path: Optional[Path] = None,
+    include_paths: Optional[List[Path]] = None,
+    strict_undefined: bool = False,
+    strict_params: bool = False,
+    max_concurrent: Optional[int] = None,
+    on_complete: Optional[Callable[[int, Union[StruckdownResult, Exception]], None]] = None,
+    stop_at: Optional[str] = None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
+    image_max_side: Optional[int] = None,
+    max_images: Optional[int] = None,
+    image_detail: Optional[ImageDetail] = None,
+) -> List[Union[StruckdownResult, Exception]]:
+    """Synchronous wrapper for complete_batch_async."""
+    with held_usage():
+        return anyio.run(
+            partial(
+                complete_batch_async,
+                multipart_prompt,
+                contexts,
+                model=model,
+                credentials=credentials,
+                spec=spec,
+                registry=registry,
+                extra_kwargs=extra_kwargs,
+                template_path=template_path,
+                include_paths=include_paths,
+                strict_undefined=strict_undefined,
+                strict_params=strict_params,
+                max_concurrent=max_concurrent,
+                on_complete=on_complete,
+                stop_at=stop_at,
+                on_halt=on_halt,
+                tools=tools,
+                deps=deps,
+                deps_type=deps_type,
+                limits=limits,
+                image_max_side=image_max_side,
+                max_images=max_images,
+                image_detail=image_detail,
+            )
+        )
 
 
 async def complete_incremental_async(
     multipart_prompt: str,
-    model: LLM = None,
+    *,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
-    context={},
-    extra_kwargs=None,
+    context: Dict[str, Any] = {},
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     stream: bool = True,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
     image_max_side: Optional[int] = None,
     max_images: Optional[int] = None,
-    image_detail: Optional[str] = None,
-    *,
+    image_detail: Optional[ImageDetail] = None,
     spec: Optional[ModelSpec] = None,
     registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
 ) -> AsyncGenerator[IncrementalEvent, None]:
@@ -1100,25 +1184,25 @@ async def complete_incremental_async(
 
 def complete_incremental(
     multipart_prompt: str,
-    model: LLM = None,
+    *,
+    model: Optional[LLM] = None,
     credentials: Optional[LLMCredentials] = None,
-    context={},
-    extra_kwargs=None,
+    context: Dict[str, Any] = {},
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     template_path: Optional[Path] = None,
     include_paths: Optional[List[Path]] = None,
     strict_undefined: bool = False,
     stream: bool = False,
     strict_params: bool = False,
     stop_at: Optional[str] = None,
-    on_halt: str = "raise",
-    tools=None,
-    deps=None,
-    deps_type=None,
-    limits=None,
+    on_halt: OnHalt = "raise",
+    tools: Optional[Sequence[ToolLike]] = None,
+    deps: Any = None,
+    deps_type: Optional[type] = None,
+    limits: Optional[UsageLimits] = None,
     image_max_side: Optional[int] = None,
     max_images: Optional[int] = None,
-    image_detail: Optional[str] = None,
-    *,
+    image_detail: Optional[ImageDetail] = None,
     spec: Optional[ModelSpec] = None,
     registry: Optional[Union[ModelRegistry, List[ModelSpec]]] = None,
 ) -> Generator[IncrementalEvent, None, None]:
@@ -1139,24 +1223,26 @@ def complete_incremental(
             e
             async for e in complete_incremental_async(
                 multipart_prompt,
-                model,
-                credentials,
-                context,
-                extra_kwargs,
-                template_path,
-                include_paths,
-                strict_undefined,
+                model=model,
+                credentials=credentials,
+                context=context,
+                extra_kwargs=extra_kwargs,
+                template_path=template_path,
+                include_paths=include_paths,
+                strict_undefined=strict_undefined,
                 stream=stream,
                 strict_params=strict_params,
                 stop_at=stop_at,
-            on_halt=on_halt,
-            tools=tools,
-            deps=deps,
-            deps_type=deps_type,
-            limits=limits,
-            image_max_side=image_max_side,
-            max_images=max_images,
-            image_detail=image_detail,
+                on_halt=on_halt,
+                tools=tools,
+                deps=deps,
+                deps_type=deps_type,
+                limits=limits,
+                image_max_side=image_max_side,
+                max_images=max_images,
+                image_detail=image_detail,
+                spec=spec,
+                registry=registry,
             )
         ]
 
@@ -1174,6 +1260,8 @@ __all__ = [
     "complete_async",
     "complete_incremental",
     "complete_incremental_async",
+    "complete_batch",
+    "complete_batch_async",
     "structured_chat",
     # Conversation storage
     "to_openai_messages",

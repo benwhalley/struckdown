@@ -1,6 +1,6 @@
 """Exception classes and safe content markers for struckdown."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 # --- Marker classes ---
 
@@ -165,6 +165,10 @@ class FetchError(Exception):
         self.url = url
         self.reason = reason
         super().__init__(f"Failed to fetch {url}: {reason}")
+
+
+# what complete() does when a [[halt:...]] guard trips
+OnHalt = Literal["raise", "return"]
 
 
 class Halted(Exception):

@@ -17,13 +17,19 @@ So the value is negotiated rather than predicted. On a 400 naming
 ``reasoning_effort``, :func:`learn_from_error` reads the supported set out
 of the error, remembers the cheapest workable value for that model and the
 call is retried once. Only the first call after a model switch pays for it.
+
+A named level is negotiated the same way. pydantic-ai drops ``minimal`` only
+for gpt-5.6, so it still sends it to gpt-5.4, which refuses it.
+:func:`learn_level_from_error` picks the nearest level the model offers
+(``minimal`` -> ``low``, ``xhigh`` -> ``high``; never ``none``, which would
+turn thinking off) and remembers it for that model and level.
 """
 
 import json
 import logging
 import re
 import threading
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +52,26 @@ OFF_CANDIDATES = ("none", "minimal", "low")
 # cannot retry.
 SAFE_OFF = "low"
 
+# Effort levels, least reasoning first: "nearest" is measured along this.
+LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+# What to try when a provider refuses a level without saying what it takes:
+# the ends of the scale are the levels that some generations lack.
+LEVEL_FALLBACK = {"minimal": "low", "xhigh": "high"}
+
+# The parameter an OpenAI-style error body names in its "param" field.
+EFFORT_PARAMS = ("reasoning_effort", "reasoning.effort")
+
+# a quote, optionally backslash-escaped: the error usually arrives as the repr of
+# the response body, where 'minimal' is printed as \'minimal\'
+_Q = r"\\?['\"]"
 _SUPPORTED_RE = re.compile(r"[Ss]upported values are:\s*(.+?)(?:\.|$)")
-_QUOTED_RE = re.compile(r"['\"]([a-z]+)['\"]")
-_REJECTED_RE = re.compile(
-    r"does not support[^'\"]*['\"]([a-z]+)['\"]", re.IGNORECASE
+_QUOTED_RE = re.compile(_Q + r"([a-z]+)" + _Q)
+_REJECTED_RES = (
+    # "'reasoning_effort' does not support 'minimal'"
+    re.compile(r"does not support[^'\"]*" + _Q + r"([a-z]+)" + _Q, re.IGNORECASE),
+    # "Unsupported value: 'minimal' is not supported with the ... model"
+    re.compile(r"unsupported value:\s*" + _Q + r"([a-z]+)" + _Q, re.IGNORECASE),
 )
 
 _learned: dict = {}
@@ -145,33 +167,118 @@ def supported_values(message: str) -> list:
 
 def rejected_value(message: str) -> Optional[str]:
     """The effort value named as invalid in a provider error, if present."""
-    match = _REJECTED_RE.search(message or "")
-    return match.group(1).lower() if match else None
+    for pattern in _REJECTED_RES:
+        match = pattern.search(message or "")
+        if match:
+            return match.group(1).lower()
+    return None
 
 
 def rejects_effort(message: str) -> bool:
-    """Does this error blame ``reasoning_effort``?"""
+    """Does this error blame the reasoning effort?
+
+    Chat Completions calls the parameter ``reasoning_effort``; the Responses
+    API (and Azure behind LiteLLM) ``reasoning.effort``.
+    """
     text = (message or "").lower()
-    return "reasoning_effort" in text and ("unsupported" in text or "supported values" in text)
+    named = "reasoning_effort" in text or "reasoning.effort" in text
+    return named and ("unsupported" in text or "supported values" in text)
 
 
-def learn_from_error(model_name: str, message: str, tried=None) -> Optional[str]:
-    """Pick and remember the cheapest replacement offered by the provider."""
-    if not rejects_effort(message):
+def _names_effort_param(body: Any) -> bool:
+    """Does a structured error body anywhere give ``param`` as the effort?"""
+    if isinstance(body, dict):
+        return body.get("param") in EFFORT_PARAMS or any(
+            _names_effort_param(v) for v in body.values()
+        )
+    if isinstance(body, list):
+        return any(_names_effort_param(v) for v in body)
+    return False
+
+
+def blames_effort(message: str, body: Any = None) -> bool:
+    """Does this error blame the reasoning effort, by its wording or its ``param``?"""
+    return rejects_effort(message) or _names_effort_param(body)
+
+
+def _unresolved(model_name: str, asked, message: str) -> None:
+    logger.warning(
+        f"reasoning effort {asked!r} refused by model={model_name} and no replacement "
+        f"could be read from the error: {(message or '')[:500]}"
+    )
+
+
+def learn_from_error(
+    model_name: str, message: str, tried=None, body: Any = None
+) -> Optional[str]:
+    """Pick and remember the cheapest replacement offered by the provider.
+
+    An error that blames the effort without listing what the model takes falls
+    back to ``SAFE_OFF``.
+    """
+    if not blames_effort(message, body):
         return None
 
     tried = rejected_value(message) or tried
-    offered = supported_values(message)
-    if not offered:
-        return None
+    offered = supported_values(message) or [SAFE_OFF]
     choices = [candidate for candidate in OFF_CANDIDATES if candidate in offered]
     replacement = next((candidate for candidate in choices if candidate != tried), None)
     if replacement is None:
+        _unresolved(model_name, tried, message)
         return None
 
     remember(model_name, replacement)
     logger.info(
         f"reasoning_effort={tried!r} rejected for model={model_name}; "
+        f"using {replacement!r} from now on"
+    )
+    return replacement
+
+
+def _level_key(model_name: str, level: str) -> str:
+    return f"{(model_name or '').lower()}@{level}"
+
+
+def learned_level(model_name: str, level: str) -> Optional[str]:
+    """The level this model was last seen to accept in place of ``level``."""
+    with _lock:
+        _load()
+        return _learned.get(_level_key(model_name, level))
+
+
+def nearest_level(level: str, offered) -> Optional[str]:
+    """The offered level closest to ``level``, a tie going to more reasoning.
+
+    Never ``none``: a caller who asked for some thinking should not have it
+    turned off.
+    """
+    if level not in LEVELS:
+        return None
+    usable = [v for v in offered if v in LEVELS and v not in ("none", level)]
+    if not usable:
+        return None
+    asked = LEVELS.index(level)
+    return min(usable, key=lambda v: (abs(LEVELS.index(v) - asked), -LEVELS.index(v)))
+
+
+def learn_level_from_error(
+    model_name: str, message: str, level: str, body: Any = None
+) -> Optional[str]:
+    """Pick and remember the nearest level to ``level`` that the model offers.
+
+    An error that blames the effort without listing what the model takes falls
+    back to ``LEVEL_FALLBACK``.
+    """
+    if not blames_effort(message, body):
+        return None
+    offered = supported_values(message)
+    replacement = nearest_level(level, offered) if offered else LEVEL_FALLBACK.get(level)
+    if replacement is None:
+        _unresolved(model_name, level, message)
+        return None
+    remember(_level_key(model_name, level), replacement)
+    logger.info(
+        f"thinking={level!r} rejected for model={model_name}; "
         f"using {replacement!r} from now on"
     )
     return replacement

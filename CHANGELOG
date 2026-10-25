@@ -1,6 +1,45 @@
 
 # Changelog
 
+### 0.18.0
+
+**Breaking**
+- `complete()` and `complete_async()` take one context dict and return a
+  `StruckdownResult`. For a list of contexts use the new `complete_batch()` /
+  `complete_batch_async()`, which return `list[StruckdownResult | Exception]`
+  and take `max_concurrent` and `on_complete`. Passing a list to `complete()`
+  raises `TypeError`.
+- `complete_incremental()` and `complete_incremental_async()` take every
+  argument after the prompt by keyword. `complete_incremental_async(prompt,
+  model, credentials, ...)` now raises `TypeError`; name them.
+
+**Fixed**
+- `complete_incremental()` passed neither `spec=` nor `registry=` on to the run.
+- `thinking=<level>` is negotiated like `thinking=off` already was. When a
+  model refuses a level and lists the ones it takes, the call is retried once
+  at the nearest of them (`minimal` -> `low`, `xhigh` -> `high`; never `none`,
+  which would turn thinking off), and that model uses the replacement for that
+  level from then on. gpt-5.4 refuses `minimal`, and pydantic-ai only knows
+  that gpt-5.6 does.
+- The negotiation recognises Azure's and the Responses API's wording of the
+  refusal (`reasoning.effort`, "Unsupported value: 'minimal' is not
+  supported"), and quotes escaped in the repr of the response body.
+- The negotiation also recognises a refusal by the error body's `param`
+  (`reasoning_effort` / `reasoning.effort`), whatever its wording. When the
+  error does not list what the model takes, it retries once with a fallback
+  (`minimal` -> `low`, `xhigh` -> `high`, and `low` for `thinking=off`). A
+  refusal it cannot resolve is logged as a warning with the provider's message.
+
+**Typing**
+- Ships `py.typed`, so mypy now reads struckdown's annotations (ty and pyright
+  already did).
+- `complete*` signatures are typed throughout: `on_halt` is
+  `Literal["raise", "return"]`, `image_detail` is a `Literal` of the four
+  detail levels, `on_complete` is `Callable[[int, StruckdownResult |
+  Exception], None]`, and `tools`, `deps`, `deps_type`, `limits`,
+  `extra_kwargs` and `context` have types. `model` is `Optional[LLM]`.
+- `structured_chat` is typed, and returns `(return_type instance, Box)`.
+
 ### 0.17.1
 
 **Fixed**

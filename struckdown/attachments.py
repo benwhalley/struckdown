@@ -34,14 +34,15 @@ import secrets
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Literal, Optional, Union, get_args
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_SIDE = 2048  # px, long side: gpt-5.6-sol stops using more detail here
 DEFAULT_MAX_IMAGES = 50  # per request: Azure OpenAI's limit
 DEFAULT_DETAIL = "auto"  # full resolution on current OpenAI models; "high" is lower
-DETAILS = ("auto", "low", "high", "original")
+ImageDetail = Literal["auto", "low", "high", "original"]
+DETAILS = get_args(ImageDetail)
 
 _NONCE_RE = re.compile(r"⟦sd-img:([0-9a-f]{16}):([0-9a-f]{64}):(\d+):([a-z]+):([01])⟧")
 PLACEHOLDER_RE = re.compile(r"⟦sd-img:([0-9a-f]{64}):(\d+):([a-z]+):([01])⟧")

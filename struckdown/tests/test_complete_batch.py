@@ -1,11 +1,13 @@
-"""Tests for complete/complete_async with list contexts -- the parallel batch processing layer."""
+"""Tests for complete_batch/complete_batch_async -- the parallel batch processing layer."""
 
 import asyncio
 import time
+
+import pytest
 from unittest.mock import MagicMock, patch
 
 from struckdown import (LLM, LLMCredentials, StruckdownResult, SlotResult,
-                        complete, complete_async)
+                        complete, complete_async, complete_batch, complete_batch_async)
 
 _DUMMY_CREDS = LLMCredentials(api_key="test", base_url="http://test")
 
@@ -50,7 +52,7 @@ def test_results_preserve_input_order():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "hello {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -74,7 +76,7 @@ def test_each_context_receives_its_own_variables():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -102,7 +104,7 @@ def test_single_failure_does_not_block_others():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -126,7 +128,7 @@ def test_all_failures_returns_all_exceptions():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -150,7 +152,7 @@ def test_on_complete_called_for_each_context():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -173,7 +175,7 @@ def test_on_complete_called_for_errors_too():
 
     async def run():
         with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -220,7 +222,7 @@ def test_max_concurrent_limits_parallelism():
         with patch(
             "struckdown._complete_single_async", side_effect=recording_complete_async
         ):
-            return await complete_async(
+            return await complete_batch_async(
                 "greet {{name}} [[reply]]",
                 contexts,
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -245,7 +247,7 @@ def test_max_concurrent_limits_parallelism():
 
 def test_empty_contexts_returns_empty_list():
     async def run():
-        return await complete_async("hello [[reply]]", [], model=LLM(), credentials=_DUMMY_CREDS)
+        return await complete_batch_async("hello [[reply]]", [], model=LLM(), credentials=_DUMMY_CREDS)
 
     results = asyncio.run(run())
     assert results == []
@@ -275,7 +277,7 @@ def test_kwargs_forwarded_to_internal_processor():
 
     async def run():
         with patch("struckdown._complete_single_async", side_effect=spy_complete_async):
-            return await complete_async(
+            return await complete_batch_async(
                 "hello [[reply]]",
                 [{"name": "test"}],
                 model=LLM(), credentials=_DUMMY_CREDS,
@@ -292,13 +294,13 @@ def test_kwargs_forwarded_to_internal_processor():
 # -- sync wrapper -------------------------------------------------------------
 
 
-def test_complete_sync_with_list():
-    """The sync complete with list should produce the same results."""
+def test_complete_batch_sync():
+    """The sync complete_batch should produce the same results."""
     mock_chat, _ = _make_mock_chat()
     contexts = [{"name": "x"}, {"name": "y"}]
 
     with patch("struckdown.llm.structured_chat", side_effect=mock_chat):
-        results = complete(
+        results = complete_batch(
             "greet {{name}} [[reply]]",
             contexts,
             model=LLM(), credentials=_DUMMY_CREDS,
@@ -309,3 +311,8 @@ def test_complete_sync_with_list():
     assert isinstance(results[1], StruckdownResult)
     assert "x" in results[0].response
     assert "y" in results[1].response
+
+
+def test_complete_rejects_list():
+    with pytest.raises(TypeError, match="complete_batch"):
+        complete("hello [[reply]]", [{"name": "x"}], model=LLM(), credentials=_DUMMY_CREDS)

@@ -11,7 +11,7 @@ import traceback
 import warnings
 from contextvars import ContextVar
 from typing import (Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Tuple,
-                    Union)
+                    TypeVar, Union)
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -114,6 +114,8 @@ FATAL_STATUS_CODES = frozenset({401, 403, 404})
 import numpy as np
 from more_itertools import chunked
 from pydantic import BaseModel, Field
+
+ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
 from . import reasoning
 from .cache import hash_return_type, memory
@@ -658,6 +660,7 @@ def _translate_kwargs(
     if "thinking" in settings:
         settings["thinking"] = reasoning.resolve_thinking(settings["thinking"])
         _apply_off_effort(settings, model_name)
+        _apply_learned_level(settings, model_name)
     return ModelSettings(**settings)
 
 
@@ -679,16 +682,32 @@ def _apply_off_effort(settings: dict, model_name: str) -> None:
         settings["openai_reasoning_effort"] = reasoning.off_effort(model_name)
 
 
+def _apply_learned_level(settings: dict, model_name: str) -> None:
+    """Swap a level this model has refused for the one it took instead."""
+    level = settings.get("thinking")
+    if isinstance(level, str):
+        settings["thinking"] = reasoning.learned_level(model_name, level) or level
+
+
 def _retry_effort(exc: Exception, model_name: str, settings: ModelSettings) -> bool:
     """Rewrite ``settings`` in place for one retry, or return False.
 
-    True means the model rejected the reasoning effort and named what it
-    would take instead -- so the same call is worth making again.
+    True means the model rejected the reasoning effort and a replacement is
+    known -- named in the error, or a fallback -- so the call is worth making
+    again.
     """
-    if settings.get("thinking") is not False:
+    body = getattr(exc, "body", None)
+    level = settings.get("thinking")
+    if isinstance(level, str):
+        replacement = reasoning.learn_level_from_error(model_name, str(exc), level, body)
+        if replacement is None:
+            return False
+        settings["thinking"] = replacement
+        return True
+    if level is not False:
         return False
     tried = settings.get("openai_reasoning_effort") or reasoning.rejected_value(str(exc))
-    replacement = reasoning.learn_from_error(model_name, str(exc), tried)
+    replacement = reasoning.learn_from_error(model_name, str(exc), tried, body)
     if replacement is None:
         return False
     settings["openai_reasoning_effort"] = replacement
@@ -1468,16 +1487,16 @@ def _call_llm_cached(
 
 
 def structured_chat(
-    prompt=None,
-    messages=None,
-    return_type=None,
-    llm: LLM = None,
-    credentials: LLMCredentials = None,
-    max_retries=3,
-    max_tokens=None,
-    extra_kwargs=None,
+    prompt: Optional[str] = None,
+    messages: Optional[List[Dict[str, Any]]] = None,
+    return_type: Optional[type[ResponseT]] = None,
+    llm: Optional[LLM] = None,
+    credentials: Optional[LLMCredentials] = None,
+    max_retries: int = 3,
+    max_tokens: Optional[int] = None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
     strict_params: bool = False,
-):
+) -> Tuple[ResponseT, Box]:
     """Make a structured LLM call via pydantic-ai, returning (response, completion).
 
     Args:

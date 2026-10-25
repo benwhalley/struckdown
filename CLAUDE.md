@@ -53,3 +53,19 @@ and resolve them through `AvailableModel.resolve_credential()`.
   own FK > caller-supplied default > ModelSet default (active credentials only)
 - `ModelSet` -- groups models with aliases, default LLM/embedding, default credential;
   `to_registry()` builds a `ModelRegistry` passing its own `default_credential` to each model
+
+## Downstream projects
+
+Before changing public API (signatures, argument order, exports, return types), check how these
+projects use struckdown and say what would break:
+
+- `~/dev/mindframe` -- `sd.complete`, `parse_syntax`, results, errors, Django contrib models
+- `~/dev/wam` and `~/dev/wam-prototyping` -- `complete_incremental_async`, incremental events,
+  `contrib.django` spans/ledger, `ResponseModel`, `extract_text`
+- `~/dev/soaking` -- heavy user: `complete`, `complete_incremental_async`, results, cost tracking
+- `~/dev/gistfood`, `~/dev/lifelog`, `~/dev/quiz28`, `~/dev/simsoak` -- smaller users
+- `~/dev/llemma` -- lists struckdown as a dependency
+
+Find current users with:
+`rg -l --type py '^\s*(import struckdown|from struckdown)' ~/dev | sed "s|$HOME/dev/||; s|/.*||" | sort -u`
+Ignore clones and branches of the above (`wam-*`, `struckdown-*`) and `.claude/worktrees`.
