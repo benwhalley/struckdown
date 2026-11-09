@@ -1,7 +1,7 @@
 
 # Changelog
 
-### Unreleased
+### 0.19.0
 
 **Added**
 - `struckdown.contrib.django.routes` (app label `sd_routes`): a prompt served
@@ -27,6 +27,10 @@
   `context["_evidence_store"]`; build it with
   `actions.evidence.load_evidence(folders)`, or `sd chat --evidence DIR`.
   `load_evidence_files` is replaced by `load_evidence`.
+
+**Fixed**
+- `httpx` is a declared dependency (decision models import it; a fresh
+  install without it failed on `import struckdown`).
 
 **Changed**
 - Which actions may run in remote mode is read with struckdown's own parser
