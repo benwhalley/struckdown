@@ -2688,10 +2688,10 @@ def install_skill(
         False, "-f", "--force", help="Overwrite existing skill file"
     ),
 ):
-    """Install the Struckdown prompt-writing skill for Claude Code.
+    """Install the Struckdown skills for Claude Code.
 
-    Copies the struckdown.md skill file to ~/.claude/commands/ so it can be
-    invoked with /struckdown in Claude Code.
+    Copies them to ~/.claude/commands/: /struckdown (writing prompts) and
+    /struckdown-api-routes (prompts served as APIs by the Django contrib app).
 
     The skill helps write well-engineered Struckdown prompts by:
     - Gathering requirements through conversation
@@ -2704,48 +2704,33 @@ def install_skill(
         sd install-skill           # Install the skill
         sd install-skill --force   # Overwrite existing
     """
-    import shutil
     from importlib.resources import files
 
     console = Console()
-
-    # Source: bundled with package
-    try:
-        skill_source = files("struckdown.claude").joinpath("struckdown-skill.md")
-        skill_content = skill_source.read_text()
-    except Exception as e:
-        console.print(f"[red]Error:[/red] Could not find bundled skill file: {e}")
-        raise typer.Exit(1)
-
-    # Destination: ~/.claude/commands/
     claude_commands_dir = Path.home() / ".claude" / "commands"
-    skill_dest = claude_commands_dir / "struckdown.md"
-
-    # Check if destination exists
-    if skill_dest.exists() and not force:
-        console.print(f"[yellow]Skill already installed at:[/yellow] {skill_dest}")
-        console.print("Use --force to overwrite.")
-        raise typer.Exit(0)
-
-    # Create directory if needed
     claude_commands_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write the skill file
-    try:
-        skill_dest.write_text(skill_content)
-        console.print(f"[green]✓[/green] Installed Struckdown skill to: {skill_dest}")
-        console.print()
-        console.print(
-            "You can now use [bold]/struckdown[/bold] in Claude Code to write prompts."
-        )
-        console.print()
-        console.print("Example usage:")
-        console.print("  /struckdown extract contact details from business cards")
-        console.print("  /struckdown analyse sentiment with slots: sentiment, urgency")
-    except Exception as e:
-        console.print(f"[red]Error:[/red] Could not write skill file: {e}")
-        raise typer.Exit(1)
+    # command name -> bundled file
+    skills = {
+        "struckdown.md": "struckdown-skill.md",
+        "struckdown-api-routes.md": "struckdown-api-routes-skill.md",
+    }
+    for dest_name, source_name in skills.items():
+        skill_dest = claude_commands_dir / dest_name
+        if skill_dest.exists() and not force:
+            console.print(f"[yellow]Already installed:[/yellow] {skill_dest} (--force to overwrite)")
+            continue
+        try:
+            skill_dest.write_text(files("struckdown.claude").joinpath(source_name).read_text())
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not install {dest_name}: {e}")
+            raise typer.Exit(1)
+        console.print(f"[green]✓[/green] Installed {skill_dest}")
 
+    console.print()
+    console.print("In Claude Code:")
+    console.print("  /struckdown extract contact details from business cards")
+    console.print("  /struckdown-api-routes a page where students check their essay plan")
 
 @app.command(name="install-vscode")
 def install_vscode(
