@@ -22,7 +22,7 @@ _FILE_TAGS = re.compile(r"{%-?\s*(include|import|from|extends)\b")
 
 class PromptRoute(models.Model):
     slug = models.SlugField(
-        unique=True, help_text="The endpoint: a POST to /api/<slug>/ runs this prompt."
+        unique=True, help_text="The last part of the endpoint's URL; a POST there runs this prompt."
     )
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, help_text="For staff; not shown to callers.")
@@ -116,7 +116,13 @@ class PromptRoute(models.Model):
         verbose_name = "API route"
 
     def __str__(self):
-        return f"/api/{self.slug}/"
+        return self.endpoint_path()
+
+    def endpoint_path(self) -> str:
+        """Where the project mounted the routes, e.g. ``/api/sd/<slug>/``."""
+        from django.urls import reverse
+
+        return reverse("sd_routes:call", args=[self.slug])
 
     @property
     def max_chars(self) -> int:

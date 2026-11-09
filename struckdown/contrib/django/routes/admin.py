@@ -180,21 +180,38 @@ class PromptRouteAdmin(admin.ModelAdmin):
             playground,
         )
 
-    @admin.display(description="Example (browser JavaScript)")
+    @admin.display(description="Examples")
     def example(self, obj):
+        """Copy-paste calls in JavaScript and Python, with the route's first
+        active token filled in."""
         if obj.pk is None:
             return "-"
         body = json.dumps({name: "..." for name in obj.analysis()["inputs"]})
+        token = obj.tokens.filter(is_active=True).first()
+        key = str(token.token) if token else "<token>"
+        url = self._endpoint(obj)
         return format_html(
-            '<pre>const r = await fetch("{}", {{\n'
+            "<p><strong>JavaScript</strong> (a web page)</p>"
+            '<pre>const r = await fetch("{url}", {{\n'
             '  method: "POST",\n'
             '  headers: {{"Content-Type": "application/json",\n'
-            '            "Authorization": "Bearer &lt;token&gt;"}},\n'
-            "  body: JSON.stringify({}),\n"
+            '            "Authorization": "Bearer {key}"}},\n'
+            "  body: JSON.stringify({body}),\n"
             "}});\n"
-            "const {{data, cost}} = await r.json();</pre>",
-            self._endpoint(obj),
-            body,
+            "const {{data, cost}} = await r.json();</pre>"
+            "<p><strong>Python</strong> (needs <code>requests</code>)</p>"
+            "<pre>import requests\n\n"
+            "r = requests.post(\n"
+            '    "{url}",\n'
+            '    headers={{"Authorization": "Bearer {key}"}},\n'
+            "    json={body},\n"
+            "    timeout=120,\n"
+            ")\n"
+            "r.raise_for_status()\n"
+            'print(r.json()["data"])</pre>',
+            url=url,
+            key=key,
+            body=body,
         )
 
     # -- extra views --------------------------------------------------------

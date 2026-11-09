@@ -350,7 +350,12 @@ def admin_client():
 
 
 def test_admin_pages_render(admin_client, route, token):
-    assert admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").status_code == 200
+    page = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
+    assert page.status_code == 200
+    html = page.content.decode()
+    # copy-paste examples in both languages, with a real token in them
+    assert "await fetch(" in html and "import requests" in html
+    assert str(token.token) in html
     assert admin_client.get("/admin/sd_routes/promptroute/add/").status_code == 200
 
 
