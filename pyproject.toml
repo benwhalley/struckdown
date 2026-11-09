@@ -49,9 +49,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-django = ["django>=5.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0"]
+django = ["django>=5.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0", "shortuuid>=1.0"]
 dev = ["playwright>=1.40.0"]
-test = ["pytest-django>=4.8", "django>=5.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0", "celery>=5.3"]
+test = ["pytest-django>=4.8", "django>=5.0", "shortuuid>=1.0", "django-fernet-encrypted-fields>=0.4.0", "django-lifecycle>=1.2.3,<2.0.0", "celery>=5.3"]
 local = ["sentence-transformers>=2.2.0"]
 extract = ["kreuzberg>=4.9"]
 docs = [

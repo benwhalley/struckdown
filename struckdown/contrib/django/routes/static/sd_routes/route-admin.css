@@ -13,3 +13,8 @@
 .sd-schema { font-family: ui-monospace, Menlo, monospace; width: 100%; }
 .sd-schema-tools { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.4rem; }
 .sd-schema-status { font-size: 0.85em; opacity: 0.75; }
+.sd-example { margin-bottom: 1rem; }
+.sd-example-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.25rem; }
+.sd-example-head .sd-copy { margin-left: auto; }
+.sd-example pre { margin: 0; max-height: 28rem; overflow: auto; white-space: pre; font-size: 13px; }
+.sd-examples { margin-top: 1.5rem; }

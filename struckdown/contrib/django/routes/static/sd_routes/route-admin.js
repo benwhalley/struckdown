@@ -15,6 +15,9 @@
         document.querySelectorAll(".sd-origin").forEach(function (el) {
             el.textContent = window.location.origin;
         });
+        document.querySelectorAll(".sd-fill-origin").forEach(function (el) {
+            el.textContent = el.textContent.split("__ORIGIN__").join(window.location.origin);
+        });
 
         // the highlighting editor, if the project serves it; the textarea
         // stays the form field and is kept in step on every change
@@ -29,6 +32,18 @@
                 onChange: function (value) { prompt.value = value; },
             });
         }
+
+        // copy an example, host and token included, as shown
+        document.addEventListener("click", function (ev) {
+            var btn = ev.target.closest && ev.target.closest(".sd-copy");
+            if (!btn) return;
+            ev.preventDefault();
+            var pre = btn.closest(".sd-example").querySelector("pre");
+            navigator.clipboard.writeText(pre.textContent).then(function () {
+                btn.textContent = "Copied";
+                setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+            });
+        });
 
         document.addEventListener("click", function (ev) {
             var btn = ev.target.closest && ev.target.closest(".sd-schema-generate");

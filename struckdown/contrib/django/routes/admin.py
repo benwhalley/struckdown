@@ -17,6 +17,7 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html, format_html_join
 
+from . import examples
 from . import schema as schemas
 from .models import PromptRoute, RouteToken
 from .service import RouteError, call, validate_inputs
@@ -96,7 +97,9 @@ class PromptRouteAdmin(admin.ModelAdmin):
     search_fields = ("slug", "name", "description", "prompt")
     prepopulated_fields = {"slug": ("name",)}
     autocomplete_fields = ()
-    readonly_fields = ("analysis", "budget_today", "endpoint", "example")
+    readonly_fields = ("analysis", "budget_today", "endpoint")
+    # the examples sit below the tokens (after_related_objects), not in a field
+    change_form_template = "admin/sd_routes/promptroute/change_form.html"
     fieldsets = (
         (None, {"fields": ("name", "slug", "description", "is_active")}),
         ("Prompt", {"fields": ("prompt", "analysis")}),
@@ -127,8 +130,20 @@ class PromptRouteAdmin(admin.ModelAdmin):
             },
         ),
         ("Screening", {"fields": ("screen",)}),
-        ("Calling it", {"fields": ("endpoint", "allowed_origins", "example")}),
+        ("Calling it", {"fields": ("endpoint", "allowed_origins")}),
     )
+
+    actions = ["rotate_tokens"]
+
+    @admin.action(description="Rotate all tokens of the selected routes")
+    def rotate_tokens(self, request, queryset):
+        tokens = list(RouteToken.objects.filter(route__in=queryset))
+        for token in tokens:
+            token.rotate()
+            token.save(update_fields=["token"])
+        self.message_user(
+            request, f"Replaced {len(tokens)} token(s); the old ones no longer work."
+        )
 
     def save_related(self, request, form, formsets, change):
         """A route with no token cannot be called, so the first save gives it one."""
@@ -180,39 +195,28 @@ class PromptRouteAdmin(admin.ModelAdmin):
             playground,
         )
 
-    @admin.display(description="Examples")
-    def example(self, obj):
-        """Copy-paste calls in JavaScript and Python, with the route's first
-        active token filled in."""
-        if obj.pk is None:
-            return "-"
-        body = json.dumps({name: "..." for name in obj.analysis()["inputs"]})
-        token = obj.tokens.filter(is_active=True).first()
-        key = str(token.token) if token else "<token>"
-        url = self._endpoint(obj)
-        return format_html(
-            "<p><strong>JavaScript</strong> (a web page)</p>"
-            '<pre>const r = await fetch("{url}", {{\n'
-            '  method: "POST",\n'
-            '  headers: {{"Content-Type": "application/json",\n'
-            '            "Authorization": "Bearer {key}"}},\n'
-            "  body: JSON.stringify({body}),\n"
-            "}});\n"
-            "const {{data, cost}} = await r.json();</pre>"
-            "<p><strong>Python</strong> (needs <code>requests</code>)</p>"
-            "<pre>import requests\n\n"
-            "r = requests.post(\n"
-            '    "{url}",\n'
-            '    headers={{"Authorization": "Bearer {key}"}},\n'
-            "    json={body},\n"
-            "    timeout=120,\n"
-            ")\n"
-            "r.raise_for_status()\n"
-            'print(r.json()["data"])</pre>',
-            url=url,
-            key=key,
-            body=body,
-        )
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        route = self.get_object(request, object_id)
+        if route is not None:
+            token = route.tokens.filter(is_active=True).first()
+            key = token.token if token else "<token>"
+            url = examples.ORIGIN + route.endpoint_path()
+            extra_context = {
+                **(extra_context or {}),
+                "sd_examples": [
+                    {
+                        "title": "Web page",
+                        "note": "A whole page: save it as an .html file and open it.",
+                        "code": examples.html_page(route, url, key),
+                    },
+                    {
+                        "title": "Python",
+                        "note": "Needs requests (pip install requests).",
+                        "code": examples.python_script(route, url, key),
+                    },
+                ],
+            }
+        return super().change_view(request, object_id, form_url, extra_context)
 
     # -- extra views --------------------------------------------------------
 

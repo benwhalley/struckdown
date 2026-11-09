@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
 
 from django.core.cache import cache
 from django.core.exceptions import RequestDataTooBig
@@ -51,10 +50,7 @@ def _token(request):
         if raw.lower().startswith("bearer "):
             raw = raw[7:].strip()
         if raw:
-            try:
-                return uuid.UUID(raw)
-            except ValueError:
-                return None
+            return raw if len(raw) <= 64 else None
     return None
 
 

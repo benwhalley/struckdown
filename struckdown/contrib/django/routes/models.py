@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-import uuid
 from datetime import timedelta
 from decimal import Decimal
 
+import shortuuid
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Sum
@@ -212,13 +212,19 @@ class PromptRoute(models.Model):
         return self.spent_today() >= self.daily_budget
 
 
+def new_token() -> str:
+    """22 characters from shortuuid's unambiguous alphabet (about 128 bits),
+    with no hyphens, so it survives a double-click select and a copy-paste."""
+    return shortuuid.uuid()
+
+
 class RouteToken(models.Model):
     """A key that may call one route. Give each caller (a class, an
     experiment, an app) its own, so one can be revoked without the others."""
 
     route = models.ForeignKey(PromptRoute, on_delete=models.CASCADE, related_name="tokens")
     name = models.CharField(max_length=120, help_text="Who has it, e.g. 'PSYC611 card sort'.")
-    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    token = models.CharField(max_length=40, default=new_token, unique=True, editable=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True, editable=False)
@@ -230,4 +236,4 @@ class RouteToken(models.Model):
         return f"{self.route.slug}: {self.name}"
 
     def rotate(self):
-        self.token = uuid.uuid4()
+        self.token = new_token()

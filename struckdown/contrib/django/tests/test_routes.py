@@ -353,8 +353,9 @@ def test_admin_pages_render(admin_client, route, token):
     page = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
     assert page.status_code == 200
     html = page.content.decode()
-    # copy-paste examples in both languages, with a real token in them
-    assert "await fetch(" in html and "import requests" in html
+    # copy-paste examples, with a real token in them
+    assert "&lt;!doctype html&gt;" in html and "import requests" in html
+    assert '&lt;textarea id=&quot;essay&quot; name=&quot;essay&quot;' in html
     assert str(token.token) in html
     assert admin_client.get("/admin/sd_routes/promptroute/add/").status_code == 200
 
@@ -408,3 +409,48 @@ def test_saving_a_route_with_no_token_adds_one(admin_client, priced_model):
         **data, "tokens-TOTAL_FORMS": "0", "tokens-INITIAL_FORMS": "0",
     })
     assert route.tokens.count() == 1
+
+
+def test_tokens_are_short_with_no_hyphens(token):
+    assert len(token.token) == 22 and "-" not in token.token
+
+
+def test_examples_have_copy_buttons(admin_client, route, token):
+    html = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").content.decode()
+    assert html.count('class="button sd-copy"') == 2
+
+
+def test_rotate_all_tokens_action(admin_client, route, token):
+    old = token.token
+    r = admin_client.post(
+        "/admin/sd_routes/promptroute/",
+        {"action": "rotate_tokens", "_selected_action": [route.pk]},
+    )
+    assert r.status_code == 302
+    token.refresh_from_db()
+    assert token.token != old
+
+
+def test_the_example_page_has_a_field_per_input(route, token):
+    from struckdown.contrib.django.routes import examples
+
+    route.prompt = "{{ essay }} {{ level }} {{ n }} {{ photo }} [[out]]"
+    route.allow_images = True
+    route.input_schema = {
+        "type": "object",
+        "properties": {
+            "essay": {"type": "string"},
+            "level": {"type": "string", "enum": ["one", "two"]},
+            "n": {"type": "integer"},
+            "photo": {"type": "string", "format": "image"},
+        },
+        "required": ["essay"],
+    }
+    page = examples.html_page(route, "https://x/api/sd/summarise/", token.token)
+    assert '<textarea id="essay" name="essay" required>' in page
+    assert '<select id="level" name="level"><option value="one">' in page
+    assert '<input type="number" step="1" id="n" name="n">' in page
+    assert '<input type="file" id="photo" name="photo" accept="image/*">' in page
+    assert f'const TOKEN = "{token.token}";' in page
+    script = examples.python_script(route, "https://x/", token.token)
+    assert 'files={"photo": open("photo.jpg", "rb")}' in script
