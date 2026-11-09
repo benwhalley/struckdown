@@ -23,18 +23,22 @@ _FILE_TAGS = re.compile(r"{%[-+]?\s*(include|import|from|extends)\b")
 # The only actions a route may run: none of them reads a file or the network.
 # Checked on save from the parse tree, and enforced again at run time
 # (struckdown.restrict_actions), so a prompt cannot reach another by any spelling.
-ROUTE_ACTIONS = frozenset({"set", "timestamp", "markdownify"})
+# (an unknown action name is parsed as "noop", which does nothing)
+ROUTE_ACTIONS = frozenset({"set", "timestamp", "markdownify", "noop"})
 
 
-def actions_used(prompt: str) -> set[str]:
-    """Every action the prompt calls, as the parser reads it."""
-    from struckdown.parsing import parse_syntax
+def blocked_actions(prompt: str) -> set[str]:
+    """Actions the prompt calls (as struckdown's parser reads it) that a route
+    may not run: anything outside ROUTE_ACTIONS, and anything whose own
+    registration says it is not for remote use."""
+    from struckdown.actions import Actions
+    from struckdown.playground.core import actions_in
 
     return {
-        part.action_type
-        for segment in parse_syntax(prompt)
-        for part in segment.values()
-        if getattr(part, "is_function", False)
+        name
+        for name in actions_in(prompt)
+        if name not in ROUTE_ACTIONS
+        or not (Actions.is_registered(name) and Actions.is_allowed_remote(name))
     }
 
 
@@ -167,7 +171,7 @@ class PromptRoute(models.Model):
         if _FILE_TAGS.search(self.prompt or ""):
             errors["prompt"] = "include, import and extends are not allowed in a route's prompt."
         elif not found["error"]:
-            blocked = actions_used(self.prompt) - ROUTE_ACTIONS
+            blocked = blocked_actions(self.prompt)
             if blocked:
                 errors["prompt"] = (
                     f"Actions not allowed in a route: {', '.join(sorted(blocked))} "

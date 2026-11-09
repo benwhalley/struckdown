@@ -14,7 +14,7 @@ import pytest
 from struckdown import complete
 from struckdown.actions import Actions
 from struckdown.actions.evidence import (chunk_text, evidence_search,
-                                         load_evidence_files)
+                                         load_evidence)
 
 
 class TestChunkText:
@@ -46,7 +46,7 @@ class TestChunkText:
             assert not chunk.endswith(" ") or chunk == chunks[-1]
 
 
-class TestLoadEvidenceFiles:
+class TestLoadEvidence:
     """Test evidence file loading"""
 
     def test_loads_txt_files(self):
@@ -56,10 +56,10 @@ class TestLoadEvidenceFiles:
             (folder / "doc1.txt").write_text("First document content")
             (folder / "doc2.txt").write_text("Second document content")
 
-            chunks = load_evidence_files([folder])
+            chunks = load_evidence([folder])
 
             assert len(chunks) >= 2
-            filenames = [c[0] for c in chunks]
+            filenames = [c["filename"] for c in chunks]
             assert "doc1.txt" in filenames
             assert "doc2.txt" in filenames
 
@@ -69,10 +69,10 @@ class TestLoadEvidenceFiles:
             folder = Path(tmpdir)
             (folder / "readme.md").write_text("# Markdown document")
 
-            chunks = load_evidence_files([folder])
+            chunks = load_evidence([folder])
 
             assert len(chunks) >= 1
-            assert chunks[0][0] == "readme.md"
+            assert chunks[0]["filename"] == "readme.md"
 
     def test_ignores_other_extensions(self):
         """Should ignore non-txt/md files"""
@@ -82,9 +82,9 @@ class TestLoadEvidenceFiles:
             (folder / "data.json").write_text('{"key": "value"}')
             (folder / "script.py").write_text("print('hello')")
 
-            chunks = load_evidence_files([folder])
+            chunks = load_evidence([folder])
 
-            filenames = [c[0] for c in chunks]
+            filenames = [c["filename"] for c in chunks]
             assert "doc.txt" in filenames
             assert "data.json" not in filenames
             assert "script.py" not in filenames
@@ -98,9 +98,9 @@ class TestLoadEvidenceFiles:
             (folder / "root.txt").write_text("Root content")
             (subdir / "nested.txt").write_text("Nested content")
 
-            chunks = load_evidence_files([folder])
+            chunks = load_evidence([folder])
 
-            filenames = [c[0] for c in chunks]
+            filenames = [c["filename"] for c in chunks]
             assert "root.txt" in filenames
             assert "nested.txt" in filenames
 
@@ -111,7 +111,7 @@ class TestLoadEvidenceFiles:
             (folder / "doc.txt").write_text("Content")
 
             # pass same folder twice
-            chunks = load_evidence_files([folder, folder])
+            chunks = load_evidence([folder, folder])
 
             # should only have one chunk (not duplicated)
             assert len(chunks) == 1
@@ -137,7 +137,7 @@ class TestEvidenceSearch:
                 "regular exercise improves cardiovascular health and mental wellbeing"
             )
 
-            context = {"evidence_folder": str(folder)}
+            context = {"_evidence_store": load_evidence([folder])}
             result = evidence_search(context, query="cognitive therapy anxiety", n=1)
 
             assert "cbt.txt" in result.lower() or "cognitive" in result.lower()
@@ -152,7 +152,7 @@ class TestEvidenceSearch:
                     f"Document {i} about python programming"
                 )
 
-            context = {"evidence_folder": str(folder)}
+            context = {"_evidence_store": load_evidence([folder])}
             result = evidence_search(context, query="python programming", n=2)
 
             # should have separator between results
@@ -169,7 +169,7 @@ class TestEvidenceSearch:
             (folder / "depression.txt").write_text("managing depression with therapy")
             (folder / "sleep.txt").write_text("improving sleep quality and rest")
 
-            context = {"evidence_folder": str(folder)}
+            context = {"_evidence_store": load_evidence([folder])}
             result = evidence_search(
                 context, query=["anxiety treatment", "depression therapy"], n=3
             )
@@ -183,7 +183,7 @@ class TestEvidenceSearch:
             folder = Path(tmpdir)
             (folder / "doc.txt").write_text("This is about cooking recipes")
 
-            context = {"evidence_folder": str(folder)}
+            context = {"_evidence_store": load_evidence([folder])}
             result = evidence_search(context, query="quantum physics", n=3)
 
             # BM25 may return low-scoring results, but they should be minimal
@@ -193,7 +193,7 @@ class TestEvidenceSearch:
     def test_empty_folder_returns_empty(self):
         """Should return empty for empty evidence folder"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            context = {"evidence_folder": tmpdir}
+            context = {"_evidence_store": load_evidence([tmpdir])}
             result = evidence_search(context, query="anything", n=3)
             assert result == ""
 
@@ -244,7 +244,7 @@ Based on the evidence above, what is the capital of France?
                 mock_completion = {"usage": {"total_tokens": 10}}
                 mock_chat.return_value = (mock_result, mock_completion)
 
-                result = complete(template, context={"evidence_folder": str(folder)})
+                result = complete(template, context={"_evidence_store": load_evidence([folder])})
 
                 # verify structured_chat was called
                 assert mock_chat.called
@@ -280,45 +280,17 @@ Answer: [[answer]]
 
             assert mock_chat.called
 
-    def test_evidence_with_template_path_discovery(self):
-        """Test that evidence folder is discovered relative to template"""
+    def test_the_action_never_reads_files(self):
+        """Folder hints in the context are ignored: only loaded evidence is searched."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            template_dir = Path(tmpdir)
-            evidence_dir = template_dir / "evidence"
-            evidence_dir.mkdir()
-
-            # avoid punctuation for simple tokenizer
-            (evidence_dir / "knowledge.txt").write_text(
-                "important fact the speed of light is 299792458 meters per second"
-            )
-
-            template = """
-[[@evidence:facts|query="speed light"]]
-
-What is the speed of light?
-[[answer]]
-"""
-
-            with patch("struckdown.llm.structured_chat") as mock_chat:
-                mock_result = Mock()
-                mock_result.response = "299792458 m/s"
-                mock_completion = {"usage": {"total_tokens": 10}}
-                mock_chat.return_value = (mock_result, mock_completion)
-
-                # pass _template_path to trigger auto-discovery
-                result = complete(
-                    template,
-                    context={"_template_path": str(template_dir / "prompt.sd")},
-                )
-
-                # verify LLM was called with evidence in context
-                call_args = mock_chat.call_args
-                messages = call_args.kwargs.get("messages", [])
-                user_content = " ".join(
-                    m["content"] for m in messages if m["role"] == "user"
-                )
-
-                assert "299792458" in user_content or "speed" in user_content.lower()
+            folder = Path(tmpdir)
+            (folder / "evidence").mkdir()
+            (folder / "evidence" / "secret.txt").write_text("speed of light secret")
+            context = {
+                "evidence_folder": str(folder / "evidence"),
+                "_template_path": str(folder / "prompt.sd"),
+            }
+            assert evidence_search(context, query="speed light", n=3) == ""
 
 
 class TestBM25Ranking:
@@ -347,7 +319,7 @@ class TestBM25Ranking:
                 "Cooking recipes for pasta and pizza. " "Italian cuisine is delicious."
             )
 
-            context = {"evidence_folder": str(folder)}
+            context = {"_evidence_store": load_evidence([folder])}
             result = evidence_search(context, query="Python programming tutorial", n=2)
 
             # most relevant should appear first

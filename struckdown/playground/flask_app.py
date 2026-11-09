@@ -303,6 +303,12 @@ def create_app(
     app.config["WORKSPACE_DIR"] = workspace_dir
     app.config["INCLUDE_PATHS"] = include_paths or []
     app.config["REMOTE_MODE"] = remote_mode
+    if remote_mode:
+        # the request-time check names the problem; this makes it binding,
+        # for every run in this process, including batch threads
+        from struckdown.actions import enforce_remote_policy
+
+        enforce_remote_policy()
     app.config["SERVER_API_KEY"] = server_api_key
     app.config["ALLOWED_MODELS"] = allowed_models
     app.config["MAX_CONTENT_LENGTH"] = STRUCKDOWN_MAX_UPLOAD_SIZE

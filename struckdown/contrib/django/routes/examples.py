@@ -15,14 +15,17 @@ from . import schema as schemas
 
 ORIGIN = "__ORIGIN__"
 
-_STYLE = (
-    "body{font-family:system-ui,sans-serif;max-width:42rem;margin:2rem auto;padding:0 1rem;"
-    "line-height:1.5}label{display:block;margin-top:1rem;font-weight:600}"
-    "textarea,input,select{font:inherit;width:100%;box-sizing:border-box}"
-    "textarea{min-height:8rem}input[type=checkbox]{width:auto}"
-    "button{margin-top:1rem;font:inherit;padding:.4rem 1.2rem}"
-    "pre{background:#f4f4f4;padding:1rem;white-space:pre-wrap}"
-)
+# one rule per line: the page is shown in a box and read before it is saved
+_STYLE = """
+body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto;
+  padding: 0 1rem; line-height: 1.5; }
+label { display: block; margin-top: 1rem; font-weight: 600; }
+textarea, input, select { font: inherit; width: 100%; box-sizing: border-box; }
+textarea { min-height: 8rem; }
+input[type=checkbox] { width: auto; }
+button { margin-top: 1rem; font: inherit; padding: .4rem 1.2rem; }
+pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+"""
 
 
 def _js(value: str) -> str:
@@ -43,9 +46,10 @@ def _field(name: str, prop: dict, required: bool) -> str:
         return label + f'  <input type="file" id="{n}" name="{n}" accept="image/*"{req}>\n'
     if "enum" in prop:
         options = "".join(
-            f'<option value="{escape(str(v))}">{escape(str(v))}</option>' for v in prop["enum"]
+            f'    <option value="{escape(str(v))}">{escape(str(v))}</option>\n'
+            for v in prop["enum"]
         )
-        return label + f'  <select id="{n}" name="{n}"{req}>{options}</select>\n'
+        return label + f'  <select id="{n}" name="{n}"{req}>\n{options}  </select>\n'
     kind = prop.get("type")
     if kind in ("integer", "number"):
         step = "1" if kind == "integer" else "any"

@@ -346,15 +346,11 @@ def _save_history(history_messages: List[dict], filepath: Path) -> None:
 
 def _load_history(filepath: Path) -> List[dict]:
     """Load history messages from file."""
+    from .actions.history import messages_from_text
+
     if not filepath.exists():
         return []
-    content = filepath.read_text()
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    roles = ["assistant", "user"]  # Default: assistant_first
-    messages = []
-    for i, line in enumerate(lines):
-        messages.append({"role": roles[i % 2], "content": line})
-    return messages
+    return messages_from_text(filepath.read_text())
 
 
 async def _run_chat_interactive(
@@ -561,6 +557,11 @@ def chat(
         None,
         "--history",
         help="Conversation history file for @history action (line per turn, alternating roles)",
+    ),
+    evidence_dirs: Optional[List[Path]] = typer.Option(
+        None,
+        "--evidence",
+        help="Folder of .txt/.md files for @evidence to search (repeatable)",
     ),
     interactive: bool = typer.Option(
         False,
@@ -796,12 +797,18 @@ def chat(
         "image_detail": image_detail,
     }
 
-    # add history file to context for @history action
+    # load evidence here: @evidence only searches what is in the context
+    if evidence_dirs:
+        from .actions.evidence import load_evidence
+
+        context["_evidence_store"] = load_evidence(evidence_dirs)
+
+    # read the history file here: @history only takes messages from the context
     if history_file:
         if not history_file.exists():
             typer.echo(f"Error: History file not found: {history_file}", err=True)
             raise typer.Exit(1)
-        context["_history_file"] = str(history_file)
+        context["_history_messages"] = _load_history(history_file)
 
     # load JSON data file as context["data"] or context["data"][key]
     if data_file:

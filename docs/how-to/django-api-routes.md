@@ -122,7 +122,7 @@ The limits are counted in the default cache, which must be shared between worker
 
 ## What a prompt may not do
 
-A route's prompt runs on every request, so the only actions it may use are `@set`, `@timestamp` and `@markdownify`: none of them reads a file or the network. Anything else (`@fetch`, `@search`, `@history`, `@evidence`...) is refused on save, read from the parsed prompt, and refused again when the prompt runs (`struckdown.restrict_actions`), however it is spelt. `{% include %}`, `{% import %}`, `{% from %}` and `{% extends %}` are refused too.
+A route's prompt runs on every request, so the only actions it may use are `@set`, `@timestamp` and `@markdownify` (an unknown action name runs as `@noop`, which does nothing): none of them reads a file or the network, and each must also be registered as safe for remote use. Anything else (`@fetch`, `@search`, `@history`, `@evidence`...) is refused on save, read from the parsed prompt, and refused again when the prompt runs (`struckdown.restrict_actions`), however it is spelt. `{% include %}`, `{% import %}`, `{% from %}` and `{% extends %}` are refused too.
 
 ## Errors
 

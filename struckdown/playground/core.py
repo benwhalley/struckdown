@@ -6,7 +6,6 @@ Framework-agnostic functions for template analysis, validation, and execution.
 import base64
 import json
 import os
-import re
 import zlib
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -63,33 +62,45 @@ def extract_required_inputs(syntax: str) -> Dict[str, List[str]]:
     }
 
 
-def check_disallowed_actions(syntax: str) -> List[str]:
-    """
-    Check for actions that are not allowed in remote mode.
+def actions_in(syntax: str) -> set:
+    """Every action the template calls, as struckdown's parser reads it.
 
-    Returns list of disallowed action names found in the syntax.
+    The parser is what runs the template, so this sees exactly the actions that
+    would run, however they are spelt. A template that does not parse runs
+    nothing, so it calls no actions. Jinja is rendered later, segment by
+    segment; values it produces are escaped (``struckdown_finalize``), so
+    rendering cannot add an action this misses.
     """
+    from struckdown.parsing import parse_syntax
+
+    try:
+        segments = parse_syntax(syntax)
+    except Exception:
+        return set()
+    return {
+        part.action_type
+        for segment in segments
+        for part in segment.values()
+        if getattr(part, "is_function", False)
+    }
+
+
+def check_disallowed_actions(syntax: str) -> List[str]:
+    """Actions in the template that may not run in remote mode: those whose
+    registration says ``allow_remote_use=False``, and any that are not
+    registered at all. Read from the registry, not from the action's name."""
     from struckdown.actions import Actions
 
-    # Find all action calls: [[@action_name:...]] or [[@action_name|...]]
-    action_pattern = re.compile(r"\[\[@(\w+)[:\|]")
-    found_actions = set(action_pattern.findall(syntax))
-
-    # Check which ones are disallowed in remote mode
-    disallowed = []
-    for action_name in found_actions:
-        if Actions.is_registered(action_name) and not Actions.is_allowed_remote(
-            action_name
-        ):
-            disallowed.append(action_name)
-
-    return sorted(disallowed)
+    return sorted(
+        name
+        for name in actions_in(syntax)
+        if not (Actions.is_registered(name) and Actions.is_allowed_remote(name))
+    )
 
 
 def uses_history_action(syntax: str) -> bool:
     """Check if the syntax uses the [[@history]] action."""
-    pattern = re.compile(r"\[\[@history(?:[:\|]|]])")
-    return bool(pattern.search(syntax))
+    return "history" in actions_in(syntax)
 
 
 def validate_syntax(syntax: str) -> Dict:

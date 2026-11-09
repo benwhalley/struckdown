@@ -1,17 +1,16 @@
-"""Standalone evidence search action using BM25 over text files.
+"""Evidence search action: BM25 keyword search over text the caller loaded.
 
-Provides a simple file-based evidence search for use with `sd chat` CLI
-without requiring a database or embeddings. Uses BM25 for keyword-based ranking.
+The action searches ``context["_evidence_store"]``, a list of
+``{"text", "filename"}`` chunks. It never reads files itself, so a template
+cannot point it at one: whoever calls struckdown loads the evidence, with
+:func:`load_evidence` for a folder of .txt/.md files, or (in the playground)
+from uploads.
 
-Usage:
-    sd chat -p prompt.sd -c evidence_folder=./my_docs
+    from struckdown.actions.evidence import load_evidence
+    complete(template, context={"_evidence_store": load_evidence(["evidence/"])})
 
 Template:
     [[@evidence:guidance|query="CBT techniques",n=3]]
-
-Remote mode:
-    When `_evidence_store` is present in context (injected by playground),
-    searches pre-chunked evidence instead of loading from disk.
 """
 
 from pathlib import Path
@@ -97,106 +96,34 @@ def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
     return chunks
 
 
-def load_evidence_files(folders: list[Path]) -> list[tuple[str, str, str]]:
-    """Load all .txt and .md files from folders.
-
-    Returns list of (filename, chunk_text, full_path) tuples.
-    """
+def load_evidence(folders) -> list[dict]:
+    """Every .txt and .md file under ``folders`` (paths or strings), chunked
+    for ``context["_evidence_store"]``."""
     chunks = []
-    seen_folders = set()
-
-    for folder in folders:
-        # dedupe folders
-        folder = folder.resolve()
-        if folder in seen_folders or not folder.exists():
+    seen = set()
+    for folder in (Path(f).resolve() for f in folders):
+        if folder in seen or not folder.exists():
             continue
-        seen_folders.add(folder)
-
-        for filepath in folder.glob("**/*"):
+        seen.add(folder)
+        for filepath in sorted(folder.glob("**/*")):
             if filepath.is_file() and filepath.suffix in (".txt", ".md"):
-                text = filepath.read_text()
-                for chunk in chunk_text(text):
-                    chunks.append((filepath.name, chunk, str(filepath)))
-
+                chunks.extend(
+                    {"text": chunk, "filename": filepath.name}
+                    for chunk in chunk_text(filepath.read_text())
+                )
     return chunks
 
 
-@Actions.register("evidence", on_error="return_empty", default_save=True, allow_remote_use=False)
+@Actions.register("evidence", on_error="return_empty", default_save=True)
 def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
-    """Search evidence files using BM25.
+    """Search ``context["_evidence_store"]`` with BM25.
 
     Args:
-        context: Struckdown context. Looks for:
-            - _evidence_store: pre-chunked evidence from playground (remote mode)
-            - evidence_folder: explicit path(s) to evidence directory
-            - _template_path: auto-injected path to discover evidence/ relative to template
+        context: Struckdown context; its '_evidence_store' is what is searched
         query: Search query text or list of queries
         n: Number of results per query
 
     Returns:
-        Concatenated matching chunks separated by newlines
+        Concatenated matching chunks separated by newlines ("" if no evidence)
     """
-    # Check for remote evidence store (injected by playground)
-    if evidence_store := context.get("_evidence_store"):
-        return search_remote_evidence(evidence_store, query, n)
-
-    folders = []
-
-    # Check context for explicit folder(s)
-    if evidence_folder := context.get("evidence_folder"):
-        if isinstance(evidence_folder, list):
-            folders.extend(Path(f) for f in evidence_folder)
-        else:
-            folders.append(Path(evidence_folder))
-    else:
-        # Only auto-discover when no explicit folder is provided
-        # Auto-discover relative to template
-        if template_path := context.get("_template_path"):
-            evidence_dir = Path(template_path).parent / "evidence"
-            if evidence_dir.exists():
-                folders.append(evidence_dir)
-
-        # Also check cwd/evidence
-        cwd_evidence = Path.cwd() / "evidence"
-        if cwd_evidence.exists():
-            folders.append(cwd_evidence)
-
-    if not folders:
-        return ""
-
-    # Load and index
-    chunks = load_evidence_files(folders)
-    if not chunks:
-        return ""
-
-    corpus = [c[1] for c in chunks]  # just the text
-    tokenized_corpus = [doc.lower().split() for doc in corpus]
-
-    bm25 = BM25Okapi(tokenized_corpus)
-
-    # Normalise query to list
-    queries = [query] if isinstance(query, str) else list(query)
-
-    # Collect results from all queries, dedupe by chunk index
-    seen_indices = {}  # idx -> best score
-
-    for q in queries:
-        tokenized_query = q.lower().split()
-        scores = bm25.get_scores(tokenized_query)
-
-        for idx, score in enumerate(scores):
-            if score > 0:
-                if idx not in seen_indices or score > seen_indices[idx]:
-                    seen_indices[idx] = score
-
-    # Sort by score descending, take top n
-    top_indices = sorted(
-        seen_indices.keys(), key=lambda i: seen_indices[i], reverse=True
-    )[:n]
-
-    results = []
-    for idx in top_indices:
-        filename, text, path = chunks[idx]
-        results.append(f"[{filename}]\n{text}")
-
-    return "\n\n---\n\n".join(results)
+    return search_remote_evidence(context.get("_evidence_store") or [], query, n)

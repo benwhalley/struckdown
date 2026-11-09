@@ -200,6 +200,19 @@ class ActionNotAllowed(PermissionError):
 _allowed_actions: ContextVar[Optional[frozenset]] = ContextVar("allowed_actions", default=None)
 
 
+# Set once by a process that runs prompts from the public (the hosted
+# playground): from then on, an action registered with allow_remote_use=False
+# refuses to run, in any thread, however the prompt reached it.
+_remote_only = False
+
+
+def enforce_remote_policy() -> None:
+    """Refuse every action not registered as safe for remote use, for the rest
+    of this process. For servers that run prompts written by the public."""
+    global _remote_only
+    _remote_only = True
+
+
 @contextmanager
 def restrict_actions(names):
     """Only the named actions may run inside this block; any other raises
@@ -356,6 +369,8 @@ class Actions:
             """
             allowed = _allowed_actions.get()
             if allowed is not None and action_name not in allowed:
+                raise ActionNotAllowed(action_name)
+            if _remote_only and not allow_remote_use:
                 raise ActionNotAllowed(action_name)
 
             from struckdown.parsing import OptionValue

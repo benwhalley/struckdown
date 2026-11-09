@@ -16,9 +16,25 @@
 - `no_cache()`: calls inside the block neither read nor write the response
   cache (LLM and decision-model calls alike).
 
+**Breaking**
+- `@history` no longer reads a file. It takes the turns from
+  `context["_history_messages"]`; its `filename` and `first` parameters and
+  `context["_history_file"]` are gone. `sd chat --history FILE` still works
+  (the CLI reads the file); from Python use
+  `actions.history.messages_from_text()`.
+- `@evidence` no longer reads folders (`evidence_folder`, `evidence/` next to
+  the template or in the current directory). It searches
+  `context["_evidence_store"]`; build it with
+  `actions.evidence.load_evidence(folders)`, or `sd chat --evidence DIR`.
+  `load_evidence_files` is replaced by `load_evidence`.
+
 **Changed**
-- `@history` and `@evidence` read local files, so they are no longer allowed
-  in remote mode (`allow_remote_use=False`).
+- Which actions may run in remote mode is read with struckdown's own parser
+  and each action's registration (`allow_remote_use`), not a regex, so no
+  spelling of an action gets past it; unknown actions run as `noop`.
+- `actions.enforce_remote_policy()`: a server running public prompts (the
+  hosted playground calls it) makes `allow_remote_use=False` binding for every
+  run in the process, in any thread.
 
 ### 0.18.0
 

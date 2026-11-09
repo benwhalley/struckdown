@@ -130,8 +130,8 @@ Blocked in the hosted playground (`sd serve`).
 
 ### @evidence
 
-Keyword search (BM25) over `.txt` and `.md` files in an `evidence/`
-directory. There is no vector store or embedding step.
+Keyword search (BM25) over evidence the caller has loaded. There is no vector
+store or embedding step, and the action never reads files itself.
 
 ```
 [[@evidence|topic]]
@@ -145,21 +145,24 @@ directory. There is no vector store or embedding step.
 | `query` | `str` or list of `str` | Yes | - | Search query, or several; results are merged |
 | `n` | `int` | No | `3` | Number of passages returned |
 
-**Where it looks:**
+**What it searches:** `context["_evidence_store"]`, a list of
+`{"text", "filename"}` passages. Load a folder of `.txt` and `.md` files (split
+into passages of about 500 characters) with `load_evidence`:
 
-1. If the context has `evidence_folder` (a path or list of paths), only those.
-2. Otherwise `evidence/` next to the template file, and `evidence/` in the
-   current directory.
+```python
+from struckdown.actions.evidence import load_evidence
+complete(template, context={"_evidence_store": load_evidence(["evidence/"])})
+```
 
-Files are split into passages of about 500 characters. In the hosted
-playground, uploaded evidence is searched instead.
+`sd chat --evidence DIR` does this for you; the hosted playground searches
+uploaded evidence. A template cannot name a folder.
 
 **Returns:** The top `n` passages, each headed by its file name, separated by
-`---`. Returns an empty string if no folder or no match is found, or if the
+`---`. Returns an empty string if there is no evidence or no match, or if the
 search fails.
 
 ```bash
-sd chat -p prompt.sd -c evidence_folder=./my_docs
+sd chat -p prompt.sd --evidence ./my_docs
 ```
 
 See [RAG Tutorial](../tutorials/rag-retrieval.md).
@@ -183,8 +186,9 @@ The current local date and time.
 
 ### @history
 
-Loads conversation turns from a text file and adds them to the conversation
-as separate messages. Each non-empty line is one turn; roles alternate.
+Adds the conversation so far, from `context["_history_messages"]` (a list of
+`{"role", "content"}` dicts), as separate messages. The action never reads a
+file: whoever calls struckdown supplies the turns.
 
 ```
 [[@history]]
@@ -194,14 +198,14 @@ as separate messages. Each non-empty line is one turn; roles alternate.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `filename` | `str` | No | `context["_history_file"]` | Path to the file, relative to the current directory |
-| `first` | `str` | No | `"assistant_first"` | Who speaks first: `"assistant_first"` or `"user_first"` |
 | `n` | `int` | No | all | Keep only the last `n` turns (after role filtering) |
 | `role` | `str` | No | all | Keep only `"user"`, `"assistant"` or `"system"` turns |
 
-`sd chat --history FILE` sets `_history_file`. In `sd chat -i`, the live
-conversation is used instead of the file. Unknown parameters are logged and
-ignored. With no file given, the action raises an error. Registered with
+`sd chat --history FILE` reads the file (one turn per non-empty line, roles
+alternating, assistant first) into `_history_messages`; from Python,
+`struckdown.actions.history.messages_from_text(text)` does the same. In
+`sd chat -i`, the live conversation is used. Unknown parameters are logged and
+ignored. With no history in the context, the action raises an error. Registered with
 `default_save=False`, so a bare `[[@history]]` is not stored in the context.
 
 ---

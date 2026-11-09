@@ -464,7 +464,8 @@ def test_the_example_page_has_a_field_per_input(route, token):
     }
     page = examples.html_page(route, "https://x/api/sd/summarise/", token.token)
     assert '<textarea id="essay" name="essay" required>' in page
-    assert '<select id="level" name="level"><option value="one">' in page
+    assert '<select id="level" name="level">\n    <option value="one">' in page
+    assert max(map(len, page.splitlines())) <= 100
     assert '<input type="number" step="1" id="n" name="n">' in page
     assert '<input type="file" id="photo" name="photo" accept="image/*">' in page
     assert f'const TOKEN = "{token.token}";' in page

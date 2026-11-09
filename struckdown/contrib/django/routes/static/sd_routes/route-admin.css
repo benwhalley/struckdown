@@ -16,5 +16,5 @@
 .sd-example { margin-bottom: 1rem; }
 .sd-example-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.25rem; }
 .sd-example-head .sd-copy { margin-left: auto; }
-.sd-example pre { margin: 0; max-height: 28rem; overflow: auto; white-space: pre; font-size: 13px; }
-.sd-examples { margin-top: 1.5rem; }
+.sd-example pre { margin: 0; max-width: 100%; max-height: 28rem; overflow: auto; white-space: pre; font-size: 13px; }
+.sd-examples { margin-top: 1.5rem; min-width: 0; max-width: 100%; }
