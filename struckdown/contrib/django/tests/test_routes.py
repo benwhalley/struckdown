@@ -454,3 +454,21 @@ def test_the_example_page_has_a_field_per_input(route, token):
     assert f'const TOKEN = "{token.token}";' in page
     script = examples.python_script(route, "https://x/", token.token)
     assert 'files={"photo": open("photo.jpg", "rb")}' in script
+
+
+def test_opening_a_route_with_no_token_adds_one_for_the_examples(admin_client, route):
+    assert not route.tokens.exists()
+    html = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").content.decode()
+    token = route.tokens.get()
+    assert token.name == "default"
+    assert f"Bearer {token.token}" in html and "&lt;token&gt;" not in html
+
+
+def test_examples_have_no_blank_lines(route, token):
+    from struckdown.contrib.django.routes import examples
+
+    for code in (
+        examples.html_page(route, "https://x/", token.token),
+        examples.python_script(route, "https://x/", token.token),
+    ):
+        assert "\n\n" not in code and not code.endswith("\n") and not code.startswith("\n")

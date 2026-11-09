@@ -89,6 +89,16 @@ class RouteTokenInline(admin.TabularInline):
     readonly_fields = ("token", "last_used_at", "created_at")
 
 
+def _ensure_token(request, route) -> RouteToken:
+    """The route's first active token, adding one called "default" if it has none.
+    A route with no token cannot be called."""
+    token = route.tokens.filter(is_active=True).first()
+    if token is None:
+        token = RouteToken.objects.create(route=route, name="default")
+        messages.info(request, f'Added a token, "default": {token.token}')
+    return token
+
+
 class PromptRouteAdmin(admin.ModelAdmin):
     form = PromptRouteForm
     inlines = [RouteTokenInline]
@@ -148,10 +158,7 @@ class PromptRouteAdmin(admin.ModelAdmin):
     def save_related(self, request, form, formsets, change):
         """A route with no token cannot be called, so the first save gives it one."""
         super().save_related(request, form, formsets, change)
-        route = form.instance
-        if not route.tokens.exists():
-            token = RouteToken.objects.create(route=route, name="default")
-            messages.info(request, f"Added a token, \"default\": {token.token}")
+        _ensure_token(request, form.instance)
 
     # -- columns and read-only panels --------------------------------------
 
@@ -198,8 +205,10 @@ class PromptRouteAdmin(admin.ModelAdmin):
     def change_view(self, request, object_id, form_url="", extra_context=None):
         route = self.get_object(request, object_id)
         if route is not None:
-            token = route.tokens.filter(is_active=True).first()
-            key = token.token if token else "<token>"
+            # the examples need a working token; a route saved before tokens
+            # were added by default may have none
+            token = _ensure_token(request, route)
+            key = token.token
             url = examples.ORIGIN + route.endpoint_path()
             extra_context = {
                 **(extra_context or {}),

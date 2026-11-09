@@ -25,6 +25,11 @@ _STYLE = (
 )
 
 
+def _tidy(code: str) -> str:
+    """No blank lines and no trailing newline: shown in a box and copied as is."""
+    return "\n".join(line.rstrip() for line in code.splitlines() if line.strip())
+
+
 def _field(name: str, prop: dict, required: bool) -> str:
     n = escape(name)
     req = " required" if required else ""
@@ -58,7 +63,7 @@ def html_page(route, url: str, token: str) -> str:
         for name, prop in (input_schema.get("properties") or {}).items()
     )
     title = escape(route.name)
-    return f"""<!doctype html>
+    return _tidy(f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -95,8 +100,7 @@ document.getElementById("form").addEventListener("submit", async (event) => {{
 }});
 </script>
 </body>
-</html>
-"""
+</html>""")
 
 
 def python_script(route, url: str, token: str) -> str:
@@ -108,8 +112,8 @@ def python_script(route, url: str, token: str) -> str:
         payload = f"    data={json.dumps(text)},\n    files={{{files}}},\n"
     else:
         payload = f"    json={json.dumps(text)},\n"
-    return (
-        "import requests\n\n"
+    return _tidy(
+        "import requests\n"
         "response = requests.post(\n"
         f'    "{url}",\n'
         f'    headers={{"Authorization": "Bearer {token}"}},\n'
