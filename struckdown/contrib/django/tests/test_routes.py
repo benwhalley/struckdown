@@ -377,3 +377,29 @@ def test_rotating_a_token_replaces_it(admin_client, route, token):
     token.save()
     assert token.token != old
     assert not RouteToken.objects.filter(token=old).exists()
+
+
+def test_saving_a_route_with_no_token_adds_one(admin_client, priced_model):
+    data = {
+        "name": "New",
+        "slug": "new",
+        "prompt": PROMPT,
+        "model": priced_model.pk,
+        "is_active": "on",
+        "daily_budget": "5.00",
+        "per_minute": "20",
+        "max_input_tokens": "10000",
+        "max_image_bytes": "5242880",
+        "max_images": "4",
+        "tokens-TOTAL_FORMS": "0",
+        "tokens-INITIAL_FORMS": "0",
+    }
+    r = admin_client.post("/admin/sd_routes/promptroute/add/", data)
+    assert r.status_code == 302, r.context["adminform"].form.errors if r.context else r
+    route = PromptRoute.objects.get(slug="new")
+    assert list(route.tokens.values_list("name", flat=True)) == ["default"]
+    # saving again does not add another
+    admin_client.post(f"/admin/sd_routes/promptroute/{route.pk}/change/", {
+        **data, "tokens-TOTAL_FORMS": "0", "tokens-INITIAL_FORMS": "0",
+    })
+    assert route.tokens.count() == 1

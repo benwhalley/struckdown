@@ -23,7 +23,8 @@
             var mount = document.createElement("div");
             mount.className = "sd-editor-mount";
             prompt.parentNode.insertBefore(mount, prompt);
-            prompt.hidden = true;
+            // not the hidden attribute: admin themes' display rules override it
+            prompt.style.display = "none";
             window.StruckdownEditor.create(mount, prompt.value, {
                 onChange: function (value) { prompt.value = value; },
             });

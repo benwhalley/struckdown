@@ -130,6 +130,14 @@ class PromptRouteAdmin(admin.ModelAdmin):
         ("Calling it", {"fields": ("endpoint", "allowed_origins", "example")}),
     )
 
+    def save_related(self, request, form, formsets, change):
+        """A route with no token cannot be called, so the first save gives it one."""
+        super().save_related(request, form, formsets, change)
+        route = form.instance
+        if not route.tokens.exists():
+            token = RouteToken.objects.create(route=route, name="default")
+            messages.info(request, f"Added a token, \"default\": {token.token}")
+
     # -- columns and read-only panels --------------------------------------
 
     @admin.display(description="Open")
