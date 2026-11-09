@@ -70,7 +70,7 @@ include = ["struckdown*",]
 exclude = ["struckdown.tests*", "struckdown.contrib.django.tests*"]
 
 [tool.setuptools.package-data]
-struckdown = ["py.typed", "**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/fixtures/*.json", "contrib/django/test_audio.mp3"]
+struckdown = ["py.typed", "**/*.lark", "data/*.txt", "data/*.md", "data/*.sd", "claude/*.md", "static/**/*", "quarto/**/*", "types/*.yaml", "types/*.yml", "playground/templates/**/*", "playground/static/**/*", "vscode-extension/**/*", "contrib/django/migrations/*.py", "contrib/django/templates/**/*", "contrib/django/routes/migrations/*.py", "contrib/django/routes/templates/**/*", "contrib/django/routes/static/**/*", "contrib/django/fixtures/*.json", "contrib/django/test_audio.mp3"]
 
 # tests stay in the sdist but not the wheel; include-package-data would otherwise
 # pick them up as data files of the struckdown package

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.http import HttpResponse, StreamingHttpResponse
-from django.urls import path
+from django.urls import include, path
 
 from struckdown.contrib.django import ledger
 from struckdown.contrib.django.spans import aclose_span, aopen_span, current_span
@@ -51,6 +51,7 @@ def async_streaming_view(request):
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/", include("struckdown.contrib.django.routes.urls")),
     path("sync/", sync_view, name="sync_view"),
     path("async/", async_view, name="async_view"),
     path("stream/", streaming_view, name="streaming_view"),

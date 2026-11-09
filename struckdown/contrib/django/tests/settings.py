@@ -13,6 +13,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.admin",
     "struckdown.contrib.django",
+    "struckdown.contrib.django.routes",
 ]
 
 MIDDLEWARE = [

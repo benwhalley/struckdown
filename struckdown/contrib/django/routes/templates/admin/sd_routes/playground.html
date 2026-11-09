@@ -1,0 +1,35 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a> &rsaquo;
+  <a href="{% url 'admin:sd_routes_promptroute_changelist' %}">API routes</a> &rsaquo;
+  <a href="{{ change_url }}">{{ route.name }}</a> &rsaquo; Playground
+</div>
+{% endblock %}
+{% block content %}
+<div id="content-main">
+  <p>Runs the saved prompt on these inputs, as a call to <code>{{ route }}</code> would,
+  without a token. It counts against today's budget
+  (${{ route.spent_today|floatformat:2 }} of ${{ route.daily_budget }} spent).</p>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {% for f in fields %}
+    <div class="form-row">
+      <label for="in-{{ f.name }}"><code>{{ f.name }}</code></label>
+      {% if f.image %}
+        <input type="file" id="in-{{ f.name }}" name="{{ f.name }}" accept="image/*">
+      {% else %}
+        <textarea id="in-{{ f.name }}" name="{{ f.name }}" rows="5" style="width:100%">{{ f.value }}</textarea>
+      {% endif %}
+    </div>
+    {% empty %}
+    <p>The prompt reads no inputs.</p>
+    {% endfor %}
+    <div class="submit-row"><input type="submit" class="default" value="Run"></div>
+  </form>
+  {% if outcome_json %}
+  <h2>Result</h2>
+  <pre>{{ outcome_json }}</pre>
+  {% endif %}
+</div>
+{% endblock %}

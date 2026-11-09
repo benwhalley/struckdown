@@ -1,0 +1,4 @@
+.sd-editor-mount { min-height: 20rem; border: 1px solid var(--border-color, #ccc); border-radius: 4px; }
+.sd-schema { font-family: ui-monospace, Menlo, monospace; width: 100%; }
+.sd-schema-tools { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.4rem; }
+.sd-schema-status { font-size: 0.85em; opacity: 0.75; }

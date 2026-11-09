@@ -1,6 +1,17 @@
 
 # Changelog
 
+### Unreleased
+
+**Added**
+- `struckdown.contrib.django.routes` (app label `sd_routes`): a prompt served
+  as a JSON API at `/api/<slug>/`. Per-caller tokens (rotatable), an open
+  window, a daily budget counted from the usage ledger, a per-token rate,
+  inputs validated from the template or a JSON Schema, an output schema,
+  in-memory image inputs, a screening route of `[[bool:...]]` flags, CORS by
+  origin list, and an admin with the prompt editor, schema generation and a
+  playground. See `docs/how-to/django-api-routes.md`.
+
 ### 0.18.0
 
 **Breaking**
