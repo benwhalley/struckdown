@@ -24,6 +24,9 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from decouple import config as env_config
 from joblib import Memory
 
@@ -89,6 +92,29 @@ def hash_return_type(return_type: Any) -> str:
     else:
         # Fallback to string representation
         return hashlib.md5(str(return_type).encode()).hexdigest()
+
+
+_cache_off: ContextVar[bool] = ContextVar("struckdown_cache_off", default=False)
+
+
+@contextmanager
+def no_cache():
+    """Calls inside this block neither read nor write the response cache, so
+    nothing they send or receive reaches disk. For input that must not be kept."""
+    token = _cache_off.set(True)
+    try:
+        yield
+    finally:
+        _cache_off.reset(token)
+
+
+def cache_off() -> bool:
+    return _cache_off.get()
+
+
+def maybe_cached(fn):
+    """``fn`` (a joblib-memoised function), or the plain function under :func:`no_cache`."""
+    return getattr(fn, "func", fn) if _cache_off.get() else fn
 
 
 # Initialize the Memory object

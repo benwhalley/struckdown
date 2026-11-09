@@ -18,7 +18,11 @@ import io
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.core.files.uploadhandler import FileUploadHandler, SkipFile
 
-ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
+# MPO is the JPEG variant iPhones write
+ALLOWED_FORMATS = {"JPEG", "MPO", "PNG", "WEBP", "GIF"}
+# a small file can declare a huge image that takes gigabytes to decode; the
+# header gives the size without decoding, so refuse before anything does
+MAX_PIXELS = 40_000_000
 
 
 class MemoryOnlyUploadHandler(FileUploadHandler):
@@ -70,7 +74,15 @@ def read_image(upload) -> bytes:
     try:
         with Image.open(io.BytesIO(data)) as image:
             fmt = image.format
+            width, height = image.size
+            frames = getattr(image, "n_frames", 1)
+            if width * height > MAX_PIXELS:
+                raise NotAnImage(f"too many pixels ({width}x{height}; at most {MAX_PIXELS:,})")
+            if frames > 1 and fmt != "MPO":
+                raise NotAnImage("animated images are not accepted")
             image.verify()
+    except NotAnImage:
+        raise
     except Exception as exc:
         raise NotAnImage("not a readable image") from exc
     if fmt not in ALLOWED_FORMATS:

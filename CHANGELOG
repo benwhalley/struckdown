@@ -11,6 +11,14 @@
   in-memory image inputs, a screening route of `[[bool:...]]` flags, CORS by
   origin list, and an admin with the prompt editor, schema generation and a
   playground. See `docs/how-to/django-api-routes.md`.
+- `restrict_actions(names)`: inside the block only the named actions run; any
+  other raises `ActionNotAllowed` when reached, however the template spelt it.
+- `no_cache()`: calls inside the block neither read nor write the response
+  cache (LLM and decision-model calls alike).
+
+**Changed**
+- `@history` and `@evidence` read local files, so they are no longer allowed
+  in remote mode (`allow_remote_use=False`).
 
 ### 0.18.0
 

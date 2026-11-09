@@ -41,10 +41,16 @@ def _model_pair(route):
 
 
 def _complete(route, context: dict):
+    """Run the route's prompt. Only the route actions may run, however the
+    template spells them, and nothing is written to struckdown's response
+    cache: a caller's input is used for this call and not kept."""
     import struckdown as sd
 
+    from .models import ROUTE_ACTIONS
+
     llm, credentials = _model_pair(route)
-    return sd.complete(route.prompt, context=context, model=llm, credentials=credentials)
+    with sd.restrict_actions(ROUTE_ACTIONS), sd.no_cache():
+        return sd.complete(route.prompt, context=context, model=llm, credentials=credentials)
 
 
 def _cost(results) -> dict:
@@ -59,7 +65,9 @@ def outputs(route, result) -> dict:
     data = {k: to_jsonable_python(v.output) for k, v in result.results.items()}
     if not route.output_schema:
         return data
-    model = schemas.to_model(route.output_schema, max_chars=10**9, name="Outputs")
+    model = schemas.to_model(
+        route.output_schema, max_chars=10**9, name="Outputs", inputs=False
+    )
     try:
         shaped = model(**{k: data.get(k) for k in model.model_fields})
     except ValidationError as exc:
@@ -77,7 +85,12 @@ def screened(route, context: dict) -> tuple[list[str], Any]:
     screen = route.screen
     inputs = set(screen.analysis()["inputs"])
     result = _complete(screen, {k: v for k, v in context.items() if k in inputs})
-    return [k for k, v in result.results.items() if v.output is True], result
+    answers = {k: v.output for k, v in result.results.items()}
+    # fail closed: a screen that stops answering true/false must not wave
+    # everything through
+    if not answers or any(not isinstance(v, bool) for v in answers.values()):
+        raise RouteError(502, "screen_failed", "The input could not be checked.")
+    return [k for k, v in answers.items() if v], result
 
 
 def call(route, context: dict, *, user=None, caller: str | None = None) -> dict:
@@ -110,6 +123,12 @@ def validate_inputs(route, data: dict, files: dict) -> dict:
     input_schema = route.effective_input_schema()
     image_names = schemas.image_fields(input_schema)
     model = schemas.to_model(input_schema, max_chars=route.max_chars)
+    # each text input is capped by the schema; this caps them together, so
+    # arrays and many fields cannot add up to more than that many inputs' worth
+    properties = input_schema.get("properties") or {}
+    allowed = route.max_chars * max(1, len(properties))
+    if sum(len(str(v)) for v in data.values()) > allowed:
+        raise RouteError(400, "invalid_input", "The input is too long.")
     try:
         inputs = model(**data).model_dump()
     except ValidationError as exc:

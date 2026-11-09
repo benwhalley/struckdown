@@ -185,8 +185,10 @@ def ask(
     url, headers, model = _connection(model_name, credentials)
     payload = {"model": model, "state": state, "questions": questions}
     args = (url, payload, {**headers, "Accept": "application/json"}, timeout)
-    was_cached = _post_systemone.check_call_in_cache(*args)
-    return payload, _post_systemone(*args), was_cached
+    from .cache import cache_off, maybe_cached
+
+    was_cached = not cache_off() and _post_systemone.check_call_in_cache(*args)
+    return payload, maybe_cached(_post_systemone)(*args), was_cached
 
 
 def completion_dict(

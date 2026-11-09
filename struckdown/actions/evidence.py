@@ -121,7 +121,7 @@ def load_evidence_files(folders: list[Path]) -> list[tuple[str, str, str]]:
     return chunks
 
 
-@Actions.register("evidence", on_error="return_empty", default_save=True)
+@Actions.register("evidence", on_error="return_empty", default_save=True, allow_remote_use=False)
 def evidence_search(context: dict, query: str | list[str], n: int = 3) -> str:
     """Search evidence files using BM25.
 

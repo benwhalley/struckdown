@@ -15,12 +15,15 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
+from django.middleware.csrf import CsrfViewMiddleware
 from django.utils.html import format_html, format_html_join
+from django.views.decorators.csrf import csrf_exempt
 
 from . import examples
 from . import schema as schemas
 from .models import PromptRoute, RouteToken
 from .service import RouteError, call, validate_inputs
+from .uploads import MemoryOnlyUploadHandler
 
 
 class PromptEditorWidget(forms.Textarea):
@@ -95,7 +98,8 @@ def _ensure_token(request, route) -> RouteToken:
     token = route.tokens.filter(is_active=True).first()
     if token is None:
         token = RouteToken.objects.create(route=route, name="default")
-        messages.info(request, f'Added a token, "default": {token.token}')
+        # not the value: messages can sit in a cookie
+        messages.info(request, 'Added a token called "default"; it is in the tokens table.')
     return token
 
 
@@ -145,7 +149,7 @@ class PromptRouteAdmin(admin.ModelAdmin):
 
     actions = ["rotate_tokens"]
 
-    @admin.action(description="Rotate all tokens of the selected routes")
+    @admin.action(description="Rotate all tokens of the selected routes", permissions=["change"])
     def rotate_tokens(self, request, queryset):
         tokens = list(RouteToken.objects.filter(route__in=queryset))
         for token in tokens:
@@ -204,7 +208,8 @@ class PromptRouteAdmin(admin.ModelAdmin):
 
     def change_view(self, request, object_id, form_url="", extra_context=None):
         route = self.get_object(request, object_id)
-        if route is not None:
+        # the examples carry a live token: only for those who may change the route
+        if route is not None and self.has_change_permission(request, route):
             # the examples need a working token; a route saved before tokens
             # were added by default may have none
             token = _ensure_token(request, route)
@@ -238,7 +243,8 @@ class PromptRouteAdmin(admin.ModelAdmin):
             ),
             path(
                 "<int:pk>/playground/",
-                self.admin_site.admin_view(self.playground_view),
+                # CSRF is checked inside, after the upload handler is set
+                self.admin_site.admin_view(csrf_exempt(self.playground_view)),
                 name="sd_routes_promptroute_playground",
             ),
             *super().get_urls(),
@@ -268,12 +274,28 @@ class PromptRouteAdmin(admin.ModelAdmin):
         route = get_object_or_404(PromptRoute, pk=pk)
         if not self.has_change_permission(request, route):
             raise PermissionDenied
+        handler = None
+        if request.method == "POST":
+            # images stay in memory here as on the API; the CSRF check reads
+            # the body, so it runs after the handler is in place
+            handler = MemoryOnlyUploadHandler(
+                request,
+                max_bytes=route.max_image_bytes,
+                max_files=route.max_images if route.allow_images else 0,
+            )
+            request.upload_handlers = [handler]
+            if refused := CsrfViewMiddleware(lambda r: None).process_view(request, None, (), {}):
+                return refused
         inputs = route.analysis()["inputs"]
         image_names = schemas.image_fields(route.effective_input_schema())
         values = {name: request.POST.get(name, "") for name in inputs if name not in image_names}
         outcome = None
         if request.method == "POST":
-            outcome = self._run(request, route, values)
+            outcome = (
+                {"error": "invalid_image", "refused": handler.refused}
+                if handler.refused
+                else self._run(request, route, values)
+            )
         context = {
             **self.admin_site.each_context(request),
             "opts": self.model._meta,

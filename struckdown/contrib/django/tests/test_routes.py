@@ -199,7 +199,8 @@ def test_an_output_that_breaks_the_schema_is_502(llm, route, token):
 @pytest.fixture
 def screened(route, credential):
     decider = AvailableModel.objects.create(
-        model_name="decider", model_type="decision", name="Decider", credential=credential
+        model_name="decider", model_type="decision", name="Decider", credential=credential,
+        input_cost_per_mtok="0.1", output_cost_per_mtok="0.1",
     )
     route.screen = PromptRoute.objects.create(slug="screen", name="Screen", prompt=SCREEN, model=decider)
     route.full_clean()
@@ -227,7 +228,8 @@ def test_a_screen_must_be_bool_slots_on_a_decision_model(route, priced_model, cr
     with pytest.raises(ValidationError, match="decision model"):
         route.full_clean()
     decider = AvailableModel.objects.create(
-        model_name="d", model_type="decision", name="D", credential=credential
+        model_name="d", model_type="decision", name="D", credential=credential,
+        input_cost_per_mtok="0.1", output_cost_per_mtok="0.1",
     )
     route.screen = PromptRoute.objects.create(slug="s2", name="S2", prompt="{{ essay }} [[label]]", model=decider)
     with pytest.raises(ValidationError, match="bool"):
@@ -238,7 +240,21 @@ def test_a_screen_must_be_bool_slots_on_a_decision_model(route, priced_model, cr
 
 
 @pytest.mark.parametrize(
-    "prompt", ["{% include 'secrets.sd' %} [[x]]", "{% from 'x' import y %} [[x]]", "[[@fetch:page|url=x]]"]
+    "prompt",
+    [
+        "{% include 'secrets.sd' %} [[x]]",
+        "{%+ include 'secrets.sd' %} [[x]]",
+        "{% from 'x' import y %} [[x]]",
+        "[[@fetch:page|url=x]]",
+        '[[ @fetch:p|"http://169.254.169.254/"]]',
+        "[[@fetch :p|u]]",
+        "[[@fetch |url=x]]",
+        "[[@fetch]]",
+        '[[@history:h|"/etc/hosts"]]',
+        "[[@history:h|filename=path]]",
+        "[[@evidence:e|q]]",
+        "[[ @search:r|query=x]]",
+    ],
 )
 def test_a_prompt_cannot_read_files_or_fetch(route, prompt):
     route.prompt = prompt
@@ -472,3 +488,176 @@ def test_examples_have_no_blank_lines(route, token):
         examples.python_script(route, "https://x/", token.token),
     ):
         assert "\n\n" not in code and not code.endswith("\n") and not code.startswith("\n")
+
+
+
+# -- from the security review ------------------------------------------------
+
+
+def test_actions_are_enforced_at_run_time_too(route, token, monkeypatch):
+    """A prompt that skipped clean() (saved from the shell, say) still cannot
+    read a file: the run itself refuses any action outside the allowlist."""
+    PromptRoute.objects.filter(pk=route.pk).update(prompt='[[@history:h|"/etc/hosts"]]')
+    cache.clear()
+    r = post("summarise", {}, token)
+    assert r.status_code == 502
+    assert "localhost" not in r.content.decode()
+
+
+def test_route_calls_bypass_the_response_cache(llm, route, token, monkeypatch):
+    from struckdown.cache import cache_off
+
+    seen = []
+    monkeypatch.setattr(
+        "struckdown.complete",
+        lambda *a, **k: seen.append(cache_off()) or FakeResult({"summary": "x"}),
+    )
+    post("summarise", {"essay": "e"}, token)
+    assert seen == [True]
+
+
+def test_an_unpriced_model_cannot_serve_a_route(route, credential):
+    route.model = AvailableModel.objects.create(
+        model_name="free", model_type="llm", name="Free", credential=credential
+    )
+    with pytest.raises(ValidationError, match="no prices"):
+        route.full_clean()
+
+
+def test_a_screen_that_stops_answering_bool_fails_closed(llm, screened, token):
+    llm.flags = {"distress": "maybe", "injection": False}
+    r = post("summarise", {"essay": "e"}, token)
+    assert r.status_code == 502 and r.json()["error"] == "screen_failed"
+    assert [p for p, _ in llm.calls] == [SCREEN]
+
+
+def test_editing_a_screen_rechecks_its_rules(screened):
+    screen = screened.screen
+    screen.prompt = "{{ essay }} [[label]]"
+    with pytest.raises(ValidationError, match="Used as the screen"):
+        screen.full_clean()
+
+
+def test_a_decompression_bomb_is_refused_before_decoding(llm, image_route, token):
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("1", (8000, 8000)).save(buf, "PNG")  # 64 MP, a few KB
+    r = _upload(token, buf.getvalue())
+    assert r.status_code == 400 and "pixels" in r.json()["message"]
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(
+    "schema, match",
+    [
+        ({"properties": {'x"),__import__("os").system("id"),open("y': {"type": "string", "format": "image"}}}, "property name"),
+        ({"properties": {"e": {}}}, "type"),
+        ({"properties": {"e": {"type": "object"}}}, "unsupported type"),
+        ({"properties": {"e": {"type": "array", "items": {"type": "object"}}}}, "array"),
+        ({"properties": {"e": {"type": "string", "maxLength": "5"}}}, "whole number"),
+        ({"properties": {"e": {"type": "string", "enum": [["a"]]}}}, "enum"),
+        ({"properties": {"e": {"type": "string", "format": "uri"}}}, "format"),
+    ],
+)
+def test_input_schemas_are_strict(route, schema, match):
+    route.allow_images = True
+    route.input_schema = {"type": "object", **schema}
+    with pytest.raises(ValidationError, match=match):
+        route.full_clean()
+
+
+def test_inputs_together_are_capped(llm, route, token):
+    route.prompt = "{{ tags }} [[summary]]"
+    route.max_input_tokens = 10
+    route.input_schema = {
+        "type": "object",
+        "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+    }
+    route.save()
+    r = post("summarise", {"tags": ["x" * 40] * 50}, token)
+    assert r.status_code == 400 and llm.calls == []
+
+
+@pytest.mark.parametrize(
+    "body, headers",
+    [
+        ("{}", {"CONTENT_LENGTH": "abc"}),
+        ("[" * 100_000 + "]" * 100_000, {}),
+    ],
+    ids=["bad-content-length", "deep-json"],
+)
+def test_malformed_requests_are_400_not_500(llm, route, token, body, headers):
+    r = Client().generic(
+        "POST", "/api/summarise/", body, content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {token.token}", **headers,
+    )
+    assert r.status_code in (400, 413), r.content
+
+
+def test_per_ip_limit(llm, route, token, settings):
+    settings.STRUCKDOWN_ROUTES_PER_IP_PER_MINUTE = 2
+    codes = [post("summarise", {"essay": "e"}, token).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+
+
+def test_calls_in_flight_are_capped(llm, route, token, settings, monkeypatch):
+    settings.STRUCKDOWN_ROUTES_MAX_IN_FLIGHT = 1
+    inner = []
+
+    def complete(prompt, context, **kwargs):
+        inner.append(post("summarise", {"essay": "e"}, token).status_code)
+        return FakeResult({"summary": "x"})
+
+    monkeypatch.setattr("struckdown.complete", complete)
+    assert post("summarise", {"essay": "e"}, token).status_code == 200
+    assert inner == [429]
+    assert post("summarise", {"essay": "e"}, token).status_code == 200  # released
+
+
+@pytest.fixture
+def viewer(route):
+    from django.contrib.auth.models import Permission
+
+    user = get_user_model().objects.create_user("viewer", password="x", is_staff=True)
+    user.user_permissions.add(Permission.objects.get(codename="view_promptroute"))
+    c = Client()
+    c.force_login(user)
+    return c
+
+
+def test_view_only_users_cannot_rotate_or_see_tokens(viewer, route, token):
+    old = token.token
+    viewer.post(
+        "/admin/sd_routes/promptroute/",
+        {"action": "rotate_tokens", "_selected_action": [route.pk]},
+    )
+    token.refresh_from_db()
+    assert token.token == old
+    html = viewer.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").content.decode()
+    assert old not in html
+
+
+def test_view_only_users_do_not_create_tokens(viewer, route):
+    viewer.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
+    assert not route.tokens.exists()
+
+
+def test_playground_keeps_images_in_memory(admin_client, llm, image_route, tmp_path, settings):
+    settings.FILE_UPLOAD_TEMP_DIR = str(tmp_path)
+    settings.FILE_UPLOAD_MAX_MEMORY_SIZE = 1
+    r = admin_client.post(
+        f"/admin/sd_routes/promptroute/{image_route.pk}/playground/",
+        {"photo": SimpleUploadedFile("p.png", _png(), "image/png")},
+    )
+    assert r.status_code == 200
+    assert list(tmp_path.iterdir()) == []
+    assert llm.calls
+
+
+def test_playground_still_needs_csrf(llm, route):
+    user = get_user_model().objects.create_superuser("c", "c@example.com", "x")
+    c = Client(enforce_csrf_checks=True)
+    c.force_login(user)
+    r = c.post(f"/admin/sd_routes/promptroute/{route.pk}/playground/", {"essay": "e"})
+    assert r.status_code == 403 and llm.calls == []

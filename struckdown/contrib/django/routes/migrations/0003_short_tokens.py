@@ -13,6 +13,16 @@ def refresh_all(apps, schema_editor):
         token.save(update_fields=["token"])
 
 
+def back_to_uuids(apps, schema_editor):
+    """Reversing: give every token a UUID again, so the column can go back to uuid."""
+    import uuid
+
+    RouteToken = apps.get_model("sd_routes", "RouteToken")
+    for token in RouteToken.objects.all():
+        token.token = str(uuid.uuid4())
+        token.save(update_fields=["token"])
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -30,5 +40,5 @@ class Migration(migrations.Migration):
                 unique=True,
             ),
         ),
-        migrations.RunPython(refresh_all, migrations.RunPython.noop),
+        migrations.RunPython(refresh_all, back_to_uuids),
     ]

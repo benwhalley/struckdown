@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, get_type_hints
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import markdownify as markdownify_lib
 import requests
 import validators
@@ -188,6 +191,26 @@ def _coerce_params(func: Callable, action_name: str, rendered_params: dict) -> d
 ErrorStrategy = Literal["propagate", "return_empty", "return_default"]
 
 
+
+class ActionNotAllowed(PermissionError):
+    """An action ran inside :func:`restrict_actions` that the caller did not allow."""
+
+
+# None: every registered action may run (the default)
+_allowed_actions: ContextVar[Optional[frozenset]] = ContextVar("allowed_actions", default=None)
+
+
+@contextmanager
+def restrict_actions(names):
+    """Only the named actions may run inside this block; any other raises
+    :class:`ActionNotAllowed` when it is reached, however the template got it
+    there. For running prompts on input from people you do not trust."""
+    token = _allowed_actions.set(frozenset(names))
+    try:
+        yield
+    finally:
+        _allowed_actions.reset(token)
+
 class Actions:
     """Registry for custom function-based actions.
 
@@ -331,6 +354,10 @@ class Actions:
             Automatically wraps sync functions with sync_to_async for safe
             execution in async contexts (e.g., Django ORM operations).
             """
+            allowed = _allowed_actions.get()
+            if allowed is not None and action_name not in allowed:
+                raise ActionNotAllowed(action_name)
+
             from struckdown.parsing import OptionValue
 
             def ensure_option_value(opt):

@@ -16,8 +16,26 @@ from ..models import AvailableModel, Credential
 from . import schema as schemas
 
 # Jinja that reads files from the server. A route's prompt is written by staff
-# but runs on every request, so it may only see what the request sends.
-_FILE_TAGS = re.compile(r"{%-?\s*(include|import|from|extends)\b")
+# but runs on every request, so it may only see what the request sends. (The
+# sandbox has no loader, so these fail anyway; refusing them says so on save.)
+_FILE_TAGS = re.compile(r"{%[-+]?\s*(include|import|from|extends)\b")
+
+# The only actions a route may run: none of them reads a file or the network.
+# Checked on save from the parse tree, and enforced again at run time
+# (struckdown.restrict_actions), so a prompt cannot reach another by any spelling.
+ROUTE_ACTIONS = frozenset({"set", "timestamp", "markdownify"})
+
+
+def actions_used(prompt: str) -> set[str]:
+    """Every action the prompt calls, as the parser reads it."""
+    from struckdown.parsing import parse_syntax
+
+    return {
+        part.action_type
+        for segment in parse_syntax(prompt)
+        for part in segment.values()
+        if getattr(part, "is_function", False)
+    }
 
 
 class PromptRoute(models.Model):
@@ -148,13 +166,23 @@ class PromptRoute(models.Model):
             errors["prompt"] = f"The prompt does not parse: {found['error']}"
         if _FILE_TAGS.search(self.prompt or ""):
             errors["prompt"] = "include, import and extends are not allowed in a route's prompt."
-        from struckdown.playground.core import check_disallowed_actions
-
-        if blocked := check_disallowed_actions(self.prompt or ""):
-            errors["prompt"] = f"Actions not allowed in a route: {', '.join(blocked)}."
+        elif not found["error"]:
+            blocked = actions_used(self.prompt) - ROUTE_ACTIONS
+            if blocked:
+                errors["prompt"] = (
+                    f"Actions not allowed in a route: {', '.join(sorted(blocked))} "
+                    f"(allowed: {', '.join(sorted(ROUTE_ACTIONS))})."
+                )
+        # an unpriced model records no cost, so the daily budget could never stop it
+        if self.model_id and self.model.stored_pricing() is None:
+            errors["model"] = "This model has no prices, so the daily budget could not apply."
         for field in ("input_schema", "output_schema"):
             try:
-                schemas.check_schema(getattr(self, field), max_chars=self.max_chars)
+                schemas.check_schema(
+                    getattr(self, field),
+                    max_chars=self.max_chars,
+                    inputs=field == "input_schema",
+                )
             except schemas.SchemaError as exc:
                 errors[field] = str(exc)
         if schemas.image_fields(self.input_schema) and not self.allow_images:
@@ -162,22 +190,30 @@ class PromptRoute(models.Model):
         if self.opens_at and self.closes_at and self.closes_at <= self.opens_at:
             errors["closes_at"] = "Must be after it opens."
         if self.screen_id:
-            errors.update(self._screen_errors())
+            errors.update(self._screen_errors(self, self.screen))
+        # a screen's rules are checked when it is saved too, so editing the
+        # screen itself cannot quietly stop it screening
+        if self.pk:
+            for screened in self.screened_routes.all():
+                for message in self._screen_errors(screened, self).values():
+                    errors.setdefault("prompt", f"Used as the screen for {screened}: {message}")
         if errors:
             raise ValidationError(errors)
 
-    def _screen_errors(self) -> dict:
-        screen = self.screen
-        if screen.pk == self.pk:
+    @staticmethod
+    def _screen_errors(route, screen) -> dict:
+        if screen.pk == route.pk:
             return {"screen": "A route cannot screen itself."}
         if screen.screen_id:
             return {"screen": "A screening route cannot have a screen of its own."}
         if screen.model.model_type != AvailableModel.ModelType.DECISION:
             return {"screen": "A screening route must use a decision model."}
+        if screen.model.stored_pricing() is None:
+            return {"screen": "The screen's model has no prices, so its cost could not count."}
         slots = screen.analysis()["slots"]
         if not slots or any(s["type"] not in ("bool", "boolean") for s in slots):
             return {"screen": "A screening route's slots must all be [[bool:...]]."}
-        missing = set(screen.analysis()["inputs"]) - set(self.analysis()["inputs"])
+        missing = set(screen.analysis()["inputs"]) - set(route.analysis()["inputs"])
         if missing:
             return {"screen": f"The screen reads inputs this route has not: {sorted(missing)}."}
         return {}

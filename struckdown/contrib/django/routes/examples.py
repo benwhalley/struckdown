@@ -25,6 +25,11 @@ _STYLE = (
 )
 
 
+def _js(value: str) -> str:
+    """A string literal safe inside an inline <script>."""
+    return json.dumps(value).replace("</", "<\\/")
+
+
 def _tidy(code: str) -> str:
     """No blank lines and no trailing newline: shown in a box and copied as is."""
     return "\n".join(line.rstrip() for line in code.splitlines() if line.strip())
@@ -78,8 +83,8 @@ def html_page(route, url: str, token: str) -> str:
 </form>
 <pre id="result"></pre>
 <script>
-const URL = "{url}";
-const TOKEN = "{token}";
+const URL = {_js(url)};
+const TOKEN = {_js(token)};
 
 document.getElementById("form").addEventListener("submit", async (event) => {{
   event.preventDefault();
@@ -108,15 +113,17 @@ def python_script(route, url: str, token: str) -> str:
     images = schemas.image_fields(input_schema)
     text = {n: "..." for n in (input_schema.get("properties") or {}) if n not in images}
     if images:
-        files = ", ".join(f'"{n}": open("{n}.jpg", "rb")' for n in sorted(images))
+        files = ", ".join(
+            f"{json.dumps(n)}: open({json.dumps(n + '.jpg')}, \"rb\")" for n in sorted(images)
+        )
         payload = f"    data={json.dumps(text)},\n    files={{{files}}},\n"
     else:
         payload = f"    json={json.dumps(text)},\n"
     return _tidy(
         "import requests\n"
         "response = requests.post(\n"
-        f'    "{url}",\n'
-        f'    headers={{"Authorization": "Bearer {token}"}},\n'
+        f"    {json.dumps(url)},\n"
+        f'    headers={{"Authorization": {json.dumps("Bearer " + token)}}},\n'
         f"{payload}"
         "    timeout=120,\n"
         ")\n"

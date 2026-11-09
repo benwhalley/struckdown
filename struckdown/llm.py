@@ -118,7 +118,7 @@ from pydantic import BaseModel, Field
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
 from . import reasoning
-from .cache import hash_return_type, memory
+from .cache import cache_off, hash_return_type, maybe_cached, memory
 
 
 class EmbeddingResult(np.ndarray):
@@ -1132,6 +1132,9 @@ def _store_in_cache(
     """Manually store a result in joblib's cache (used after streaming)."""
     from struckdown import __version__
 
+    if cache_off():
+        return
+
     try:
         cache_args = dict(
             messages=messages,
@@ -1573,7 +1576,7 @@ def structured_chat(
     started_at = _utcnow()
 
     try:
-        res_dict, com_dict = _call_llm_cached(
+        res_dict, com_dict = maybe_cached(_call_llm_cached)(
             messages=messages,
             model_name=llm.model_name,
             max_retries=max_retries,
@@ -1704,6 +1707,8 @@ async def structured_chat_async(
 
     def _probe_cache():
         """Check if the result exists in cache without making an API call."""
+        if cache_off():
+            return None, None
         cache_args = dict(
             messages=messages,
             model_name=llm.model_name,

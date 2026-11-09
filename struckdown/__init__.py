@@ -36,8 +36,8 @@ warnings.filterwarnings("ignore", message=".*Pydantic serializer warnings.*")
 logger = logging.getLogger(__name__)
 
 # Re-export from other modules
-from .actions import Actions
-from .cache import clear_cache
+from .actions import ActionNotAllowed, Actions, restrict_actions
+from .cache import clear_cache, no_cache
 # Re-export from errors module
 from .errors import (AuthError, BadRequestError, ConnectionError,
                      ContentFilterError, ContextWindowError, FetchError,
@@ -1253,6 +1253,9 @@ def complete_incremental(
 
 # Public API exports
 __all__ = [
+    "ActionNotAllowed",
+    "restrict_actions",
+    "no_cache",
     # Version
     "__version__",
     # Main entry points

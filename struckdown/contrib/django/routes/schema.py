@@ -7,8 +7,10 @@ returned. A schema narrows or reshapes that.
 
 Schemas are JSON Schema, restricted to what maps onto a pydantic field without
 surprises: a flat object whose properties are ``string``, ``integer``,
-``number``, ``boolean``, ``array`` (of those) or ``object``, with ``enum``,
-``minLength``/``maxLength``, ``minimum``/``maximum`` and ``maxItems``.
+``number``, ``boolean`` or ``array`` (of those, at most 100), with ``enum``,
+``minLength``/``maxLength``, ``minimum``/``maximum`` and ``maxItems``. Every
+input needs a ``type``; an output schema may also use ``object`` or leave the
+type out. Property names are identifiers.
 A string property with ``"format": "image"`` is an uploaded image, not text.
 :func:`check_schema` refuses anything else, so a schema that saves is one the
 API can enforce.
@@ -16,7 +18,8 @@ API can enforce.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+import re
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -97,12 +100,46 @@ def image_fields(schema: dict | None) -> set[str]:
     }
 
 
-def _field_type(name: str, prop: dict, max_chars: int):
+_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_INT_KEYWORDS = ("minLength", "maxLength", "maxItems")
+_NUMBER_KEYWORDS = ("minimum", "maximum")
+MAX_ITEMS = 100
+
+
+def _check_keywords(name: str, prop: dict) -> None:
+    """Each keyword's value is of the kind JSON Schema gives it, so a typo is a
+    form error on save rather than a crash on the first call."""
     unknown = set(prop) - _KEYWORDS
     if unknown:
         raise SchemaError(f"{name}: unsupported keyword(s) {sorted(unknown)}")
+    for key in _INT_KEYWORDS:
+        if key in prop and (type(prop[key]) is not int or prop[key] < 0):
+            raise SchemaError(f"{name}: {key} must be a whole number of 0 or more")
+    for key in _NUMBER_KEYWORDS:
+        if key in prop and type(prop[key]) not in (int, float):
+            raise SchemaError(f"{name}: {key} must be a number")
+    if "enum" in prop:
+        values = prop["enum"]
+        if not isinstance(values, list) or not values:
+            raise SchemaError(f"{name}: enum must be a non-empty list")
+        if any(type(v) not in (str, int, float, bool) for v in values):
+            raise SchemaError(f"{name}: enum values must be strings, numbers or true/false")
+    if "format" in prop and prop["format"] != "image":
+        raise SchemaError(f"{name}: the only format supported is \"image\"")
+    for key in ("description", "title"):
+        if key in prop and not isinstance(prop[key], str):
+            raise SchemaError(f"{name}: {key} must be text")
+
+
+def _field_type(name: str, prop: dict, max_chars: int, *, inputs: bool):
+    """The annotation and pydantic constraints for one property. Inputs are held
+    to more than outputs: every input needs a type, and nothing unbounded
+    (a free-form object, an array of objects) is accepted from a caller."""
+    _check_keywords(name, prop)
     kind = prop.get("type")
     if kind is None:
+        if inputs:
+            raise SchemaError(f"{name}: give each input a type")
         return Any, {}
     if kind in ("array", "object") and "enum" in prop:
         raise SchemaError(f"{name}: enum is only for strings and numbers")
@@ -120,37 +157,60 @@ def _field_type(name: str, prop: dict, max_chars: int):
     if kind == "boolean":
         return bool, {}
     if kind == "array":
-        item_type, _ = _field_type(f"{name}[]", prop.get("items") or {}, max_chars)
-        return list[item_type], {"max_length": prop.get("maxItems", 100)}
-    if kind == "object":
+        items = prop.get("items") or {}
+        if not isinstance(items, dict):
+            raise SchemaError(f"{name}: items must be an object")
+        if inputs and items.get("type") not in _PRIMITIVE:
+            raise SchemaError(f"{name}: an input array must hold strings, numbers or true/false")
+        item_type, item_constraints = _field_type(f"{name}[]", items, max_chars, inputs=inputs)
+        if item_constraints:
+            item_type = Annotated[item_type, Field(**item_constraints)]
+        return list[item_type], {"max_length": min(prop.get("maxItems", MAX_ITEMS), MAX_ITEMS)}
+    if kind == "object" and not inputs:
         return dict, {}
     raise SchemaError(f"{name}: unsupported type {kind!r}")
 
 
-def to_model(schema: dict, *, max_chars: int, name: str = "Inputs") -> type[BaseModel]:
+def to_model(
+    schema: dict, *, max_chars: int, name: str = "Inputs", inputs: bool = True
+) -> type[BaseModel]:
     """A pydantic model for ``schema``. Unknown fields are refused; image
     fields are left out (they arrive as files and are checked separately)."""
-    if schema.get("type", "object") != "object":
+    if not isinstance(schema, dict) or schema.get("type", "object") != "object":
         raise SchemaError("the schema must describe an object")
     properties = schema.get("properties") or {}
     if not isinstance(properties, dict):
         raise SchemaError("properties must be an object")
-    required = set(schema.get("required") or [])
+    required = schema.get("required") or []
+    if not isinstance(required, list) or any(not isinstance(r, str) for r in required):
+        raise SchemaError("required must be a list of property names")
     fields = {}
     for field_name, prop in properties.items():
+        # names reach the example HTML page and Python script, and the template
+        if not _NAME.match(field_name):
+            raise SchemaError(
+                f"{field_name!r}: a property name must be letters, digits and _ "
+                "(not starting with a digit)"
+            )
         if not isinstance(prop, dict):
             raise SchemaError(f"{field_name}: each property must be an object")
         if prop.get("format") == "image":
+            _check_keywords(field_name, prop)
             continue
-        annotation, constraints = _field_type(field_name, prop, max_chars)
-        if field_name in required:
+        annotation, constraints = _field_type(field_name, prop, max_chars, inputs=inputs)
+        if field_name in set(required):
             fields[field_name] = (annotation, Field(..., **constraints))
         else:
             fields[field_name] = (Optional[annotation], Field(prop.get("default"), **constraints))
     return create_model(name, __config__=ConfigDict(extra="forbid"), **fields)
 
 
-def check_schema(schema: dict | None, *, max_chars: int) -> None:
+def check_schema(schema: dict | None, *, max_chars: int, inputs: bool = True) -> None:
     """Raise :class:`SchemaError` unless ``schema`` is one :func:`to_model` takes."""
     if schema:
-        to_model(schema, max_chars=max_chars)
+        try:
+            to_model(schema, max_chars=max_chars, inputs=inputs)
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, SchemaError):
+                raise
+            raise SchemaError(f"the schema could not be read: {exc}") from exc

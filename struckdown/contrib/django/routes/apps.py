@@ -12,3 +12,6 @@ class SdRoutesConfig(AppConfig):
     label = "sd_routes"
     verbose_name = "Struckdown API routes"
     default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self):
+        from . import checks  # noqa: F401

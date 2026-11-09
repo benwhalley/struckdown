@@ -14,7 +14,7 @@ from . import Actions, MessageList
 logger = logging.getLogger(__name__)
 
 
-@Actions.register("history", on_error="propagate", default_save=False)
+@Actions.register("history", on_error="propagate", default_save=False, allow_remote_use=False)
 def history_action(
     context: dict,
     filename: Optional[str] = None,
