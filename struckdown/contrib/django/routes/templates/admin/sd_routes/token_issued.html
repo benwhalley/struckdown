@@ -1,0 +1,40 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'sd_routes/route-admin.css' %}">{% endblock %}
+{% block extrahead %}{{ block.super }}<script src="{% static 'sd_routes/route-admin.js' %}"></script>{% endblock %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a> &rsaquo;
+  <a href="{% url 'admin:sd_routes_promptroute_changelist' %}">API routes</a> &rsaquo;
+  <a href="{{ change_url }}">{{ route.name }}</a> &rsaquo; Token
+</div>
+{% endblock %}
+{% block content %}
+<div id="content-main">
+  <p class="errornote">This is the only time this token is shown. Copy it now: only a hash
+    is kept, so it cannot be shown again. If it is lost, replace it.</p>
+  <p>{% if made %}Made{% else %}Replaced{% endif %} the token <strong>{{ token.name }}</strong>
+    for <code>{{ route }}</code>.{% if not made %} The old value no longer works.{% endif %}</p>
+  <div class="sd-example">
+    <div class="sd-example-head">
+      <strong>Token</strong>
+      <button type="button" class="button sd-copy">Copy</button>
+    </div>
+    <pre id="sd-token-value">{{ value }}</pre>
+  </div>
+  <fieldset class="module sd-examples">
+    <h2>Examples</h2>
+    <p class="help">With this route's address and this token filled in.</p>
+    {% for ex in sd_examples %}
+    <div class="sd-example">
+      <div class="sd-example-head">
+        <strong>{{ ex.title }}</strong> <span class="help">{{ ex.note }}</span>
+        <button type="button" class="button sd-copy">Copy</button>
+      </div>
+      <pre class="sd-fill-origin">{{ ex.code }}</pre>
+    </div>
+    {% endfor %}
+  </fieldset>
+  <p><a href="{{ change_url }}">Back to the route</a></p>
+</div>
+{% endblock %}

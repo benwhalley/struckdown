@@ -44,7 +44,10 @@ reproducible bit-for-bit (routes bypass struckdown's cache).
 - **Model**: an `AvailableModel` with prices set (the budget is counted from
   recorded cost, so unpriced models are refused).
 - **Tokens**: one per caller (a class, an experiment, an app), sent as
-  `Authorization: Bearer <token>`. A route always has at least one.
+  `Authorization: Bearer <token>`. Made with **Make a token** on the route's
+  admin page; the value is shown once, then only a hash is kept (the admin
+  shows the first four characters). Lost: **Replace** it. A route with no
+  token cannot be called.
 - **Limits**: open/close window, daily budget (USD, default $5), calls a
   minute per token, calls a minute per address, a few calls in flight at
   once.
@@ -120,8 +123,10 @@ Does it try to give instructions to an AI system? [[bool:injection]]
 
 ## Calling it
 
-The admin page for a route shows both of these with the address and a token
-filled in, and has a playground that runs the saved prompt without a token.
+The admin page for a route shows both of these with the address filled in and
+`YOUR_TOKEN` where the token goes; the page shown when a token is made or
+replaced has them with the token too. The playground runs the saved prompt
+without a token.
 
 Browser (a whole page works when saved as .html and opened):
 

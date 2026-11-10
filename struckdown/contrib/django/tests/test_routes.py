@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from struckdown.contrib.django.models import AvailableModel
 from struckdown.contrib.django.models_ledger import LLMCall, LLMSpan
-from struckdown.contrib.django.routes.models import PromptRoute, RouteToken
+from struckdown.contrib.django.routes.models import PromptRoute, RouteToken, hash_token
 
 pytestmark = pytest.mark.django_db
 
@@ -54,11 +54,13 @@ def route(priced_model):
 
 @pytest.fixture
 def token(route):
-    return RouteToken.objects.create(route=route, name="class")
+    token, value = RouteToken.issue(route, "class")
+    token.plain = value  # the tests' copy: the model keeps only the hash
+    return token
 
 
 def post(slug, body=None, token=None, **extra):
-    headers = {"HTTP_AUTHORIZATION": f"Bearer {token.token}"} if token else {}
+    headers = {"HTTP_AUTHORIZATION": f"Bearer {token.plain}"} if token else {}
     return Client().post(
         f"/api/{slug}/", json.dumps(body or {}), content_type="application/json", **headers, **extra
     )
@@ -106,7 +108,7 @@ def test_a_token_works_only_for_its_route_and_while_active(llm, route, token, pr
 def test_x_route_token_header_also_works(llm, route, token):
     r = Client().post(
         "/api/summarise/", json.dumps({"essay": "e"}), content_type="application/json",
-        HTTP_X_ROUTE_TOKEN=str(token.token),
+        HTTP_X_ROUTE_TOKEN=str(token.plain),
     )
     assert r.status_code == 200
 
@@ -174,7 +176,7 @@ def test_a_custom_input_schema_types_and_constrains(llm, route, token):
 
 
 def test_form_posts_work_too(llm, route, token):
-    r = Client().post("/api/summarise/", {"essay": "e"}, HTTP_AUTHORIZATION=f"Bearer {token.token}")
+    r = Client().post("/api/summarise/", {"essay": "e"}, HTTP_AUTHORIZATION=f"Bearer {token.plain}")
     assert r.status_code == 200
 
 
@@ -317,7 +319,7 @@ def _upload(token, content, name="p.png"):
     return Client().post(
         "/api/summarise/",
         {"photo": SimpleUploadedFile(name, content, "image/png")},
-        HTTP_AUTHORIZATION=f"Bearer {token.token}",
+        HTTP_AUTHORIZATION=f"Bearer {token.plain}",
     )
 
 
@@ -349,7 +351,7 @@ def test_files_are_refused_when_images_are_off(llm, route, token):
     r = Client().post(
         "/api/summarise/",
         {"essay": "e", "photo": SimpleUploadedFile("p.png", _png(), "image/png")},
-        HTTP_AUTHORIZATION=f"Bearer {token.token}",
+        HTTP_AUTHORIZATION=f"Bearer {token.plain}",
     )
     assert r.status_code == 400
 
@@ -369,10 +371,12 @@ def test_admin_pages_render(admin_client, route, token):
     page = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
     assert page.status_code == 200
     html = page.content.decode()
-    # copy-paste examples, with a real token in them
+    # copy-paste examples, with a placeholder where the token goes
     assert "&lt;!doctype html&gt;" in html and "import requests" in html
     assert '&lt;textarea id=&quot;essay&quot; name=&quot;essay&quot;' in html
-    assert str(token.token) in html
+    assert "Bearer YOUR_TOKEN" in html
+    assert token.plain not in html
+    assert f"<code>{token.prefix}\u2026</code>" in html
     assert admin_client.get("/admin/sd_routes/promptroute/add/").status_code == 200
 
 
@@ -393,15 +397,18 @@ def test_playground_runs_without_a_token(admin_client, llm, route):
     assert "&quot;summary&quot;: &quot;short&quot;" in r.content.decode()
 
 
-def test_rotating_a_token_replaces_it(admin_client, route, token):
-    old = token.token
-    token.rotate()
+def test_replacing_a_token_stops_the_old_value(llm, route, token):
+    old = token.plain
+    token.is_active = False
     token.save()
-    assert token.token != old
-    assert not RouteToken.objects.filter(token=old).exists()
+    new = token.replace()
+    assert new != old and token.prefix == new[:4]
+    assert post("summarise", {"essay": "e"}, SimpleNamespace(plain=old)).status_code == 401
+    # replacing makes it active again
+    assert post("summarise", {"essay": "e"}, SimpleNamespace(plain=new)).status_code == 200
 
 
-def test_saving_a_route_with_no_token_adds_one(admin_client, priced_model):
+def test_saving_a_route_adds_no_token(admin_client, priced_model):
     data = {
         "name": "New",
         "slug": "new",
@@ -419,16 +426,24 @@ def test_saving_a_route_with_no_token_adds_one(admin_client, priced_model):
     r = admin_client.post("/admin/sd_routes/promptroute/add/", data)
     assert r.status_code == 302, r.context["adminform"].form.errors if r.context else r
     route = PromptRoute.objects.get(slug="new")
-    assert list(route.tokens.values_list("name", flat=True)) == ["default"]
-    # saving again does not add another
-    admin_client.post(f"/admin/sd_routes/promptroute/{route.pk}/change/", {
-        **data, "tokens-TOTAL_FORMS": "0", "tokens-INITIAL_FORMS": "0",
-    })
-    assert route.tokens.count() == 1
+    assert not route.tokens.exists()
 
 
 def test_tokens_are_short_with_no_hyphens(token):
-    assert len(token.token) == 22 and "-" not in token.token
+    assert len(token.plain) == 22 and "-" not in token.plain
+
+
+def test_only_a_hash_is_stored(token):
+    row = RouteToken.objects.filter(pk=token.pk).values().get()
+    assert not any(token.plain in str(v) for v in row.values())
+    assert row["token_hash"] == hash_token(token.plain) and len(row["token_hash"]) == 64
+    assert row["prefix"] == token.plain[:4]
+    assert not hasattr(RouteToken.objects.get(pk=token.pk), "token")
+
+
+def test_a_token_cannot_be_saved_without_a_hash(route):
+    with pytest.raises(ValueError, match="issue"):
+        RouteToken.objects.create(route=route, name="no value")
 
 
 def test_examples_have_copy_buttons(admin_client, route, token):
@@ -436,15 +451,15 @@ def test_examples_have_copy_buttons(admin_client, route, token):
     assert html.count('class="button sd-copy"') == 2
 
 
-def test_rotate_all_tokens_action(admin_client, route, token):
-    old = token.token
+def test_deactivate_all_tokens_action(admin_client, llm, route, token):
     r = admin_client.post(
         "/admin/sd_routes/promptroute/",
-        {"action": "rotate_tokens", "_selected_action": [route.pk]},
+        {"action": "deactivate_tokens", "_selected_action": [route.pk]},
     )
     assert r.status_code == 302
     token.refresh_from_db()
-    assert token.token != old
+    assert not token.is_active
+    assert post("summarise", {"essay": "e"}, token).status_code == 401
 
 
 def test_the_example_page_has_a_field_per_input(route, token):
@@ -462,31 +477,69 @@ def test_the_example_page_has_a_field_per_input(route, token):
         },
         "required": ["essay"],
     }
-    page = examples.html_page(route, "https://x/api/sd/summarise/", token.token)
+    page = examples.html_page(route, "https://x/api/sd/summarise/", token.plain)
     assert '<textarea id="essay" name="essay" required>' in page
     assert '<select id="level" name="level">\n    <option value="one">' in page
     assert max(map(len, page.splitlines())) <= 100
     assert '<input type="number" step="1" id="n" name="n">' in page
     assert '<input type="file" id="photo" name="photo" accept="image/*">' in page
-    assert f'const TOKEN = "{token.token}";' in page
-    script = examples.python_script(route, "https://x/", token.token)
+    assert f'const TOKEN = "{token.plain}";' in page
+    script = examples.python_script(route, "https://x/", token.plain)
     assert 'files={"photo": open("photo.jpg", "rb")}' in script
 
 
-def test_opening_a_route_with_no_token_adds_one_for_the_examples(admin_client, route):
-    assert not route.tokens.exists()
+def test_a_route_with_no_token_offers_to_make_one(admin_client, route):
     html = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").content.decode()
+    assert not route.tokens.exists()
+    assert "nothing can call it yet" in html and "Make a token</button>" in html
+    assert "Bearer YOUR_TOKEN" in html
+
+
+def test_making_a_token_shows_it_once(admin_client, llm, route):
+    url = f"/admin/sd_routes/promptroute/{route.pk}/tokens/new/"
+    assert admin_client.get(url).status_code == 403
+    r = admin_client.post(url, {"name": "PSYC611"})
+    assert r.status_code == 200
     token = route.tokens.get()
-    assert token.name == "default"
-    assert f"Bearer {token.token}" in html and "&lt;token&gt;" not in html
+    assert token.name == "PSYC611"
+    html = r.content.decode()
+    value = r.context["value"]
+    assert len(value) == 22 and hash_token(value) == token.token_hash
+    assert "only time this token is shown" in html
+    assert f'<pre id="sd-token-value">{value}</pre>' in html
+    # the examples carry it
+    assert f"Bearer {value}" in html and "YOUR_TOKEN" not in html
+    # kept nowhere: not in a cookie, the session or the next page
+    assert value not in str(r.cookies) and value not in str(dict(admin_client.session))
+    change = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
+    assert value not in change.content.decode()
+    assert post("summarise", {"essay": "e"}, SimpleNamespace(plain=value)).status_code == 200
+
+
+def test_replacing_a_token_in_the_admin_shows_the_new_value_once(admin_client, llm, route, token):
+    r = admin_client.post(f"/admin/sd_routes/promptroute/{route.pk}/tokens/{token.pk}/replace/")
+    assert r.status_code == 200
+    value = r.context["value"]
+    assert value != token.plain and f"Bearer {value}" in r.content.decode()
+    assert "old value no longer works" in r.content.decode()
+    assert post("summarise", {"essay": "e"}, token).status_code == 401
+    assert post("summarise", {"essay": "e"}, SimpleNamespace(plain=value)).status_code == 200
+    change = admin_client.get(f"/admin/sd_routes/promptroute/{route.pk}/change/")
+    assert value not in change.content.decode()
+
+
+def test_a_token_is_replaced_only_through_its_own_route(admin_client, route, token, priced_model):
+    other = PromptRoute.objects.create(slug="other", name="Other", prompt=PROMPT, model=priced_model)
+    r = admin_client.post(f"/admin/sd_routes/promptroute/{other.pk}/tokens/{token.pk}/replace/")
+    assert r.status_code == 404
 
 
 def test_examples_have_no_blank_lines(route, token):
     from struckdown.contrib.django.routes import examples
 
     for code in (
-        examples.html_page(route, "https://x/", token.token),
-        examples.python_script(route, "https://x/", token.token),
+        examples.html_page(route, "https://x/", token.plain),
+        examples.python_script(route, "https://x/", token.plain),
     ):
         assert "\n\n" not in code and not code.endswith("\n") and not code.startswith("\n")
 
@@ -591,7 +644,7 @@ def test_inputs_together_are_capped(llm, route, token):
 def test_malformed_requests_are_400_not_500(llm, route, token, body, headers):
     r = Client().generic(
         "POST", "/api/summarise/", body, content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {token.token}", **headers,
+        HTTP_AUTHORIZATION=f"Bearer {token.plain}", **headers,
     )
     assert r.status_code in (400, 413), r.content
 
@@ -627,16 +680,21 @@ def viewer(route):
     return c
 
 
-def test_view_only_users_cannot_rotate_or_see_tokens(viewer, route, token):
-    old = token.token
+def test_view_only_users_cannot_change_tokens(viewer, route, token):
     viewer.post(
         "/admin/sd_routes/promptroute/",
-        {"action": "rotate_tokens", "_selected_action": [route.pk]},
+        {"action": "deactivate_tokens", "_selected_action": [route.pk]},
     )
     token.refresh_from_db()
-    assert token.token == old
+    assert token.is_active
+    old_hash = token.token_hash
+    assert viewer.post(f"/admin/sd_routes/promptroute/{route.pk}/tokens/new/").status_code == 403
+    r = viewer.post(f"/admin/sd_routes/promptroute/{route.pk}/tokens/{token.pk}/replace/")
+    assert r.status_code == 403
+    token.refresh_from_db()
+    assert token.token_hash == old_hash and route.tokens.count() == 1
     html = viewer.get(f"/admin/sd_routes/promptroute/{route.pk}/change/").content.decode()
-    assert old not in html
+    assert "Make a token</button>" not in html and "Replace</button>" not in html
 
 
 def test_view_only_users_do_not_create_tokens(viewer, route):
@@ -662,3 +720,42 @@ def test_playground_still_needs_csrf(llm, route):
     c.force_login(user)
     r = c.post(f"/admin/sd_routes/promptroute/{route.pk}/playground/", {"essay": "e"})
     assert r.status_code == 403 and llm.calls == []
+
+
+# -- the migration to hashed tokens -------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_migration_keeps_tokens_already_handed_out(llm, priced_model):
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    before = [("sd_routes", "0003_short_tokens")]
+    after = [("sd_routes", "0004_hashed_tokens")]
+    executor = MigrationExecutor(connection)
+    executor.migrate(before)
+    old_apps = executor.loader.project_state(before).apps
+    OldRoute = old_apps.get_model("sd_routes", "PromptRoute")
+    OldToken = old_apps.get_model("sd_routes", "RouteToken")
+    route = OldRoute.objects.create(
+        slug="summarise", name="Summarise", prompt=PROMPT, model_id=priced_model.pk
+    )
+    OldToken.objects.create(route=route, name="old", token="KnownOldToken123456789")
+    OldToken.objects.create(route=route, name="other", token="AnotherOldToken1234567")
+
+    executor = MigrationExecutor(connection)
+    executor.migrate(after)
+
+    row = RouteToken.objects.filter(route_id=route.pk, name="old").values().get()
+    assert "KnownOldToken123456789" not in str(row)
+    assert row["prefix"] == "Know"
+    r = post("summarise", {"essay": "e"}, SimpleNamespace(plain="KnownOldToken123456789"))
+    assert r.status_code == 200, r.json()
+
+    # reversing cannot recover the values, so each token gets a new one
+    executor = MigrationExecutor(connection)
+    executor.migrate(before)
+    values = set(old_apps.get_model("sd_routes", "RouteToken").objects.values_list("token", flat=True))
+    assert len(values) == 2 and "KnownOldToken123456789" not in values
+    executor = MigrationExecutor(connection)
+    executor.migrate(executor.loader.graph.leaf_nodes("sd_routes"))

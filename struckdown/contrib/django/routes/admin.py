@@ -69,38 +69,52 @@ class PromptRouteForm(forms.ModelForm):
         }
 
 
-class RouteTokenForm(forms.ModelForm):
-    rotate = forms.BooleanField(
-        required=False, help_text="Replace this token; the old one stops working on save."
-    )
-
-    class Meta:
-        model = RouteToken
-        fields = ("name", "is_active")
-
-    def save(self, commit=True):
-        if self.cleaned_data.get("rotate"):
-            self.instance.rotate()
-        return super().save(commit)
-
-
 class RouteTokenInline(admin.TabularInline):
+    """Tokens by name and first characters: only a hash of each is stored, so
+    the value cannot be shown here. New ones are made with the button below."""
+
     model = RouteToken
-    form = RouteTokenForm
     extra = 0
-    fields = ("name", "token", "is_active", "rotate", "last_used_at", "created_at")
-    readonly_fields = ("token", "last_used_at", "created_at")
+    fields = ("name", "hint", "is_active", "last_used_at", "created_at", "replace_button")
+    readonly_fields = ("hint", "last_used_at", "created_at", "replace_button")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def get_fields(self, request, obj=None):
+        fields = super().get_fields(request, obj)
+        if obj is not None and self.has_change_permission(request, obj):
+            return fields
+        return [f for f in fields if f != "replace_button"]
+
+    @admin.display(description="Token")
+    def hint(self, obj):
+        return format_html("<code>{}</code>", obj.hint)
+
+    @admin.display(description="")
+    def replace_button(self, obj):
+        # posts the separate token form (not the route's), so unsaved edits stay put
+        return format_html(
+            '<button type="submit" class="button sd-replace" form="sd-token-form" formaction="{}"'
+            " formnovalidate>Replace</button>",
+            reverse("admin:sd_routes_promptroute_replace_token", args=[obj.route_id, obj.pk]),
+        )
 
 
-def _ensure_token(request, route) -> RouteToken:
-    """The route's first active token, adding one called "default" if it has none.
-    A route with no token cannot be called."""
-    token = route.tokens.filter(is_active=True).first()
-    if token is None:
-        token = RouteToken.objects.create(route=route, name="default")
-        # not the value: messages can sit in a cookie
-        messages.info(request, 'Added a token called "default"; it is in the tokens table.')
-    return token
+def _examples(route, key: str) -> list[dict]:
+    url = examples.ORIGIN + route.endpoint_path()
+    return [
+        {
+            "title": "Web page",
+            "note": "A whole page: save it as an .html file and open it.",
+            "code": examples.html_page(route, url, key),
+        },
+        {
+            "title": "Python",
+            "note": "Needs requests (pip install requests).",
+            "code": examples.python_script(route, url, key),
+        },
+    ]
 
 
 class PromptRouteAdmin(admin.ModelAdmin):
@@ -147,22 +161,20 @@ class PromptRouteAdmin(admin.ModelAdmin):
         ("Calling it", {"fields": ("endpoint", "allowed_origins")}),
     )
 
-    actions = ["rotate_tokens"]
+    actions = ["deactivate_tokens"]
 
-    @admin.action(description="Rotate all tokens of the selected routes", permissions=["change"])
-    def rotate_tokens(self, request, queryset):
-        tokens = list(RouteToken.objects.filter(route__in=queryset))
-        for token in tokens:
-            token.rotate()
-            token.save(update_fields=["token"])
-        self.message_user(
-            request, f"Replaced {len(tokens)} token(s); the old ones no longer work."
+    @admin.action(
+        description="Deactivate all tokens of the selected routes", permissions=["change"]
+    )
+    def deactivate_tokens(self, request, queryset):
+        count = RouteToken.objects.filter(route__in=queryset, is_active=True).update(
+            is_active=False
         )
-
-    def save_related(self, request, form, formsets, change):
-        """A route with no token cannot be called, so the first save gives it one."""
-        super().save_related(request, form, formsets, change)
-        _ensure_token(request, form.instance)
+        self.message_user(
+            request,
+            f"Deactivated {count} token(s). Replace a token on its route's page to give "
+            "its caller a new one.",
+        )
 
     # -- columns and read-only panels --------------------------------------
 
@@ -208,27 +220,17 @@ class PromptRouteAdmin(admin.ModelAdmin):
 
     def change_view(self, request, object_id, form_url="", extra_context=None):
         route = self.get_object(request, object_id)
-        # the examples carry a live token: only for those who may change the route
-        if route is not None and self.has_change_permission(request, route):
-            # the examples need a working token; a route saved before tokens
-            # were added by default may have none
-            token = _ensure_token(request, route)
-            key = token.token
-            url = examples.ORIGIN + route.endpoint_path()
+        if route is not None:
             extra_context = {
                 **(extra_context or {}),
-                "sd_examples": [
-                    {
-                        "title": "Web page",
-                        "note": "A whole page: save it as an .html file and open it.",
-                        "code": examples.html_page(route, url, key),
-                    },
-                    {
-                        "title": "Python",
-                        "note": "Needs requests (pip install requests).",
-                        "code": examples.python_script(route, url, key),
-                    },
-                ],
+                "sd_examples": _examples(route, examples.TOKEN_PLACEHOLDER),
+                "sd_token_placeholder": examples.TOKEN_PLACEHOLDER,
+                "sd_has_active_token": route.tokens.filter(is_active=True).exists(),
+                "sd_issue_url": (
+                    reverse("admin:sd_routes_promptroute_issue_token", args=[route.pk])
+                    if self.has_change_permission(request, route)
+                    else None
+                ),
             }
         return super().change_view(request, object_id, form_url, extra_context)
 
@@ -246,6 +248,16 @@ class PromptRouteAdmin(admin.ModelAdmin):
                 # CSRF is checked inside, after the upload handler is set
                 self.admin_site.admin_view(csrf_exempt(self.playground_view)),
                 name="sd_routes_promptroute_playground",
+            ),
+            path(
+                "<int:pk>/tokens/new/",
+                self.admin_site.admin_view(self.issue_token_view),
+                name="sd_routes_promptroute_issue_token",
+            ),
+            path(
+                "<int:pk>/tokens/<int:token_pk>/replace/",
+                self.admin_site.admin_view(self.replace_token_view),
+                name="sd_routes_promptroute_replace_token",
             ),
             *super().get_urls(),
         ]
@@ -267,6 +279,43 @@ class PromptRouteAdmin(admin.ModelAdmin):
         except ValueError:
             tokens = 10_000
         return JsonResponse({"schema": schemas.derived_input_schema(prompt, tokens)})
+
+    # -- tokens: the value is shown once, on the page that answers the POST ----
+
+    def _route_to_change(self, request, pk) -> PromptRoute:
+        if request.method != "POST":
+            raise PermissionDenied
+        route = get_object_or_404(PromptRoute, pk=pk)
+        if not self.has_change_permission(request, route):
+            raise PermissionDenied
+        return route
+
+    def issue_token_view(self, request, pk):
+        route = self._route_to_change(request, pk)
+        name = request.POST.get("name", "").strip()[: RouteToken._meta.get_field("name").max_length]
+        token, value = RouteToken.issue(route, name or "default")
+        return self._shown_once(request, route, token, value, made=True)
+
+    def replace_token_view(self, request, pk, token_pk):
+        route = self._route_to_change(request, pk)
+        token = get_object_or_404(RouteToken, pk=token_pk, route=route)
+        return self._shown_once(request, route, token, token.replace(), made=False)
+
+    def _shown_once(self, request, route, token, value, made):
+        """The new value in the response itself: not in a redirect, the session
+        or messages (which can sit in a cookie), so it is never stored."""
+        context = {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "route": route,
+            "token": token,
+            "value": value,
+            "made": made,
+            "title": f"{'New' if made else 'Replaced'} token: {token.name}",
+            "sd_examples": _examples(route, value),
+            "change_url": reverse("admin:sd_routes_promptroute_change", args=[route.pk]),
+        }
+        return TemplateResponse(request, "admin/sd_routes/token_issued.html", context)
 
     def playground_view(self, request, pk):
         """Run the saved route on typed inputs, without a token. Counts

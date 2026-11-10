@@ -36,7 +36,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 from django.views.decorators.csrf import csrf_exempt
 
-from .models import PromptRoute, RouteToken
+from .models import PromptRoute, RouteToken, hash_token
 from .service import RouteError, call, validate_inputs
 from .uploads import MemoryOnlyUploadHandler
 
@@ -178,8 +178,11 @@ def route_api(request, slug):
         if route is None:
             raise RouteError(404, "not_found", "No such route.")
         token_value = _token(request)
+        # the database compares hashes, so no secret is compared in Python
         token = (
-            RouteToken.objects.filter(route=route, token=token_value, is_active=True).first()
+            RouteToken.objects.filter(
+                route=route, token_hash=hash_token(token_value), is_active=True
+            ).first()
             if token_value
             else None
         )

@@ -1,6 +1,37 @@
 
 # Changelog
 
+### 0.20.0
+
+**Security**
+- API-route tokens (`sd_routes.RouteToken`) are stored as a SHA-256 hash
+  (`token_hash`) plus their first four characters (`prefix`), not in plain
+  text, so reading the database no longer gives working tokens. A token's
+  value is shown once, on the admin page that answers **Make a token** or
+  **Replace**, with the examples filled in; it is never put in a redirect, the
+  session or messages.
+
+**Breaking**
+- `RouteToken.token` is gone. Make a token with `RouteToken.issue(route, name)`,
+  which returns `(token, value)`, and give one a new value with
+  `token.replace()`, which returns it (and makes the token active again).
+  `RouteToken.rotate()` is removed, and saving a `RouteToken` with no hash
+  (e.g. `RouteToken.objects.create(...)`) raises `ValueError`.
+  `hash_token(value)` is what is stored and looked up.
+- The admin no longer adds a "default" token when a route is saved or opened.
+  A route with no active token says so and offers **Make a token**; the change
+  page's examples show `YOUR_TOKEN` in place of a token.
+- The admin action "Rotate all tokens of the selected routes" is replaced by
+  "Deactivate all tokens of the selected routes".
+
+**Upgrading**
+- Run `manage.py migrate`. `sd_routes.0004_hashed_tokens` hashes each existing
+  token where it is, so tokens already handed out keep working. Reversing it
+  cannot recover the old values: every token gets a new one, and callers need
+  the new values.
+- Code or tests that read `token.token` or call `RouteToken.objects.create()`
+  must use `RouteToken.issue()` and keep the value it returns.
+
 ### 0.19.0
 
 **Added**

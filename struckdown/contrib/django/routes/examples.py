@@ -3,7 +3,9 @@
 Both are built from the route's input schema, so the form has a field per
 input of the right kind (a textarea for text, a number box, a select for an
 enum, a file picker for an image). ``ORIGIN`` stands in for the site's
-address, which the admin page fills in from the browser.
+address, which the admin page fills in from the browser. Tokens are stored
+only as hashes, so the route's page shows ``TOKEN_PLACEHOLDER``; the page that
+makes or replaces a token shows them with its value, once.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from html import escape
 from . import schema as schemas
 
 ORIGIN = "__ORIGIN__"
+TOKEN_PLACEHOLDER = "YOUR_TOKEN"
 
 # one rule per line: the page is shown in a box and read before it is saved
 _STYLE = """

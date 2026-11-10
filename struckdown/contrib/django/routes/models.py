@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import timedelta
 from decimal import Decimal
@@ -258,13 +259,28 @@ def new_token() -> str:
     return shortuuid.uuid()
 
 
+def hash_token(value: str) -> str:
+    """What is stored for a token, and what a call's token is looked up by."""
+    # unsalted on purpose: a salt would rule out the indexed lookup, and a 128-bit
+    # random token cannot be brute-forced or precomputed; no SECRET_KEY pepper,
+    # so rotating SECRET_KEY does not break every token
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 class RouteToken(models.Model):
     """A key that may call one route. Give each caller (a class, an
-    experiment, an app) its own, so one can be revoked without the others."""
+    experiment, an app) its own, so one can be revoked without the others.
+
+    Only a hash of the token is stored. Make one with ``RouteToken.issue()``
+    and replace one with ``token.replace()``: each returns the plain value,
+    which is the only time it is available."""
 
     route = models.ForeignKey(PromptRoute, on_delete=models.CASCADE, related_name="tokens")
     name = models.CharField(max_length=120, help_text="Who has it, e.g. 'PSYC611 card sort'.")
-    token = models.CharField(max_length=40, default=new_token, unique=True, editable=False)
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    prefix = models.CharField(
+        max_length=4, editable=False, help_text="The token's first characters, to tell it apart."
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True, editable=False)
@@ -275,5 +291,33 @@ class RouteToken(models.Model):
     def __str__(self):
         return f"{self.route.slug}: {self.name}"
 
-    def rotate(self):
-        self.token = new_token()
+    @property
+    def hint(self) -> str:
+        return f"{self.prefix}\u2026"
+
+    def save(self, *args, **kwargs):
+        if not self.token_hash:
+            raise ValueError("Make tokens with RouteToken.issue(), which returns the value.")
+        super().save(*args, **kwargs)
+
+    def _new_value(self) -> str:
+        value = new_token()
+        self.token_hash = hash_token(value)
+        self.prefix = value[:4]
+        return value
+
+    @classmethod
+    def issue(cls, route: PromptRoute, name: str, **fields) -> tuple[RouteToken, str]:
+        """A new saved token for ``route``, and its plain value to show once."""
+        token = cls(route=route, name=name, **fields)
+        value = token._new_value()
+        token.save()
+        return token, value
+
+    def replace(self) -> str:
+        """Give this token a new value, saved, and return it to show once. The
+        old value stops working; the token is made active again."""
+        value = self._new_value()
+        self.is_active = True
+        self.save(update_fields=["token_hash", "prefix", "is_active"])
+        return value

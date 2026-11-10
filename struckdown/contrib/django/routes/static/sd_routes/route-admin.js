@@ -33,7 +33,15 @@
             });
         }
 
-        // copy an example, host and token included, as shown
+        // replacing breaks the old value at once, so ask first
+        document.addEventListener("click", function (ev) {
+            var btn = ev.target.closest && ev.target.closest(".sd-replace");
+            if (btn && !window.confirm("Replace this token? Its old value stops working now.")) {
+                ev.preventDefault();
+            }
+        });
+
+        // copy an example (or a new token), host included, as shown
         document.addEventListener("click", function (ev) {
             var btn = ev.target.closest && ev.target.closest(".sd-copy");
             if (!btn) return;

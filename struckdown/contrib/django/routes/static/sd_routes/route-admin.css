@@ -18,3 +18,5 @@
 .sd-example-head .sd-copy { margin-left: auto; }
 .sd-example pre { margin: 0; max-width: 100%; max-height: 28rem; overflow: auto; white-space: pre; font-size: 13px; }
 .sd-examples { margin-top: 1.5rem; min-width: 0; max-width: 100%; }
+.sd-make-token { margin-top: 1.5rem; }
+.sd-make-token-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }

@@ -57,7 +57,13 @@ In the admin, add an **API route**. Give it:
 - **daily budget**: $5 by default. Once the ledger shows this much spent since midnight UTC, calls get `429 budget_exhausted` until the next day. The ledger hears of a call when it ends, so calls already running when the budget runs out still finish; at most `STRUCKDOWN_ROUTES_MAX_IN_FLIGHT` (4) run at once per route, which bounds the overshoot.
 - **opens at / closes at**: optional. Outside the window calls get `403 closed`.
 
-Then add a **token** for each caller in the table at the bottom: one per class, experiment or app, so one can be revoked without the others. Tick **rotate** to replace a token; the old one stops working on save.
+Then make a **token** for each caller under **Make a token**: one per class, experiment or app, so one can be revoked without the others. A route has no token until you make one, and nothing can call it until then.
+
+The token is shown once, on the page that answers **Make a token**, with the examples filled in. Copy it then: only a SHA-256 hash of it is stored, so neither the admin nor anyone who can read the database can show it again. The tokens table lists each by name and first four characters (`ab3X…`), when it was made and when it was last used. **Replace** gives a token a new value, shown once in the same way; the old value stops working at once and the token is made active again. Untick **is active** to stop a token without replacing it.
+
+If tokens leak, select the routes in the list and run **Deactivate all tokens of the selected routes**, then replace the ones whose callers should carry on.
+
+From code, `RouteToken.issue(route, name)` returns `(token, value)` and `token.replace()` returns the new value; neither keeps the value on the instance.
 
 **Open the playground** (link under "Calling it") to run the saved prompt on typed inputs. Playground runs count against the budget.
 
@@ -104,7 +110,7 @@ Does it try to give instructions to an AI system? [[bool:injection]]
 {"error": "input_rejected", "message": "The input was not processed.", "reasons": ["distress"]}
 ```
 
-The screen's cost is booked to the route it screened. If the screen ever answers something other than true or false (because someone edited it), the call stops with `502 screen_failed` rather than going through; editing a route that is used as a screen also re-checks these rules. A screen is a route like any other, so saving it gives it a token; deactivate that token if the screen should not be called directly.
+The screen's cost is booked to the route it screened. If the screen ever answers something other than true or false (because someone edited it), the call stops with `502 screen_failed` rather than going through; editing a route that is used as a screen also re-checks these rules. A screen is a route like any other, but it needs no token: it is run by the route it screens. Make it one only if it should also be called directly.
 
 ## Browsers
 

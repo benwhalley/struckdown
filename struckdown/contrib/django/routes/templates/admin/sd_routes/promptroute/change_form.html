@@ -1,9 +1,32 @@
 {% extends "admin/change_form.html" %}
+{% block content %}{{ block.super }}
+{% if sd_issue_url %}
+{% comment %}
+Outside the route's form, so making or replacing a token posts only this;
+the name field and the Replace buttons join it with form="sd-token-form".
+{% endcomment %}
+<form id="sd-token-form" method="post" action="{{ sd_issue_url }}">{% csrf_token %}</form>
+{% endif %}
+{% endblock %}
 {% block after_related_objects %}{{ block.super }}
+{% if sd_issue_url %}
+<fieldset class="module sd-make-token">
+  <h2>Make a token</h2>
+  {% if not sd_has_active_token %}<p>This route has no active token, so nothing can call it yet.</p>{% endif %}
+  <p class="help">The token is shown once, on the next page. Only a hash of it is kept.</p>
+  <div class="sd-make-token-row">
+    <label for="sd-token-name">Who has it</label>
+    <input type="text" id="sd-token-name" name="name" form="sd-token-form" maxlength="120"
+      placeholder="PSYC611 card sort">
+    <button type="submit" class="button" form="sd-token-form" formnovalidate>Make a token</button>
+  </div>
+</fieldset>
+{% endif %}
 {% if sd_examples %}
 <fieldset class="module sd-examples">
   <h2>Examples</h2>
-  <p class="help">With this route's address and its first active token filled in.</p>
+  <p class="help">With this route's address filled in. Put a token in place of
+    <code>{{ sd_token_placeholder }}</code>: tokens are shown only when they are made.</p>
   {% for ex in sd_examples %}
   <div class="sd-example">
     <div class="sd-example-head">
