@@ -11,7 +11,7 @@ import json
 from django import forms
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -285,7 +285,9 @@ class PromptRouteAdmin(admin.ModelAdmin):
     def _route_to_change(self, request, pk) -> PromptRoute:
         if request.method != "POST":
             raise PermissionDenied
-        route = get_object_or_404(PromptRoute, pk=pk)
+        route = self.get_object(request, str(pk))
+        if route is None:
+            raise Http404
         if not self.has_change_permission(request, route):
             raise PermissionDenied
         return route
@@ -315,12 +317,17 @@ class PromptRouteAdmin(admin.ModelAdmin):
             "sd_examples": _examples(route, value),
             "change_url": reverse("admin:sd_routes_promptroute_change", args=[route.pk]),
         }
-        return TemplateResponse(request, "admin/sd_routes/token_issued.html", context)
+        response = TemplateResponse(request, "admin/sd_routes/token_issued.html", context)
+        # nor in the browser's cache
+        response["Cache-Control"] = "no-store"
+        return response
 
     def playground_view(self, request, pk):
         """Run the saved route on typed inputs, without a token. Counts
         against the route's budget like any other call."""
-        route = get_object_or_404(PromptRoute, pk=pk)
+        route = self.get_object(request, str(pk))
+        if route is None:
+            raise Http404
         if not self.has_change_permission(request, route):
             raise PermissionDenied
         handler = None
