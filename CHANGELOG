@@ -1,6 +1,25 @@
 
 # Changelog
 
+### 0.21.0
+
+**Added**
+- `struckdown.private()`: calls inside the block neither read nor write the
+  response cache or the embedding cache, and no usage handler is given their
+  request or response bodies (`wants_payload()` is false and `emit` drops any
+  payload). The usage record itself is still emitted, so spend stays visible.
+  The flag is a context variable: it reaches threads and tasks started from
+  the block, and a nested block cannot switch it off. `struckdown.is_private()`
+  reads it.
+- `llm_span(..., private=True)` (and `open_span` / `aopen_span`): the span and
+  every child span run under `private()`, whatever `capture=` or
+  `STRUCKDOWN_LEDGER_CAPTURE_PAYLOADS` say. `LLMSpan.private` records it.
+- `record_call(audio_seconds=...)` records a transcription made outside
+  struckdown, priced at the model's `cost_per_audio_minute`.
+
+**Upgrading**
+- Run `manage.py migrate` (`sd_models.0011_llmspan_private` adds one column).
+
 ### 0.20.0
 
 **Security**
