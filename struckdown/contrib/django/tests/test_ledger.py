@@ -193,3 +193,15 @@ def test_a_struckdown_call_through_a_priced_row_lands_with_its_slot(priced_model
     assert call.root_name == "test.feature"
     assert call.span.name == "test.feature"
     assert call.total_cost is not None
+
+
+def test_record_call_prices_a_transcription_by_the_minute(priced_model):
+    priced_model.cost_per_audio_minute = Decimal("0.006")
+    priced_model.save()
+    call = ledger.record_call(
+        model_name="stub", kind="transcription", audio_seconds=600, available_model=priced_model
+    )
+    call.refresh_from_db()
+    assert call.audio_seconds == 600
+    assert call.price_source == "audio_rate"
+    assert call.total_cost == Decimal("0.06000000")

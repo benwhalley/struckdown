@@ -109,12 +109,15 @@ def no_cache():
 
 
 def cache_off() -> bool:
-    return _cache_off.get()
+    """True under :func:`no_cache` or :func:`struckdown.privacy.private`."""
+    from .privacy import is_private
+
+    return _cache_off.get() or is_private()
 
 
 def maybe_cached(fn):
-    """``fn`` (a joblib-memoised function), or the plain function under :func:`no_cache`."""
-    return getattr(fn, "func", fn) if _cache_off.get() else fn
+    """``fn`` (a joblib-memoised function), or the plain function when the cache is off."""
+    return getattr(fn, "func", fn) if cache_off() else fn
 
 
 # Initialize the Memory object

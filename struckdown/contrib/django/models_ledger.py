@@ -54,6 +54,8 @@ class LLMSpan(models.Model):
     ended_at = models.DateTimeField(null=True, blank=True)
     attributes = models.JSONField(default=dict, blank=True)
     capture_payloads = models.BooleanField(default=False)
+    # opened with private=True: its calls kept no payload and used no cache
+    private = models.BooleanField(default=False)
 
     class Meta:
         db_table = "llm_span"

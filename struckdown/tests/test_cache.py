@@ -70,3 +70,14 @@ class TestReturnTypeHashing:
         hash1 = hash_return_type(SimpleResponse)
         hash2 = hash_return_type(OtherResponse)
         assert hash1 != hash2
+
+
+def test_private_turns_off_the_response_and_embedding_caches():
+    import struckdown
+    from struckdown.cache import cache_off
+    from struckdown.embedding_cache import _get_embedding_cache
+
+    with struckdown.private():
+        assert cache_off()
+        assert _get_embedding_cache() is None
+    assert not struckdown.is_private()

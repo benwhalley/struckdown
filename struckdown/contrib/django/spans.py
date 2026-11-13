@@ -18,6 +18,9 @@ Explicit spans::
     with llm_span("hub_assistant.turn", user=request.user, obj=session):
         ...
 
+    with llm_span("contacts.note", obj=contact, private=True):
+        ...   # no payload rows, no response cache, here or in any child span
+
     span = open_span("tower.assist.turn", user=user)   # for an async generator
     ...
     close_span(span)
@@ -50,6 +53,8 @@ class SpanHandle:
     obj: Any = None
     attributes: dict = field(default_factory=dict)
     capture_payloads: bool = False
+    # private: see struckdown.privacy; inherited by every child span
+    private: bool = False
     started_at: datetime = field(default_factory=timezone.now)
     ended_at: Optional[datetime] = None
     # a callable that gives the span its final name late, for a root span whose
@@ -114,9 +119,41 @@ def materialise(handle: SpanHandle):
         started_at=handle.started_at,
         ended_at=handle.ended_at,
         attributes=handle.attributes,
-        capture_payloads=handle.capture_payloads,
+        capture_payloads=handle.capture_payloads and not handle.private,
+        private=handle.private,
     )
     return handle.row
+
+
+def _make_handle(name, parent, user, obj, capture, private, attributes, name_fn=None) -> SpanHandle:
+    from struckdown.privacy import enter_private, is_private
+
+    handle = SpanHandle(
+        name=name,
+        parent=parent,
+        user=user,
+        obj=obj,
+        attributes=attributes,
+        capture_payloads=capture,
+        private=private or is_private(),
+        name_fn=name_fn,
+    )
+    handle._private_token = enter_private() if private else None
+    return handle
+
+
+def _leave_private(handle: SpanHandle) -> None:
+    from struckdown.privacy import exit_private
+
+    token = getattr(handle, "_private_token", None)
+    if token is None:
+        return
+    handle._private_token = None
+    try:
+        exit_private(token)
+    except ValueError:
+        # closed in another context; that context stays private, which errs safe
+        pass
 
 
 def _close_row(handle: SpanHandle):
@@ -133,6 +170,7 @@ def open_span(
     user=None,
     obj=None,
     capture: bool = False,
+    private: bool = False,
     eager: bool = True,
     root: bool = False,
     name_fn=None,
@@ -144,15 +182,12 @@ def open_span(
     inside it; root spans pass ``eager=False`` and are written on first use.
     ``root`` ignores any handle already in the context: a request or task is
     never a child of whatever a reused thread was last doing.
+    ``private`` keeps every call inside the span, and inside its children, out
+    of the payload table and every response cache (:mod:`struckdown.privacy`),
+    whatever ``capture`` or ``STRUCKDOWN_LEDGER_CAPTURE_PAYLOADS`` say.
     """
-    handle = SpanHandle(
-        name=name,
-        parent=None if root else _current.get(),
-        user=user,
-        obj=obj,
-        attributes=attributes,
-        capture_payloads=capture,
-        name_fn=name_fn,
+    handle = _make_handle(
+        name, None if root else _current.get(), user, obj, capture, private, attributes, name_fn
     )
     handle._token = _current.set(handle)
     if eager:
@@ -169,6 +204,7 @@ def close_span(handle: SpanHandle) -> None:
         _close_row(handle)
     except Exception:
         logger.exception("could not close span %s", handle.name)
+    _leave_private(handle)
     token = getattr(handle, "_token", None)
     if token is not None:
         try:
@@ -181,24 +217,21 @@ def close_span(handle: SpanHandle) -> None:
 
 
 @contextmanager
-def llm_span(name: str, *, user=None, obj=None, capture: bool = False, **attributes):
-    handle = open_span(name, user=user, obj=obj, capture=capture, **attributes)
+def llm_span(
+    name: str, *, user=None, obj=None, capture: bool = False, private: bool = False, **attributes
+):
+    handle = open_span(name, user=user, obj=obj, capture=capture, private=private, **attributes)
     try:
         yield handle
     finally:
         close_span(handle)
 
 
-async def aopen_span(name: str, *, user=None, obj=None, capture: bool = False, **attributes):
+async def aopen_span(
+    name: str, *, user=None, obj=None, capture: bool = False, private: bool = False, **attributes
+):
     """``open_span`` from async code: the row is written on a thread."""
-    handle = SpanHandle(
-        name=name,
-        parent=_current.get(),
-        user=user,
-        obj=obj,
-        attributes=attributes,
-        capture_payloads=capture,
-    )
+    handle = _make_handle(name, _current.get(), user, obj, capture, private, attributes)
     handle._token = _current.set(handle)
     try:
         await sync_to_async(materialise, thread_sensitive=True)(handle)
@@ -213,6 +246,7 @@ async def aclose_span(handle: SpanHandle) -> None:
         await sync_to_async(_close_row, thread_sensitive=True)(handle)
     except Exception:
         logger.exception("could not close span %s", handle.name)
+    _leave_private(handle)
     token = getattr(handle, "_token", None)
     if token is not None:
         try:

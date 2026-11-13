@@ -34,7 +34,11 @@ def _get_embedding_cache_dir() -> Optional[Path]:
 def _get_embedding_cache():
     """Get or create the embedding cache (lazy initialisation)."""
     global _embedding_cache
+    from .cache import cache_off
 
+    # vectors can be inverted back towards their text, so private calls skip it
+    if cache_off():
+        return None
     if _embedding_cache is not None:
         return _embedding_cache
 

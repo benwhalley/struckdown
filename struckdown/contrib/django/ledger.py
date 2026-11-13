@@ -36,7 +36,12 @@ def enabled() -> bool:
 
 
 def capture_payloads() -> bool:
-    """Payloads are kept when the setting says so or the current span asked."""
+    """Payloads are kept when the setting says so or the current span asked,
+    and never inside a private span (:func:`struckdown.privacy.private`)."""
+    from struckdown.privacy import is_private
+
+    if is_private():
+        return False
     if setting("CAPTURE_PAYLOADS", False):
         return True
     from .spans import current_span
@@ -197,12 +202,16 @@ def record_call(
     finish_reason: str = "",
     request=None,
     response=None,
+    audio_seconds: Optional[float] = None,
 ):
     """Record a call that did not go through struckdown.
 
     The cost comes from ``available_model``'s stored prices (or the row that
     matches ``model_name``); a call through an unpriced model is written with
     null cost, which the costs page counts as unknown rather than free.
+
+    ``audio_seconds`` records a transcription (``kind="transcription"``),
+    priced at the row's ``cost_per_audio_minute``.
     """
     from struckdown.ledger import UsagePayload
 
@@ -220,13 +229,19 @@ def record_call(
         error_class=error_class,
         provider_request_id=provider_request_id or "",
         finish_reason=finish_reason or "",
+        audio_seconds=audio_seconds,
         payload=(
             UsagePayload(request=request, response=response)
             if request is not None or response is not None
             else None
         ),
     )
-    if available_model is not None and record.ok:
+    rate = getattr(available_model, "cost_per_audio_minute", None)
+    if audio_seconds is not None and rate is not None and record.ok:
+        record.cost = CostBreakdown(
+            input_cost=float(rate) * audio_seconds / 60.0, output_cost=0.0, source="audio_rate"
+        )
+    elif available_model is not None and record.ok:
         pricing = available_model.stored_pricing()
         if pricing is not None:
             record.cost = cost_from_stored(

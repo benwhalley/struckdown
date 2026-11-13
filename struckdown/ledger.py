@@ -301,8 +301,20 @@ def active_handlers() -> list[Handler]:
 
 
 def wants_payload() -> bool:
-    """True if any listening handler asked for request and response bodies."""
+    """True if any listening handler asked for request and response bodies,
+    and the call is not :func:`~struckdown.privacy.private`."""
+    from .privacy import is_private
+
+    if is_private():
+        return False
     return any(getattr(h, "wants_payload", False) for h in active_handlers())
+
+
+def _strip_if_private(record: UsageRecord) -> None:
+    from .privacy import is_private
+
+    if is_private():
+        record.payload = None
 
 
 def _call(handler: Handler, record: UsageRecord):
@@ -420,6 +432,7 @@ def emit(record: UsageRecord) -> None:
     A handler that returns an awaitable is scheduled on the running loop if
     this thread has one, else run to completion here.
     """
+    _strip_if_private(record)
     pending = _deferred.get()
     if pending is not None:
         pending.append(record)
@@ -445,6 +458,7 @@ def emit(record: UsageRecord) -> None:
 
 async def emit_async(record: UsageRecord) -> None:
     """Hand ``record`` to every handler and await any that need awaiting."""
+    _strip_if_private(record)
     pending = _deferred.get()
     if pending is not None:
         pending.append(record)

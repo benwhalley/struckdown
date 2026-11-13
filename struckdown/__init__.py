@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 # Re-export from other modules
 from .actions import ActionNotAllowed, Actions, restrict_actions
 from .cache import clear_cache, no_cache
+from .privacy import is_private, private
 # Re-export from errors module
 from .errors import (AuthError, BadRequestError, ConnectionError,
                      ContentFilterError, ContextWindowError, FetchError,
@@ -1256,6 +1257,8 @@ __all__ = [
     "ActionNotAllowed",
     "restrict_actions",
     "no_cache",
+    "private",
+    "is_private",
     # Version
     "__version__",
     # Main entry points
